@@ -112,7 +112,7 @@ const isCollapse = ref(false)
 const activeMenu = computed(() => route.path)
 
 const handleMenuSelect = (index) => {
-  router.push(index)
+  router.push(index) // 点击菜单 改变路由
 }
 
 const toggleFullscreen = () => {
