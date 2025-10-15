@@ -2,35 +2,33 @@
   <div class="image-management-container">
     <!-- 操作栏 -->
     <el-card class="action-card" shadow="never">
-      <el-space wrap>
-        <el-button type="primary" @click="showUploadDialog = true">
-          <template #icon><Upload :size="16" /></template>
-          批量上传影像
-        </el-button>
-        <el-button @click="handleBatchDownload">
-          <template #icon><Download :size="16" /></template>
-          批量下载
-        </el-button>
-        <el-button type="danger" plain @click="handleBatchDelete">
-          <template #icon><Trash2 :size="16" /></template>
-          批量删除
-        </el-button>
-        <el-divider direction="vertical" />
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索影像名称或区域"
-          style="width: 250px"
-          clearable
-        >
-          <template #prefix><Search :size="16" /></template>
-        </el-input>
-        <el-button @click="handleSearch">
-          <template #icon><Search :size="16" /></template>
-          搜索
-        </el-button>
-          clearable
-        />
-      </el-space>
+      <div class="action-bar">
+        <div class="action-left">
+          <el-button type="primary" size="large" @click="showUploadDialog = true">
+            <Upload :size="18" style="margin-right: 8px" />
+            上传影像
+          </el-button>
+          <el-button type="danger" size="large" plain @click="handleBatchDelete">
+            <Trash2 :size="18" style="margin-right: 8px" />
+            批量删除
+          </el-button>
+        </div>
+        <div class="action-right">
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索影像名称或区域"
+            size="large"
+            style="width: 300px"
+            clearable
+            @keyup.enter="handleSearch"
+          >
+            <template #prefix><Search :size="18" /></template>
+          </el-input>
+          <el-button type="primary" size="large" @click="handleSearch">
+            搜索
+          </el-button>
+        </div>
+      </div>
     </el-card>
 
     <!-- 筛选条件 -->
@@ -82,18 +80,20 @@
         v-if="viewMode === 'table'"
         :data="tableData"
         style="width: 100%"
+        v-loading="loading"
         @selection-change="handleSelectionChange"
       >
         <el-table-column type="selection" width="55" />
         <el-table-column prop="id" label="影像ID" width="100" />
         <el-table-column label="缩略图" width="100">
           <template #default="scope">
-            <el-image
-              :src="scope.row.thumbnail"
-              :preview-src-list="[scope.row.preview]"
-              fit="cover"
-              style="width: 60px; height: 60px; border-radius: 4px; cursor: pointer"
-            />
+            <div class="thumbnail-wrapper" @click="handlePreview(scope.row)">
+              <img
+                :src="generateThumbnail(scope.row)"
+                style="width: 60px; height: 60px; border-radius: 4px; cursor: pointer; object-fit: cover;"
+                :alt="scope.row.name"
+              />
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="name" label="影像名称" min-width="200" />
@@ -115,18 +115,14 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="scope">
-            <el-button size="small" @click="handlePreview(scope.row)">
-              <template #icon><Eye :size="14" /></template>
+            <el-button size="small" type="primary" link @click="handlePreview(scope.row)">
+              <Eye :size="14" style="margin-right: 4px" />
               预览
             </el-button>
-            <el-button size="small" @click="handleDownload(scope.row)">
-              <template #icon><Download :size="14" /></template>
-              下载
-            </el-button>
-            <el-button size="small" type="danger" @click="handleDelete(scope.row)">
-              <template #icon><Trash2 :size="14" /></template>
+            <el-button size="small" type="danger" link @click="handleDelete(scope.row)">
+              <Trash2 :size="14" style="margin-right: 4px" />
               删除
             </el-button>
           </template>
@@ -137,12 +133,13 @@
       <div v-else class="grid-view">
         <div v-for="item in tableData" :key="item.id" class="grid-item">
           <el-checkbox v-model="item.checked" class="item-checkbox" />
-          <el-image
-            :src="item.thumbnail"
-            :preview-src-list="[item.preview]"
-            fit="cover"
-            class="grid-image"
-          />
+          <div class="grid-image-wrapper" @click="handlePreview(item)">
+            <img
+              :src="generateThumbnail(item)"
+              class="grid-image"
+              :alt="item.name"
+            />
+          </div>
           <div class="grid-info">
             <div class="grid-title">{{ item.name }}</div>
             <div class="grid-meta">
@@ -154,13 +151,13 @@
               <span>{{ item.size }}</span>
             </div>
             <div class="grid-actions">
-              <el-button size="small" @click="handlePreview(item)">
-                <template #icon><Eye :size="14" /></template>
+              <el-button type="primary" link size="small" @click="handlePreview(item)">
+                <Eye :size="14" style="margin-right: 4px" />
                 预览
               </el-button>
-              <el-button size="small" @click="handleDownload(item)">
-                <template #icon><Download :size="14" /></template>
-                下载
+              <el-button type="danger" link size="small" @click="handleDelete(item)">
+                <Trash2 :size="14" style="margin-right: 4px" />
+                删除
               </el-button>
             </div>
           </div>
@@ -222,22 +219,89 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 预览对话框 -->
+    <el-dialog
+      v-model="showPreviewDialog"
+      :title="`影像预览 - ${currentPreview?.name || ''}`"
+      width="900px"
+      :close-on-click-modal="false"
+    >
+      <div v-if="currentPreview" class="preview-container">
+        <div class="preview-image" v-loading="loadingPreview" element-loading-text="正在渲染影像...">
+          <div v-if="previewError" class="preview-error">
+            <el-alert type="warning" :title="previewError" show-icon :closable="false" />
+            <img
+              :src="generateThumbnail(currentPreview)"
+              style="width: 100%; max-height: 500px; object-fit: contain; margin-top: 20px;"
+              :alt="currentPreview.name"
+            />
+          </div>
+          <img
+            v-else-if="previewImageUrl"
+            :src="previewImageUrl"
+            style="width: 100%; max-height: 500px; object-fit: contain;"
+            :alt="currentPreview.name"
+          />
+          <img
+            v-else
+            :src="generateThumbnail(currentPreview)"
+            style="width: 100%; max-height: 500px; object-fit: contain;"
+            :alt="currentPreview.name"
+          />
+        </div>
+        <div class="preview-info">
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="影像ID">{{ currentPreview.id }}</el-descriptions-item>
+            <el-descriptions-item label="文件名">{{ currentPreview.name }}</el-descriptions-item>
+            <el-descriptions-item label="传感器">{{ currentPreview.sensor }}</el-descriptions-item>
+            <el-descriptions-item label="采集日期">{{ currentPreview.date }}</el-descriptions-item>
+            <el-descriptions-item label="区域">{{ currentPreview.region }}</el-descriptions-item>
+            <el-descriptions-item label="云量">
+              <el-tag :type="currentPreview.cloudCover < 10 ? 'success' : currentPreview.cloudCover < 30 ? '' : 'warning'">
+                {{ currentPreview.cloudCover }}%
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="文件大小">{{ currentPreview.size }}</el-descriptions-item>
+            <el-descriptions-item label="状态">
+              <el-tag :type="currentPreview.status === 'processed' ? 'success' : 'info'">
+                {{ currentPreview.status === 'processed' ? '已处理' : '待处理' }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="上传时间" :span="2">
+              {{ formatDate(currentPreview.uploadTime) }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showPreviewDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, computed, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Eye, Upload as UploadIcon, File, X } from 'lucide-vue-next'
+import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage } from '@/api/image'
+import * as GeoTIFF from 'geotiff'
 
 const searchKeyword = ref('')
 const viewMode = ref('table')
 const currentPage = ref(1)
 const pageSize = ref(10)
-const total = ref(100)
 const showUploadDialog = ref(false)
 const uploading = ref(false)
 const uploadFiles = ref([])
+const selectedRows = ref([])
+const loading = ref(false)
+const showPreviewDialog = ref(false)
+const currentPreview = ref(null)
+const previewImageUrl = ref('')
+const loadingPreview = ref(false)
+const previewError = ref('')
 
 const filterForm = ref({
   dateRange: [],
@@ -245,50 +309,73 @@ const filterForm = ref({
   cloudCover: 30
 })
 
-const tableData = ref([
-  {
-    id: 'IMG001',
-    name: 'Sentinel2_XJ_20240315_L2A',
-    thumbnail: 'https://via.placeholder.com/60',
-    preview: 'https://via.placeholder.com/800',
-    sensor: 'Sentinel-2',
-    date: '2024-03-15',
-    region: '乌鲁木齐市',
-    cloudCover: 5,
-    size: '245MB',
-    status: 'processed'
-  },
-  {
-    id: 'IMG002',
-    name: 'Landsat8_XJ_20240312_T1',
-    thumbnail: 'https://via.placeholder.com/60',
-    preview: 'https://via.placeholder.com/800',
-    sensor: 'Landsat-8',
-    date: '2024-03-12',
-    region: '喀什地区',
-    cloudCover: 15,
-    size: '312MB',
-    status: 'processed'
-  },
-  {
-    id: 'IMG003',
-    name: 'GF1_XJ_20240310_PMS',
-    thumbnail: 'https://via.placeholder.com/60',
-    preview: 'https://via.placeholder.com/800',
-    sensor: '高分一号',
-    date: '2024-03-10',
-    region: '阿勒泰地区',
-    cloudCover: 8,
-    size: '189MB',
-    status: 'pending'
+// 原始数据
+const allData = ref([])
+
+// 过滤后的数据
+const filteredData = computed(() => {
+  let data = [...allData.value]
+  
+  // 搜索过滤
+  if (searchKeyword.value) {
+    const keyword = searchKeyword.value.toLowerCase()
+    data = data.filter(item => 
+      item.name.toLowerCase().includes(keyword) ||
+      item.region.toLowerCase().includes(keyword)
+    )
   }
-])
+  
+  // 传感器过滤
+  if (filterForm.value.sensor) {
+    data = data.filter(item => item.sensor.toLowerCase().includes(filterForm.value.sensor.toLowerCase()))
+  }
+  
+  // 云量过滤
+  data = data.filter(item => item.cloudCover <= filterForm.value.cloudCover)
+  
+  // 时间范围过滤
+  if (filterForm.value.dateRange && filterForm.value.dateRange.length === 2) {
+    const [start, end] = filterForm.value.dateRange
+    data = data.filter(item => {
+      const itemDate = new Date(item.date)
+      return itemDate >= start && itemDate <= end
+    })
+  }
+  
+  return data
+})
+
+// 当前页数据
+const tableData = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filteredData.value.slice(start, end)
+})
+
+// 总数
+const total = computed(() => filteredData.value.length)
+
+// 加载影像列表
+const loadImageList = async () => {
+  try {
+    loading.value = true
+    const res = await getImageList()
+    allData.value = res.data || []
+  } catch (error) {
+    console.error('加载影像列表失败：', error)
+    ElMessage.error('加载影像列表失败')
+  } finally {
+    loading.value = false
+  }
+}
 
 const handleSearch = () => {
-  ElMessage.success('搜索功能开发中')
+  currentPage.value = 1
+  ElMessage.success('搜索完成')
 }
 
 const handleFilter = () => {
+  currentPage.value = 1
   ElMessage.success('筛选条件已应用')
 }
 
@@ -298,36 +385,208 @@ const resetFilter = () => {
     sensor: '',
     cloudCover: 30
   }
+  currentPage.value = 1
 }
 
 const handleSelectionChange = (selection) => {
-  console.log('选中的数据：', selection)
+  selectedRows.value = selection
 }
 
-const handlePreview = (row) => {
-  ElMessage.info(`预览影像：${row.name}`)
+// 生成缩略图（使用SVG占位符）
+const generateThumbnail = (row) => {
+  // 由于TIF格式浏览器无法直接显示，使用SVG占位图
+  const colors = [
+    { bg: '#4A90E2', text: '#ffffff' }, // 蓝色
+    { bg: '#7ED321', text: '#ffffff' }, // 绿色
+    { bg: '#F5A623', text: '#ffffff' }, // 橙色
+    { bg: '#BD10E0', text: '#ffffff' }, // 紫色
+    { bg: '#50E3C2', text: '#ffffff' }, // 青色
+  ]
+  
+  // 根据ID选择颜色
+  const colorIndex = parseInt(row.id.replace(/\D/g, '')) % colors.length
+  const color = colors[colorIndex]
+  
+  // 提取文件名关键信息
+  const displayName = row.name.length > 25 ? row.name.substring(0, 22) + '...' : row.name
+  const year = row.year || '2024'
+  
+  // 生成SVG
+  const svg = `
+    <svg width="400" height="300" xmlns="http://www.w3.org/2000/svg">
+      <rect width="400" height="300" fill="${color.bg}"/>
+      <text x="200" y="120" font-family="Arial, sans-serif" font-size="16" fill="${color.text}" text-anchor="middle">${displayName}</text>
+      <text x="200" y="150" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="${color.text}" text-anchor="middle">${year}</text>
+      <text x="200" y="180" font-family="Arial, sans-serif" font-size="14" fill="${color.text}" text-anchor="middle">${row.sensor || 'Unknown'}</text>
+      <circle cx="200" cy="220" r="30" fill="none" stroke="${color.text}" stroke-width="2"/>
+      <path d="M185,220 L195,230 L215,210" stroke="${color.text}" stroke-width="3" fill="none"/>
+    </svg>
+  `
+  
+  return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
 }
 
-const handleDownload = (row) => {
-  ElMessage.success(`下载影像：${row.name}`)
-}
-
-const handleDelete = (row) => {
-  ElMessageBox.confirm(`确定要删除影像 ${row.name} 吗？`, '删除确认', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    ElMessage.success('删除成功')
+// 格式化日期
+const formatDate = (dateString) => {
+  if (!dateString) return '-'
+  const date = new Date(dateString)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
   })
 }
 
-const handleBatchDownload = () => {
-  ElMessage.info('批量下载功能开发中')
+// 使用GeoTIFF读取和渲染TIF影像
+const renderTiffImage = async (filename) => {
+  try {
+    loadingPreview.value = true
+    previewError.value = ''
+    
+    // 获取TIF文件
+    const response = await fetch(`http://localhost:8080/image/file/${filename}`)
+    if (!response.ok) {
+      throw new Error('无法加载影像文件')
+    }
+    
+    const arrayBuffer = await response.arrayBuffer()
+    const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer)
+    const image = await tiff.getImage()
+    const width = image.getWidth()
+    const height = image.getHeight()
+    
+    // 读取栅格数据
+    const rasters = await image.readRasters()
+    
+    // 创建canvas
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    const imageData = ctx.createImageData(width, height)
+    
+    // 获取数据范围用于归一化
+    const data = rasters[0]
+    let min = Infinity
+    let max = -Infinity
+    
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] < min) min = data[i]
+      if (data[i] > max) max = data[i]
+    }
+    
+    // 归一化并应用颜色映射
+    const range = max - min
+    for (let i = 0; i < data.length; i++) {
+      const normalized = range > 0 ? (data[i] - min) / range : 0
+      const value = Math.floor(normalized * 255)
+      
+      const idx = i * 4
+      // 应用颜色映射 - 使用地形颜色
+      if (rasters.length >= 3) {
+        // RGB影像
+        imageData.data[idx] = Math.floor((rasters[0][i] - min) / range * 255)
+        imageData.data[idx + 1] = Math.floor((rasters[1][i] - min) / range * 255)
+        imageData.data[idx + 2] = Math.floor((rasters[2][i] - min) / range * 255)
+      } else {
+        // 单波段 - 使用地形色
+        const colors = getTerrainColor(normalized)
+        imageData.data[idx] = colors.r
+        imageData.data[idx + 1] = colors.g
+        imageData.data[idx + 2] = colors.b
+      }
+      imageData.data[idx + 3] = 255 // Alpha
+    }
+    
+    ctx.putImageData(imageData, 0, 0)
+    previewImageUrl.value = canvas.toDataURL()
+    
+  } catch (error) {
+    console.error('渲染TIF影像失败：', error)
+    previewError.value = '影像加载失败: ' + error.message
+    previewImageUrl.value = generateThumbnail(currentPreview.value)
+  } finally {
+    loadingPreview.value = false
+  }
+}
+
+// 地形颜色映射
+const getTerrainColor = (value) => {
+  // 0-9 的分类数据颜色映射
+  const classColors = {
+    0: { r: 156, g: 156, b: 156 }, // 裸地 - 灰色
+    1: { r: 255, g: 255, b: 190 }, // 棉花 - 浅黄
+    2: { r: 255, g: 235, b: 175 }, // 小麦 - 金黄
+    3: { r: 255, g: 211, b: 127 }, // 玉米 - 橙黄
+    4: { r: 255, g: 85, b: 85 },   // 番茄 - 红色
+    5: { r: 170, g: 85, b: 127 },  // 甜菜 - 紫红
+    6: { r: 85, g: 255, b: 0 },    // 打瓜 - 亮绿
+    7: { r: 255, g: 0, b: 0 },     // 辣椒 - 鲜红
+    8: { r: 211, g: 255, b: 190 }, // 籽用葫芦 - 浅绿
+    9: { r: 190, g: 210, b: 255 }  // 其它耕地 - 浅蓝
+  }
+  
+  // 将归一化的值转换为类别 (0-9)
+  const classValue = Math.floor(value * 10)
+  const clampedClass = Math.min(9, Math.max(0, classValue))
+  
+  return classColors[clampedClass] || { r: 200, g: 200, b: 200 }
+}
+
+const handlePreview = async (row) => {
+  currentPreview.value = row
+  showPreviewDialog.value = true
+  previewImageUrl.value = ''
+  
+  // 异步加载真实影像
+  await nextTick()
+  await renderTiffImage(row.name)
+}
+
+const handleDelete = (row) => {
+  ElMessageBox.confirm(`确定要删除影像 ${row.name} 吗？此操作将永久删除该文件！`, '删除确认', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning'
+  }).then(async () => {
+    try {
+      await deleteImage(row.id)
+      ElMessage.success('删除成功')
+      await loadImageList()
+    } catch (error) {
+      console.error('删除失败：', error)
+      ElMessage.error('删除失败')
+    }
+  }).catch(() => {
+    // 用户取消删除
+  })
 }
 
 const handleBatchDelete = () => {
-  ElMessage.info('批量删除功能开发中')
+  if (selectedRows.value.length === 0) {
+    ElMessage.warning('请先选择要删除的影像')
+    return
+  }
+  
+  ElMessageBox.confirm(`确定要删除选中的 ${selectedRows.value.length} 个影像吗？此操作将永久删除这些文件！`, '批量删除确认', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning'
+  }).then(async () => {
+    try {
+      const ids = selectedRows.value.map(row => row.id)
+      await batchDeleteImage(ids)
+      ElMessage.success(`成功删除 ${ids.length} 个影像`)
+      await loadImageList()
+    } catch (error) {
+      console.error('批量删除失败：', error)
+      ElMessage.error('批量删除失败')
+    }
+  }).catch(() => {
+    // 用户取消删除
+  })
 }
 
 const handleSizeChange = (val) => {
@@ -354,20 +613,37 @@ const formatFileSize = (bytes) => {
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
 }
 
-const handleUpload = () => {
+const handleUpload = async () => {
   if (uploadFiles.value.length === 0) {
     ElMessage.warning('请先选择文件')
     return
   }
   
-  uploading.value = true
-  setTimeout(() => {
-    uploading.value = false
+  try {
+    uploading.value = true
+    const formData = new FormData()
+    uploadFiles.value.forEach(file => {
+      formData.append('files', file)
+    })
+    
+    await uploadImage(formData)
+    
+    ElMessage.success(`成功上传 ${uploadFiles.value.length} 个文件`)
     showUploadDialog.value = false
     uploadFiles.value = []
-    ElMessage.success('上传成功')
-  }, 2000)
+    await loadImageList()
+  } catch (error) {
+    console.error('上传失败：', error)
+    ElMessage.error('上传失败：' + (error.message || '未知错误'))
+  } finally {
+    uploading.value = false
+  }
 }
+
+// 组件挂载时加载数据
+onMounted(() => {
+  loadImageList()
+})
 </script>
 
 <style scoped lang="scss">
@@ -375,6 +651,24 @@ const handleUpload = () => {
   .action-card, .filter-card {
     margin-bottom: 20px;
     border-radius: 8px;
+  }
+
+  .action-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+
+    .action-left {
+      display: flex;
+      gap: 12px;
+    }
+
+    .action-right {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
   }
   
   .card-header {
@@ -388,6 +682,40 @@ const handleUpload = () => {
       gap: 8px;
       font-weight: 600;
     }
+  }
+
+  .thumbnail-wrapper {
+    cursor: pointer;
+    transition: all 0.3s;
+
+    &:hover {
+      transform: scale(1.1);
+    }
+  }
+
+  .image-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 60px;
+    height: 60px;
+    background: #f5f7fa;
+    border-radius: 4px;
+    color: #909399;
+  }
+
+  .image-placeholder-large {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 180px;
+    background: #f5f7fa;
+    color: #909399;
+    text-align: center;
+    padding: 10px;
+    font-size: 12px;
   }
   
   .grid-view {
@@ -414,10 +742,24 @@ const handleUpload = () => {
         z-index: 10;
       }
       
-      .grid-image {
+      .grid-image-wrapper {
         width: 100%;
         height: 180px;
         cursor: pointer;
+        overflow: hidden;
+
+        &:hover {
+          .grid-image {
+            transform: scale(1.05);
+          }
+        }
+      }
+
+      .grid-image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.3s;
       }
       
       .grid-info {
@@ -526,6 +868,45 @@ const handleUpload = () => {
           color: #f00;
         }
       }
+    }
+  }
+
+  .preview-container {
+    .preview-image {
+      margin-bottom: 20px;
+      border: 1px solid #ebeef5;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #f5f7fa;
+      min-height: 300px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      color: #909399;
+      text-align: center;
+
+      p {
+        margin: 20px 0 10px;
+        font-size: 14px;
+        color: #606266;
+      }
+    }
+
+    .preview-info {
+      margin-top: 20px;
+    }
+
+    .preview-error {
+      width: 100%;
+      padding: 20px;
     }
   }
 }
