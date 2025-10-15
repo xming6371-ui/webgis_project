@@ -29,6 +29,15 @@ export const deleteImage = (id) => {
   })
 }
 
+// 批量删除影像
+export const batchDeleteImage = (ids) => {
+  return request({
+    url: '/image/batch-delete',
+    method: 'post',
+    data: { ids }
+  })
+}
+
 // 下载影像
 export const downloadImage = (id) => {
   return request({
