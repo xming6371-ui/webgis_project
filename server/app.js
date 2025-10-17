@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url'
 
 // 导入路由模块
 import imageRoutes from './routes/image.js'
+import config from './config.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -79,6 +80,15 @@ app.listen(PORT, () => {
   console.log('====================================')
   console.log('  可用服务:')
   console.log('  - 影像数据管理 (/image)')
+  console.log('====================================')
+  console.log('  GDAL配置:')
+  if (config.condaEnv) {
+    console.log(`  - Conda环境: ${config.condaEnv}`)
+    console.log(`  - 如需修改，请编辑 server/config.js`)
+  } else {
+    console.log('  - 使用系统PATH中的GDAL')
+    console.log('  - 如需使用Conda环境，请配置 server/config.js')
+  }
   console.log('====================================')
   console.log('')
 })

@@ -97,31 +97,97 @@
           </template>
         </el-table-column>
         <el-table-column prop="name" label="影像名称" min-width="200" />
+        <el-table-column prop="year" label="年份" width="80" />
+        <el-table-column prop="period" label="期次" width="80">
+          <template #default="scope">
+            第{{ scope.row.period }}期
+          </template>
+        </el-table-column>
+        <el-table-column prop="cropType" label="作物类型" width="100">
+          <template #default="scope">
+            <el-tag size="small">{{ getCropTypeLabel(scope.row.cropType) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="sensor" label="传感器" width="120" />
         <el-table-column prop="date" label="采集日期" width="120" />
         <el-table-column prop="region" label="区域" width="150" />
         <el-table-column prop="cloudCover" label="云量" width="80">
           <template #default="scope">
-            <el-tag :type="scope.row.cloudCover < 10 ? 'success' : scope.row.cloudCover < 30 ? '' : 'warning'">
+            <el-tag 
+              v-if="scope.row.cloudCover !== undefined && scope.row.cloudCover !== null"
+              :type="scope.row.cloudCover < 10 ? 'success' : scope.row.cloudCover < 30 ? '' : 'warning'"
+            >
               {{ scope.row.cloudCover }}%
             </el-tag>
+            <span v-else style="color: #999">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="size" label="文件大小" width="100" />
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="220">
           <template #default="scope">
-            <el-tag :type="scope.row.status === 'processed' ? 'success' : 'info'">
-              {{ scope.row.status === 'processed' ? '已处理' : '待处理' }}
-            </el-tag>
+            <!-- 正在优化中 - 显示进度 -->
+            <div v-if="isOptimizing(scope.row.id)" style="width: 100%">
+              <div style="display: flex; align-items: center; margin-bottom: 4px">
+                <el-icon class="is-loading" style="margin-right: 4px"><Loading /></el-icon>
+                <span style="font-size: 12px; color: #E6A23C">{{ getProgress(scope.row.id).step }}</span>
+              </div>
+              <el-progress 
+                :percentage="getProgress(scope.row.id).progress" 
+                :status="getProgress(scope.row.id).progress === 100 ? 'success' : ''"
+                :stroke-width="8"
+                style="margin-top: 2px"
+              />
+              <div style="font-size: 11px; color: #909399; margin-top: 2px">
+                已用时: {{ getProgress(scope.row.id).elapsed || 0 }}秒
+              </div>
+            </div>
+            <!-- 正常状态 -->
+            <template v-else>
+              <el-tag :type="getStatusType(scope.row.status)" size="small">
+                {{ getStatusLabel(scope.row.status) }}
+              </el-tag>
+              <el-tag 
+                v-if="scope.row.isOptimized" 
+                type="success" 
+                size="small" 
+                style="margin-left: 5px"
+              >
+                已优化
+              </el-tag>
+            </template>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="scope">
-            <el-button size="small" type="primary" link @click="handlePreview(scope.row)">
-              <Eye :size="14" style="margin-right: 4px" />
-              预览
+            <!-- 优化按钮（仅未优化的文件显示） -->
+            <el-button 
+              v-if="!scope.row.isOptimized" 
+              size="small" 
+              type="success" 
+              link 
+              :disabled="isOptimizing(scope.row.id)"
+              @click="handleOptimize(scope.row)"
+            >
+              <el-icon style="margin-right: 4px"><Settings /></el-icon>
+              优化TIF
             </el-button>
-            <el-button size="small" type="danger" link @click="handleDelete(scope.row)">
+            <el-button 
+              size="small" 
+              type="primary" 
+              link 
+              :disabled="isOptimizing(scope.row.id)"
+              @click="handleEdit(scope.row)"
+            >
+              <Edit :size="14" style="margin-right: 4px" />
+              编辑
+            </el-button>
+            <el-button 
+              size="small" 
+              type="danger" 
+              link 
+              :disabled="isOptimizing(scope.row.id)"
+              @click="handleDelete(scope.row)"
+            >
               <Trash2 :size="14" style="margin-right: 4px" />
               删除
             </el-button>
@@ -181,16 +247,76 @@
     <!-- 上传对话框 -->
     <el-dialog
       v-model="showUploadDialog"
-      title="批量上传影像"
-      width="600px"
+      title="上传影像"
+      width="700px"
       :close-on-click-modal="false"
     >
+      <!-- 添加影像信息表单 -->
+      <el-form :model="uploadForm" label-width="100px" style="margin-bottom: 20px">
+        <el-form-item label="年份" required>
+          <el-date-picker
+            v-model="uploadForm.year"
+            type="year"
+            placeholder="选择年份"
+            format="YYYY"
+            value-format="YYYY"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="期次" required>
+          <el-select v-model="uploadForm.period" placeholder="选择期次" style="width: 100%">
+            <el-option label="第一期" value="1" />
+            <el-option label="第二期" value="2" />
+            <el-option label="第三期" value="3" />
+            <el-option label="第四期" value="4" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="作物类型" required>
+          <el-select v-model="uploadForm.cropType" placeholder="选择作物类型" style="width: 100%">
+            <el-option label="全部作物" value="all" />
+            <el-option label="小麦" value="wheat" />
+            <el-option label="玉米" value="corn" />
+            <el-option label="棉花" value="cotton" />
+            <el-option label="水稻" value="rice" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="区域">
+          <el-input v-model="uploadForm.region" placeholder="输入区域代码或名称" />
+        </el-form-item>
+        <el-form-item label="传感器">
+          <el-input v-model="uploadForm.sensor" placeholder="如: Sentinel-2, Landsat-8" />
+        </el-form-item>
+        <el-form-item label="云量 (%)">
+          <el-input-number 
+            v-model="uploadForm.cloudCover" 
+            :min="0" 
+            :max="100" 
+            :precision="1"
+            placeholder="留空表示无云量信息"
+            style="width: 100%"
+          />
+          <span style="color: #999; font-size: 12px; margin-left: 10px">可选，如果没有云量信息可不填</span>
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input 
+            v-model="uploadForm.description" 
+            type="textarea" 
+            :rows="2"
+            placeholder="填写影像描述信息（可选）" 
+          />
+        </el-form-item>
+      </el-form>
+
+      <el-divider content-position="left">选择文件</el-divider>
+
+      <!-- 文件上传区域 -->
       <el-upload
         class="upload-area"
         drag
         multiple
         :auto-upload="false"
         :on-change="handleFileChange"
+        :show-file-list="false"
         accept=".tif,.tiff,.img,.jp2"
       >
         <UploadIcon :size="60" class="upload-icon" />
@@ -200,9 +326,7 @@
         </div>
       </el-upload>
       
-      <el-divider />
-      
-      <div v-if="uploadFiles.length > 0" class="upload-list">
+      <div v-if="uploadFiles.length > 0" class="upload-list" style="margin-top: 15px">
         <div class="upload-list-title">待上传文件 ({{ uploadFiles.length }})</div>
         <div v-for="(file, index) in uploadFiles" :key="index" class="upload-item">
           <File :size="16" />
@@ -214,7 +338,7 @@
       
       <template #footer>
         <el-button @click="showUploadDialog = false">取消</el-button>
-        <el-button type="primary" :loading="uploading" @click="handleUpload">
+        <el-button type="primary" :loading="uploading" @click="handleUpload" :disabled="uploadFiles.length === 0">
           {{ uploading ? '上传中...' : '开始上传' }}
         </el-button>
       </template>
@@ -254,22 +378,43 @@
           <el-descriptions :column="2" border>
             <el-descriptions-item label="影像ID">{{ currentPreview.id }}</el-descriptions-item>
             <el-descriptions-item label="文件名">{{ currentPreview.name }}</el-descriptions-item>
+            <el-descriptions-item label="年份">{{ currentPreview.year }}年</el-descriptions-item>
+            <el-descriptions-item label="期次">第{{ currentPreview.period }}期</el-descriptions-item>
+            <el-descriptions-item label="作物类型">
+              <el-tag size="small">{{ getCropTypeLabel(currentPreview.cropType) }}</el-tag>
+            </el-descriptions-item>
             <el-descriptions-item label="传感器">{{ currentPreview.sensor }}</el-descriptions-item>
             <el-descriptions-item label="采集日期">{{ currentPreview.date }}</el-descriptions-item>
             <el-descriptions-item label="区域">{{ currentPreview.region }}</el-descriptions-item>
-            <el-descriptions-item label="云量">
+            <el-descriptions-item v-if="currentPreview.cloudCover !== undefined && currentPreview.cloudCover !== null" label="云量">
               <el-tag :type="currentPreview.cloudCover < 10 ? 'success' : currentPreview.cloudCover < 30 ? '' : 'warning'">
                 {{ currentPreview.cloudCover }}%
               </el-tag>
             </el-descriptions-item>
-            <el-descriptions-item label="文件大小">{{ currentPreview.size }}</el-descriptions-item>
+            <el-descriptions-item label="文件大小">
+              {{ currentPreview.size }}
+              <span v-if="currentPreview.isOptimized && currentPreview.optimizedSize" style="color: #67c23a; font-size: 12px; margin-left: 5px">
+                (优化后: {{ currentPreview.optimizedSize }})
+              </span>
+            </el-descriptions-item>
             <el-descriptions-item label="状态">
-              <el-tag :type="currentPreview.status === 'processed' ? 'success' : 'info'">
-                {{ currentPreview.status === 'processed' ? '已处理' : '待处理' }}
+              <el-tag :type="getStatusType(currentPreview.status)" size="small">
+                {{ getStatusLabel(currentPreview.status) }}
+              </el-tag>
+              <el-tag 
+                v-if="currentPreview.isOptimized" 
+                type="success" 
+                size="small" 
+                style="margin-left: 5px"
+              >
+                已优化
               </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="上传时间" :span="2">
               {{ formatDate(currentPreview.uploadTime) }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="currentPreview.description" label="描述" :span="2">
+              {{ currentPreview.description }}
             </el-descriptions-item>
           </el-descriptions>
         </div>
@@ -278,14 +423,139 @@
         <el-button @click="showPreviewDialog = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 编辑对话框 -->
+    <el-dialog
+      v-model="showEditDialog"
+      title="编辑影像信息"
+      width="600px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="editForm" label-width="100px">
+        <el-form-item label="影像ID">
+          <el-input v-model="editForm.id" disabled />
+          <div class="form-tip">不可修改</div>
+        </el-form-item>
+        
+        <el-form-item label="文件名">
+          <el-input v-model="editForm.name" disabled />
+          <div class="form-tip">不可修改</div>
+        </el-form-item>
+        
+        <el-form-item label="年份">
+          <el-select v-model="editForm.year" placeholder="请选择年份" style="width: 100%">
+            <el-option
+              v-for="year in [2020, 2021, 2022, 2023, 2024, 2025]"
+              :key="year"
+              :label="`${year}年`"
+              :value="year.toString()"
+            />
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="期次">
+          <el-select v-model="editForm.period" placeholder="请选择期次" style="width: 100%">
+            <el-option
+              v-for="period in [1, 2, 3, 4, 5, 6]"
+              :key="period"
+              :label="`第${period}期`"
+              :value="period.toString()"
+            />
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="作物类型">
+          <el-select v-model="editForm.cropType" placeholder="请选择作物类型" style="width: 100%">
+            <el-option label="全部作物" value="all" />
+            <el-option label="棉花" value="cotton" />
+            <el-option label="小麦" value="wheat" />
+            <el-option label="玉米" value="corn" />
+            <el-option label="番茄" value="tomato" />
+            <el-option label="其他" value="other" />
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="区域">
+          <el-input v-model="editForm.region" placeholder="请输入区域" />
+        </el-form-item>
+        
+        <el-form-item label="传感器">
+          <el-select v-model="editForm.sensor" placeholder="请选择传感器" style="width: 100%">
+            <el-option label="Sentinel-2" value="sentinel2" />
+            <el-option label="Landsat-8" value="landsat8" />
+            <el-option label="GF-1" value="gf1" />
+            <el-option label="VH" value="vh" />
+            <el-option label="其他" value="other" />
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="采集日期">
+          <el-date-picker
+            v-model="editForm.date"
+            type="date"
+            placeholder="选择日期"
+            style="width: 100%"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DD"
+          />
+        </el-form-item>
+        
+        <el-form-item label="云量 (%)">
+          <el-input-number 
+            v-model="editForm.cloudCover" 
+            :min="0" 
+            :max="100" 
+            :precision="1"
+            placeholder="留空表示无云量信息"
+            style="width: 100%"
+          />
+          <el-alert 
+            type="warning" 
+            :closable="false"
+            style="margin-top: 8px"
+          >
+            <template #title>
+              <span style="font-size: 12px">
+                ⚠️ 云量数据通常从遥感影像元数据中自动提取，请谨慎修改
+              </span>
+            </template>
+          </el-alert>
+        </el-form-item>
+        
+        <el-form-item label="文件大小">
+          <el-input v-model="editForm.size" disabled />
+          <div class="form-tip">不可修改</div>
+        </el-form-item>
+        
+        <el-form-item label="上传时间">
+          <el-input v-model="editFormattedUploadTime" disabled />
+          <div class="form-tip">不可修改</div>
+        </el-form-item>
+        
+        <el-form-item label="描述">
+          <el-input 
+            v-model="editForm.description" 
+            type="textarea" 
+            :rows="3"
+            placeholder="请输入影像描述"
+          />
+        </el-form-item>
+      </el-form>
+      
+      <template #footer>
+        <el-button @click="showEditDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveEdit">保存修改</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed, nextTick } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Eye, Upload as UploadIcon, File, X } from 'lucide-vue-next'
-import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage } from '@/api/image'
+import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
+import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings } from 'lucide-vue-next'
+import { Loading } from '@element-plus/icons-vue'
+import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage, getOptimizeProgress } from '@/api/image'
 import * as GeoTIFF from 'geotiff'
 
 const searchKeyword = ref('')
@@ -294,6 +564,26 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const showUploadDialog = ref(false)
 const uploading = ref(false)
+
+// 正在优化的任务列表
+const optimizingTasks = ref(new Set())
+
+// 优化进度数据（id -> { progress, status, step, elapsed }）
+const optimizationProgress = ref(new Map())
+
+// 轮询定时器
+const progressPollingTimers = ref(new Map())
+
+// 检查是否正在优化
+const isOptimizing = (id) => {
+  return optimizingTasks.value.has(id)
+}
+
+// 获取优化进度
+const getProgress = (id) => {
+  return optimizationProgress.value.get(id) || { progress: 0, step: '准备中...' }
+}
+
 const uploadFiles = ref([])
 const selectedRows = ref([])
 const loading = ref(false)
@@ -303,10 +593,38 @@ const previewImageUrl = ref('')
 const loadingPreview = ref(false)
 const previewError = ref('')
 
+// 编辑相关状态
+const showEditDialog = ref(false)
+const editForm = ref({
+  id: '',
+  name: '',
+  year: '',
+  period: '',
+  cropType: '',
+  region: '',
+  sensor: '',
+  date: '',
+  cloudCover: null,
+  size: '',
+  uploadTime: '',
+  description: ''
+})
+
 const filterForm = ref({
   dateRange: [],
   sensor: '',
   cloudCover: 30
+})
+
+// 上传表单数据
+const uploadForm = ref({
+  year: new Date().getFullYear().toString(),
+  period: '1',
+  cropType: 'all',
+  region: '',
+  sensor: '',
+  cloudCover: null, // 云量（可选）
+  description: ''
 })
 
 // 原始数据
@@ -330,8 +648,12 @@ const filteredData = computed(() => {
     data = data.filter(item => item.sensor.toLowerCase().includes(filterForm.value.sensor.toLowerCase()))
   }
   
-  // 云量过滤
-  data = data.filter(item => item.cloudCover <= filterForm.value.cloudCover)
+  // 云量过滤（只过滤有云量值的数据）
+  data = data.filter(item => 
+    item.cloudCover === null || 
+    item.cloudCover === undefined || 
+    item.cloudCover <= filterForm.value.cloudCover
+  )
   
   // 时间范围过滤
   if (filterForm.value.dateRange && filterForm.value.dateRange.length === 2) {
@@ -427,6 +749,40 @@ const generateThumbnail = (row) => {
 }
 
 // 格式化日期
+// 作物类型标签转换
+const getCropTypeLabel = (type) => {
+  const labels = {
+    'all': '全部作物',
+    'wheat': '小麦',
+    'corn': '玉米',
+    'cotton': '棉花',
+    'rice': '水稻'
+  }
+  return labels[type] || type
+}
+
+// 状态类型转换
+const getStatusType = (status) => {
+  const types = {
+    'pending': 'info',
+    'processing': 'warning',
+    'processed': 'success',
+    'failed': 'danger'
+  }
+  return types[status] || 'info'
+}
+
+// 状态标签转换
+const getStatusLabel = (status) => {
+  const labels = {
+    'pending': '待处理',
+    'processing': '处理中',
+    'processed': '已完成',
+    'failed': '失败'
+  }
+  return labels[status] || status
+}
+
 const formatDate = (dateString) => {
   if (!dateString) return '-'
   const date = new Date(dateString)
@@ -437,6 +793,225 @@ const formatDate = (dateString) => {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
+
+// 编辑表单的上传时间（格式化显示）
+const editFormattedUploadTime = computed(() => {
+  return formatDate(editForm.value.uploadTime)
+})
+
+// 打开编辑对话框
+const handleEdit = (row) => {
+  editForm.value = {
+    id: row.id,
+    name: row.name,
+    year: row.year,
+    period: row.period,
+    cropType: row.cropType,
+    region: row.region,
+    sensor: row.sensor,
+    date: row.date,
+    cloudCover: row.cloudCover,
+    size: row.size,
+    uploadTime: row.uploadTime,
+    description: row.description || ''
+  }
+  showEditDialog.value = true
+}
+
+// 开始轮询优化进度
+const startProgressPolling = (id) => {
+  // 如果已有定时器，先清除
+  if (progressPollingTimers.value.has(id)) {
+    clearInterval(progressPollingTimers.value.get(id))
+  }
+  
+  // 立即获取一次进度
+  updateProgress(id)
+  
+  // 每2秒轮询一次
+  const timer = setInterval(() => {
+    updateProgress(id)
+  }, 2000)
+  
+  progressPollingTimers.value.set(id, timer)
+}
+
+// 停止轮询优化进度
+const stopProgressPolling = (id) => {
+  if (progressPollingTimers.value.has(id)) {
+    clearInterval(progressPollingTimers.value.get(id))
+    progressPollingTimers.value.delete(id)
+    optimizationProgress.value.delete(id)
+  }
+}
+
+// 更新单个文件的优化进度
+const updateProgress = async (id) => {
+  try {
+    const response = await getOptimizeProgress(id)
+    const data = response.data
+    
+    console.log(`📊 获取进度 [${id}]:`, data)  // 调试日志
+    
+    if (data.exists) {
+      // 更新进度数据
+      optimizationProgress.value.set(id, {
+        progress: data.progress,
+        status: data.status,
+        step: data.step,
+        elapsed: data.elapsed
+      })
+      
+      console.log(`✅ 进度已更新: ${data.progress}% - ${data.step}`)  // 调试日志
+      
+      // 如果完成或失败，停止轮询
+      if (data.status === 'completed' || data.status === 'failed') {
+        stopProgressPolling(id)
+      }
+    } else {
+      console.log(`⚠️ 后端没有进度记录 [${id}]`)  // 调试日志
+      // 后端没有进度记录，可能已完成或失败
+      stopProgressPolling(id)
+    }
+  } catch (error) {
+    console.error('获取进度失败:', error)
+  }
+}
+
+// 优化TIF文件（后台异步优化，不阻塞UI）
+const handleOptimize = async (row) => {
+  try {
+    // 确认对话框
+    await ElMessageBox.confirm(
+      `<div style="line-height: 1.8;">
+        <p><strong>准备优化文件：${row.name}</strong></p>
+        <p style="margin-top: 12px;">优化处理包括：</p>
+        <ul style="margin: 8px 0; padding-left: 20px;">
+          <li>投影转换（EPSG:32645 → EPSG:3857）</li>
+          <li>NoData值设置（255）</li>
+          <li>转换为COG格式（Cloud Optimized GeoTIFF）</li>
+          <li>LZW压缩</li>
+          <li>添加金字塔（加速显示）</li>
+        </ul>
+        <p style="margin-top: 12px; color: #409EFF;">💡 提示：</p>
+        <ul style="margin: 8px 0; padding-left: 20px; color: #409EFF;">
+          <li>优化将在后台执行，您可以继续操作其他功能</li>
+          <li>处理时间：约1-10分钟（取决于文件大小）</li>
+          <li>完成后会自动通知您</li>
+        </ul>
+        <p style="margin-top: 12px;">处理后文件大小通常会减小60-95%，地图显示速度会大幅提升。</p>
+      </div>`,
+      '确认优化',
+      {
+        confirmButtonText: '开始优化',
+        cancelButtonText: '取消',
+        type: 'info',
+        dangerouslyUseHTMLString: true,
+        customStyle: {
+          width: '550px'
+        }
+      }
+    )
+    
+    // 添加到优化任务列表
+    optimizingTasks.value.add(row.id)
+    
+    // 提示开始优化
+    ElMessage({
+      message: `🚀 开始优化 ${row.name}，请稍候...`,
+      type: 'info',
+      duration: 3000
+    })
+    
+    // 开始轮询进度
+    startProgressPolling(row.id)
+    
+    // 异步调用API（不阻塞UI）
+    optimizeImage(row.id)
+      .then(response => {
+        // 移除任务
+        optimizingTasks.value.delete(row.id)
+        
+        // 停止轮询进度
+        stopProgressPolling(row.id)
+        
+        // 显示成功通知
+        ElNotification({
+          title: '✅ 优化完成',
+          message: `${row.name}\n原始: ${response.data.originalSize} → 优化: ${response.data.optimizedSize}\n压缩率: ${response.data.compressionRatio}`,
+          type: 'success',
+          duration: 8000,
+          position: 'bottom-right'
+        })
+        
+        // 刷新列表
+        fetchData()
+      })
+      .catch(error => {
+        // 移除任务
+        optimizingTasks.value.delete(row.id)
+        
+        // 停止轮询进度
+        stopProgressPolling(row.id)
+        
+        const errorMsg = error.response?.data?.message || error.message || '优化失败'
+        
+        // 显示错误通知
+        ElNotification({
+          title: '❌ 优化失败',
+          message: `${row.name}\n${errorMsg}`,
+          type: 'error',
+          duration: 0,  // 不自动关闭
+          position: 'bottom-right'
+        })
+      })
+    
+  } catch (error) {
+    // 用户取消
+  }
+}
+
+// 保存编辑
+const handleSaveEdit = async () => {
+  try {
+    // 验证必填字段
+    if (!editForm.value.year || !editForm.value.period || !editForm.value.cropType) {
+      ElMessage.warning('请填写年份、期次和作物类型')
+      return
+    }
+    
+    // 在真实项目中，这里应该调用后端API保存数据
+    // await updateImage(editForm.value.id, editForm.value)
+    
+    // 模拟更新：在 allData 中找到对应项并更新
+    const index = allData.value.findIndex(item => item.id === editForm.value.id)
+    if (index !== -1) {
+      // 只更新可编辑字段
+      allData.value[index] = {
+        ...allData.value[index],
+        year: editForm.value.year,
+        period: editForm.value.period,
+        cropType: editForm.value.cropType,
+        region: editForm.value.region,
+        sensor: editForm.value.sensor,
+        date: editForm.value.date,
+        cloudCover: editForm.value.cloudCover,
+        description: editForm.value.description
+      }
+      
+      ElMessage.success('修改成功')
+      showEditDialog.value = false
+      
+      // 注意：纯前端项目，刷新后数据会丢失
+      // 在真实项目中，数据会持久化到数据库
+    } else {
+      ElMessage.error('未找到该影像数据')
+    }
+  } catch (error) {
+    console.error('保存失败:', error)
+    ElMessage.error('保存失败：' + error.message)
+  }
 }
 
 // 使用GeoTIFF读取和渲染TIF影像
@@ -619,18 +1194,96 @@ const handleUpload = async () => {
     return
   }
   
+  // 验证必填字段
+  if (!uploadForm.value.year) {
+    ElMessage.warning('请选择年份')
+    return
+  }
+  if (!uploadForm.value.period) {
+    ElMessage.warning('请选择期次')
+    return
+  }
+  if (!uploadForm.value.cropType) {
+    ElMessage.warning('请选择作物类型')
+    return
+  }
+  
+  // ✅ 检查是否有同名文件
+  const duplicateFiles = []
+  uploadFiles.value.forEach(file => {
+    const existing = allData.value.find(img => img.name === file.name)
+    if (existing) {
+      duplicateFiles.push(file.name)
+    }
+  })
+  
+  // ✅ 如果有同名文件，提示用户
+  if (duplicateFiles.length > 0) {
+    const fileList = duplicateFiles.map(name => `• ${name}`).join('\n')
+    const confirmMessage = `以下文件已存在，上传将会覆盖原文件：\n\n${fileList}\n\n⚠️ 注意：原文件将被永久替换！\n\n是否继续上传？`
+    
+    try {
+      await ElMessageBox.confirm(confirmMessage, '文件名冲突警告', {
+        confirmButtonText: '覆盖并上传',
+        cancelButtonText: '取消上传',
+        type: 'warning',
+        distinguishCancelAndClose: true
+      })
+    } catch (error) {
+      // 用户取消了
+      ElMessage.info('已取消上传')
+      return
+    }
+  }
+  
   try {
     uploading.value = true
     const formData = new FormData()
+    
+    // 添加文件
     uploadFiles.value.forEach(file => {
       formData.append('files', file)
     })
     
+    // 添加元数据
+    formData.append('year', uploadForm.value.year)
+    formData.append('period', uploadForm.value.period)
+    formData.append('cropType', uploadForm.value.cropType)
+    formData.append('region', uploadForm.value.region || '')
+    formData.append('sensor', uploadForm.value.sensor || '')
+    if (uploadForm.value.cloudCover !== null && uploadForm.value.cloudCover !== undefined) {
+      formData.append('cloudCover', uploadForm.value.cloudCover.toString())
+    }
+    formData.append('description', uploadForm.value.description || '')
+    
     await uploadImage(formData)
     
-    ElMessage.success(`成功上传 ${uploadFiles.value.length} 个文件`)
+    // ✅ 上传成功提示
+    ElMessage.success({
+      message: `成功上传 ${uploadFiles.value.length} 个文件`,
+      duration: 3000
+    })
+    
+    // ✅ 提醒用户需要优化
+    ElMessage.warning({
+      message: '⚠️ 提示：上传的TIF文件较大，建议使用"优化TIF"功能进行处理后再在地图中显示，以获得更流畅的体验',
+      duration: 8000,
+      showClose: true
+    })
     showUploadDialog.value = false
     uploadFiles.value = []
+    
+    // 重置表单
+    uploadForm.value = {
+      year: new Date().getFullYear().toString(),
+      period: '1',
+      cropType: 'all',
+      region: '',
+      sensor: '',
+      cloudCover: null,
+      description: ''
+    }
+    
     await loadImageList()
   } catch (error) {
     console.error('上传失败：', error)
@@ -643,6 +1296,17 @@ const handleUpload = async () => {
 // 组件挂载时加载数据
 onMounted(() => {
   loadImageList()
+})
+
+// 组件卸载时清理所有定时器
+onUnmounted(() => {
+  // 清理所有轮询定时器
+  progressPollingTimers.value.forEach((timer, id) => {
+    clearInterval(timer)
+    console.log(`🧹 清理轮询定时器: ${id}`)
+  })
+  progressPollingTimers.value.clear()
+  optimizationProgress.value.clear()
 })
 </script>
 
@@ -908,6 +1572,26 @@ onMounted(() => {
       width: 100%;
       padding: 20px;
     }
+  }
+}
+
+.form-tip {
+  font-size: 12px;
+  color: #999;
+  margin-top: 4px;
+}
+
+// 加载动画
+.is-loading {
+  animation: rotating 2s linear infinite;
+}
+
+@keyframes rotating {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 </style>

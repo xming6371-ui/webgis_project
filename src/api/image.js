@@ -47,3 +47,19 @@ export const downloadImage = (id) => {
   })
 }
 
+// 优化TIF文件
+export const optimizeImage = (id) => {
+  return request({
+    url: `/image/optimize/${id}`,
+    method: 'post'
+  })
+}
+
+// 获取优化进度
+export const getOptimizeProgress = (id) => {
+  return request({
+    url: `/image/optimize-progress/${id}`,
+    method: 'get'
+  })
+}
+

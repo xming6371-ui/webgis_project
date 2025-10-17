@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus'
 // 创建axios实例
 const service = axios.create({
   baseURL: '/api',
-  timeout: 30000
+  timeout: 900000  // 15分钟超时（TIF优化可能需要1-15分钟，大文件70MB+需要更长时间）
 })
 
 // 请求拦截器
