@@ -244,6 +244,82 @@
       </div>
     </el-card>
 
+    <!-- 分析结果队列 -->
+    <el-card shadow="never" class="result-queue-card" style="margin-top: 20px;">
+      <template #header>
+        <div class="card-header">
+          <span>
+            <FileArchive :size="16" style="margin-right: 8px" /> 
+            分析结果队列 (共 {{ analysisResults.length }} 个文件)
+          </span>
+          <div>
+            <el-button 
+              v-if="analysisResults.length > 0" 
+              type="danger" 
+              size="small"
+              @click="handleClearResultQueue"
+            >
+              <Trash2 :size="14" style="margin-right: 4px" />
+              清空队列
+            </el-button>
+            <el-button size="small" @click="loadAnalysisResults">
+              <RefreshCw :size="14" style="margin-right: 4px" />
+              刷新
+            </el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-empty v-if="analysisResults.length === 0" description="暂无分析结果文件">
+        <el-text type="info">从任务管理中导出分析结果后，会自动出现在这里</el-text>
+      </el-empty>
+
+      <el-table v-else :data="paginatedResults" style="width: 100%">
+        <el-table-column prop="name" label="文件名称" min-width="300" show-overflow-tooltip />
+        <el-table-column prop="type" label="格式" width="100">
+          <template #default="scope">
+            <el-tag 
+              :type="scope.row.type === 'SHP' ? 'success' : 'primary'" 
+              size="small"
+            >
+              {{ scope.row.type }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="taskName" label="来源任务" width="200" show-overflow-tooltip />
+        <el-table-column prop="analysisType" label="分析类型" width="120">
+          <template #default="scope">
+            <el-tag size="small">{{ getAnalysisTypeLabel(scope.row.analysisType) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="recordCount" label="记录数" width="100" />
+        <el-table-column prop="size" label="文件大小" width="120" />
+        <el-table-column prop="createTime" label="创建时间" width="180" />
+        <el-table-column label="操作" width="200" fixed="right">
+          <template #default="scope">
+            <el-button size="small" type="primary" @click="handleDownloadResult(scope.row)">
+              <Download :size="14" style="margin-right: 4px" />
+              下载
+            </el-button>
+            <el-button size="small" type="danger" @click="handleDeleteResult(scope.row)">
+              <Trash2 :size="14" style="margin-right: 4px" />
+              删除
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div v-if="analysisResults.length > 0" class="pagination-container">
+        <el-pagination
+          v-model:current-page="resultCurrentPage"
+          v-model:page-size="resultPageSize"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next"
+          :total="analysisResults.length"
+        />
+      </div>
+    </el-card>
+
     <!-- 上传对话框 -->
     <el-dialog
       v-model="showUploadDialog"
@@ -553,7 +629,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings } from 'lucide-vue-next'
+import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings, FileArchive, RefreshCw } from 'lucide-vue-next'
 import { Loading } from '@element-plus/icons-vue'
 import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage, getOptimizeProgress } from '@/api/image'
 import * as GeoTIFF from 'geotiff'
@@ -592,6 +668,94 @@ const currentPreview = ref(null)
 const previewImageUrl = ref('')
 const loadingPreview = ref(false)
 const previewError = ref('')
+
+// 分析结果队列相关
+const analysisResults = ref([])
+const resultCurrentPage = ref(1)
+const resultPageSize = ref(10)
+
+// 分页后的分析结果
+const paginatedResults = computed(() => {
+  const start = (resultCurrentPage.value - 1) * resultPageSize.value
+  const end = start + resultPageSize.value
+  return analysisResults.value.slice(start, end)
+})
+
+// 加载分析结果队列
+const loadAnalysisResults = () => {
+  try {
+    const QUEUE_KEY = 'analysis_result_queue'
+    const stored = localStorage.getItem(QUEUE_KEY)
+    if (stored) {
+      analysisResults.value = JSON.parse(stored)
+      console.log('已加载分析结果队列:', analysisResults.value.length, '个文件')
+    } else {
+      analysisResults.value = []
+    }
+  } catch (error) {
+    console.error('加载分析结果失败:', error)
+    analysisResults.value = []
+  }
+}
+
+// 获取分析类型标签
+const getAnalysisTypeLabel = (type) => {
+  const map = {
+    difference: '差异检测',
+    temporal: '时序变化',
+    statistics: '统计汇总'
+  }
+  return map[type] || type
+}
+
+// 下载分析结果
+const handleDownloadResult = (row) => {
+  ElMessage.info(`正在下载: ${row.name}`)
+  // 实际项目中应该从后端下载文件
+  setTimeout(() => {
+    ElMessage.success(`${row.name} 下载完成`)
+  }, 1000)
+}
+
+// 删除单个分析结果
+const handleDeleteResult = (row) => {
+  ElMessageBox.confirm(
+    `确定要删除 ${row.name} 吗？`,
+    '删除确认',
+    {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  ).then(() => {
+    const index = analysisResults.value.findIndex(item => item.id === row.id)
+    if (index > -1) {
+      analysisResults.value.splice(index, 1)
+      // 更新 localStorage
+      const QUEUE_KEY = 'analysis_result_queue'
+      localStorage.setItem(QUEUE_KEY, JSON.stringify(analysisResults.value))
+      ElMessage.success('删除成功')
+    }
+  })
+}
+
+// 清空分析结果队列
+const handleClearResultQueue = () => {
+  ElMessageBox.confirm(
+    `确定要清空所有分析结果文件吗？共 ${analysisResults.value.length} 个文件将被删除。`,
+    '清空确认',
+    {
+      confirmButtonText: '确定清空',
+      cancelButtonText: '取消',
+      type: 'warning',
+      confirmButtonClass: 'el-button--danger'
+    }
+  ).then(() => {
+    analysisResults.value = []
+    localStorage.removeItem('analysis_result_queue')
+    ElMessage.success('分析结果队列已清空')
+  })
+}
 
 // 编辑相关状态
 const showEditDialog = ref(false)
@@ -1296,6 +1460,7 @@ const handleUpload = async () => {
 // 组件挂载时加载数据
 onMounted(() => {
   loadImageList()
+  loadAnalysisResults()
 })
 
 // 组件卸载时清理所有定时器
