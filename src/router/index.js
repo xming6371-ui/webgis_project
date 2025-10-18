@@ -17,13 +17,13 @@ const routes = [
         path: 'image-management',
         name: 'ImageManagement',
         component: () => import('@/views/ImageManagement/index.vue'),
-        meta: { title: '影像数据管理', icon: 'Picture' }
+        meta: { title: '数据管理', icon: 'Picture' }
       },
       {
         path: 'task-management',
         name: 'TaskManagement',
         component: () => import('@/views/TaskManagement/index.vue'),
-        meta: { title: '分类分析任务', icon: 'Setting' }
+        meta: { title: '作物识别任务', icon: 'Setting' }
       },
       {
         path: 'result-compare',
