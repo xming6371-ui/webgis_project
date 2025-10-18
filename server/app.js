@@ -7,6 +7,17 @@ import { fileURLToPath } from 'url'
 import imageRoutes from './routes/image.js'
 import config from './config.js'
 
+// 动态导入analysis路由（避免shapefile库未安装导致启动失败）
+let analysisRoutes = null
+try {
+  const analysisModule = await import('./routes/analysis.js')
+  analysisRoutes = analysisModule.default
+  console.log('✅ 分析结果管理模块已加载')
+} catch (error) {
+  console.warn('⚠️ 分析结果管理模块加载失败:', error.message)
+  console.warn('   识别结果功能将不可用，但不影响影像管理功能')
+}
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
@@ -26,6 +37,9 @@ app.use((req, res, next) => {
 
 // 挂载路由
 app.use('/image', imageRoutes)
+if (analysisRoutes) {
+  app.use('/analysis', analysisRoutes)
+}
 
 // 健康检查接口
 app.get('/health', (req, res) => {

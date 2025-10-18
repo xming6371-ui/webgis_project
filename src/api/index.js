@@ -3,7 +3,7 @@ import { ElMessage } from 'element-plus'
 
 // 创建axios实例
 const service = axios.create({
-  baseURL: '/api',
+  baseURL: '/api',  // 通过vite代理转发到后端8080端口
   timeout: 900000  // 15分钟超时（TIF优化可能需要1-15分钟，大文件70MB+需要更长时间）
 })
 
@@ -23,19 +23,20 @@ service.interceptors.request.use(
 // 响应拦截器
 service.interceptors.response.use(
   response => {
-    const res = response.data
-    
-    // 根据实际业务调整
-    if (res.code !== 200) {
-      ElMessage.error(res.message || '请求失败')
-      return Promise.reject(new Error(res.message || '请求失败'))
+    // 如果是blob响应（文件下载），直接返回
+    if (response.config.responseType === 'blob') {
+      return response.data
     }
     
+    const res = response.data
+    
+    // 直接返回响应数据，让组件自己处理code
+    // 不在拦截器中统一处理错误消息，避免重复提示
     return res
   },
   error => {
     console.error('响应错误：', error)
-    ElMessage.error(error.message || '网络错误')
+    // 只处理网络错误，不显示消息提示（让组件自己处理）
     return Promise.reject(error)
   }
 )

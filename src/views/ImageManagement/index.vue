@@ -1,74 +1,34 @@
 <template>
   <div class="image-management-container">
-    <!-- 操作栏 -->
-    <el-card class="action-card" shadow="never">
-      <div class="action-bar">
-        <div class="action-left">
-          <el-button type="primary" size="large" @click="showUploadDialog = true">
-            <Upload :size="18" style="margin-right: 8px" />
-            上传影像
-          </el-button>
-          <el-button type="danger" size="large" plain @click="handleBatchDelete">
-            <Trash2 :size="18" style="margin-right: 8px" />
-            批量删除
-          </el-button>
-        </div>
-        <div class="action-right">
-          <el-input
-            v-model="searchKeyword"
-            placeholder="搜索影像名称或区域"
-            size="large"
-            style="width: 300px"
-            clearable
-            @keyup.enter="handleSearch"
-          >
-            <template #prefix><Search :size="18" /></template>
-          </el-input>
-          <el-button type="primary" size="large" @click="handleSearch">
-            搜索
-          </el-button>
-        </div>
-      </div>
-    </el-card>
 
-    <!-- 筛选条件 -->
-    <el-card class="filter-card" shadow="never">
-      <el-form :inline="true" :model="filterForm" size="default">
-        <el-form-item label="时间范围">
-          <el-date-picker
-            v-model="filterForm.dateRange"
-            type="daterange"
-            range-separator="至"
-            start-placeholder="开始日期"
-            end-placeholder="结束日期"
-            style="width: 280px"
-          />
-        </el-form-item>
-        <el-form-item label="传感器类型">
-          <el-select v-model="filterForm.sensor" placeholder="请选择" style="width: 150px" clearable>
-            <el-option label="全部" value="" />
-            <el-option label="Sentinel-2" value="sentinel2" />
-            <el-option label="Landsat-8" value="landsat8" />
-            <el-option label="高分系列" value="gaofen" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="云量">
-          <el-slider v-model="filterForm.cloudCover" :max="100" style="width: 200px" />
-          <span style="margin-left: 10px">≤ {{ filterForm.cloudCover }}%</span>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleFilter">应用筛选</el-button>
-          <el-button @click="resetFilter">重置</el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
-
-    <!-- 影像列表 -->
+    <!-- 影像目录（包含筛选） -->
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
           <span><Image :size="16" style="margin-right: 8px" /> 影像目录 (共 {{ tableData.length }} 条)</span>
-          <div style="display: flex; align-items: center; gap: 12px">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <!-- 上传影像按钮 -->
+            <el-button 
+              type="primary" 
+              size="small" 
+              @click="showUploadDialog = true"
+            >
+              <Upload :size="14" style="margin-right: 4px" />
+              上传影像
+            </el-button>
+            
+            <!-- 批量删除按钮 -->
+            <el-button 
+              type="danger" 
+              size="small" 
+              @click="handleBatchDelete"
+              :disabled="selectedRows.length === 0"
+            >
+              <Trash2 :size="14" style="margin-right: 4px" />
+              批量删除 ({{ selectedRows.length }})
+            </el-button>
+            
+            <!-- 刷新按钮 -->
             <el-button 
               type="success" 
               size="small" 
@@ -77,8 +37,10 @@
               plain
             >
               <RefreshCw :size="14" style="margin-right: 6px" />
-              刷新列表
+              刷新
             </el-button>
+            
+            <!-- 视图模式切换 -->
             <el-radio-group v-model="viewMode" size="small">
               <el-radio-button label="table"><List :size="14" style="margin-right: 6px" /> 列表</el-radio-button>
               <el-radio-button label="grid"><Grid3X3 :size="14" style="margin-right: 6px" /> 缩略图</el-radio-button>
@@ -86,6 +48,49 @@
           </div>
         </div>
       </template>
+
+      <!-- 筛选和搜索区域 -->
+      <div class="filter-section">
+        <el-form :inline="true" :model="filterForm" size="default">
+          <el-form-item label="搜索">
+            <el-input
+              v-model="searchKeyword"
+              placeholder="搜索影像名称或区域"
+              style="width: 250px"
+              clearable
+              @keyup.enter="handleSearch"
+            >
+              <template #prefix><Search :size="16" /></template>
+            </el-input>
+          </el-form-item>
+          <el-form-item label="时间范围">
+            <el-date-picker
+              v-model="filterForm.dateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              style="width: 260px"
+            />
+          </el-form-item>
+          <el-form-item label="传感器">
+            <el-select v-model="filterForm.sensor" placeholder="请选择" style="width: 140px" clearable>
+              <el-option label="全部" value="" />
+              <el-option label="Sentinel-2" value="sentinel2" />
+              <el-option label="Landsat-8" value="landsat8" />
+              <el-option label="高分系列" value="gaofen" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="云量">
+            <el-slider v-model="filterForm.cloudCover" :max="100" style="width: 180px" />
+            <span style="margin-left: 10px">≤ {{ filterForm.cloudCover }}%</span>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="handleFilter">应用筛选</el-button>
+            <el-button @click="resetFilter">重置</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
 
       <!-- 表格视图 -->
       <el-table
@@ -264,17 +269,44 @@
             <FileArchive :size="16" style="margin-right: 8px" /> 
             结果队列
           </span>
-          <div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <!-- 搜索框 -->
+            <el-input
+              v-model="resultSearchKeyword"
+              placeholder="搜索文件名称或任务名称..."
+              size="small"
+              clearable
+              style="width: 220px;"
+            >
+              <template #prefix>
+                <Search :size="14" />
+              </template>
+            </el-input>
+
+            <!-- 上传结果文件按钮 -->
+            <el-button type="success" size="small" @click="showResultUploadDialog = true">
+              <Upload :size="14" style="margin-right: 4px" />
+              上传文件
+            </el-button>
+
+            <!-- 批量删除按钮 -->
             <el-button 
-              v-if="currentQueueData.length > 0" 
               type="danger" 
               size="small"
-              @click="handleClearCurrentQueue"
+              @click="handleBatchDeleteResults"
+              :disabled="selectedResultRows.length === 0"
             >
               <Trash2 :size="14" style="margin-right: 4px" />
-              清空当前队列
+              批量删除 ({{ selectedResultRows.length }})
             </el-button>
-            <el-button size="small" @click="loadAllResults">
+
+            <!-- 刷新按钮 -->
+            <el-button 
+              type="success" 
+              size="small" 
+              @click="loadAllResults"
+              plain
+            >
               <RefreshCw :size="14" style="margin-right: 4px" />
               刷新
             </el-button>
@@ -298,26 +330,61 @@
           </el-empty>
 
           <div v-else>
-            <el-table :data="paginatedRecognitionResults" style="width: 100%">
-              <el-table-column prop="name" label="文件名称" min-width="300" show-overflow-tooltip />
-              <el-table-column prop="type" label="格式" width="100">
+            <el-table 
+              :data="paginatedRecognitionResults" 
+              style="width: 100%"
+              @selection-change="handleResultSelectionChange"
+            >
+              <el-table-column type="selection" width="55" />
+              <el-table-column prop="name" label="文件名称" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="type" label="格式" width="80" align="center">
                 <template #default="scope">
-                  <el-tag type="success" size="small">{{ scope.row.type }}</el-tag>
+                  <el-tag 
+                    :type="scope.row.type === 'SHP' ? 'warning' : scope.row.type === 'KMZ' ? 'info' : 'success'" 
+                    size="small"
+                  >
+                    {{ scope.row.type }}
+                  </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="taskName" label="来源任务" width="200" show-overflow-tooltip />
-              <el-table-column prop="size" label="文件大小" width="120" />
-              <el-table-column prop="createTime" label="创建时间" width="180" />
-              <el-table-column label="操作" width="200" fixed="right">
+              <el-table-column prop="taskName" label="来源任务" min-width="150" show-overflow-tooltip />
+              <el-table-column prop="size" label="文件大小" width="100" align="center" />
+              <el-table-column prop="createTime" label="创建时间" width="160" />
+              <el-table-column label="操作" width="300" fixed="right">
                 <template #default="scope">
-                  <el-button size="small" type="primary" @click="handleDownloadResult(scope.row)">
-                    <Download :size="14" style="margin-right: 4px" />
-                    下载
-                  </el-button>
-                  <el-button size="small" type="danger" @click="handleDeleteResult(scope.row, 'recognition')">
-                    <Trash2 :size="14" style="margin-right: 4px" />
-                    删除
-                  </el-button>
+                  <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                    <!-- SHP文件显示转换GeoJSON按钮 -->
+                    <el-button 
+                      v-if="scope.row.type === 'SHP'" 
+                      size="small" 
+                      type="warning" 
+                      @click="handleConvertToGeojson(scope.row)"
+                      :loading="convertingFiles.has(scope.row.name)"
+                    >
+                      <RefreshCw :size="14" style="margin-right: 4px" />
+                      转GeoJSON
+                    </el-button>
+                    
+                    <!-- 下载按钮 -->
+                    <el-button 
+                      size="small" 
+                      type="primary" 
+                      @click="handleDownloadFile(scope.row)"
+                    >
+                      <Download :size="14" style="margin-right: 4px" />
+                      下载
+                    </el-button>
+                    
+                    <!-- 删除按钮 -->
+                    <el-button 
+                      size="small" 
+                      type="danger" 
+                      @click="handleDeleteResult(scope.row, 'recognition')"
+                    >
+                      <Trash2 :size="14" style="margin-right: 4px" />
+                      删除
+                    </el-button>
+                  </div>
                 </template>
               </el-table-column>
             </el-table>
@@ -327,8 +394,8 @@
                 v-model:current-page="recognitionCurrentPage"
                 v-model:page-size="recognitionPageSize"
                 :page-sizes="[10, 20, 50]"
-                layout="total, sizes, prev, pager, next"
-                :total="recognitionResults.length"
+                layout="total, sizes, prev, pager, next, jumper"
+                :total="filteredRecognitionResults.length"
               />
             </div>
           </div>
@@ -348,9 +415,14 @@
           </el-empty>
 
           <div v-else>
-            <el-table :data="paginatedAnalysisResults" style="width: 100%">
-              <el-table-column prop="name" label="文件名称" min-width="300" show-overflow-tooltip />
-              <el-table-column prop="type" label="格式" width="100">
+            <el-table 
+              :data="paginatedAnalysisResults" 
+              style="width: 100%"
+              @selection-change="handleResultSelectionChange"
+            >
+              <el-table-column type="selection" width="55" />
+              <el-table-column prop="name" label="文件名称" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="type" label="格式" width="80" align="center">
                 <template #default="scope">
                   <el-tag 
                     :type="scope.row.type === 'SHP' ? 'success' : 'primary'" 
@@ -360,15 +432,15 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="taskName" label="来源任务" width="200" show-overflow-tooltip />
-              <el-table-column prop="analysisType" label="分析类型" width="120">
+              <el-table-column prop="taskName" label="来源任务" min-width="150" show-overflow-tooltip />
+              <el-table-column prop="analysisType" label="分析类型" width="110" align="center">
                 <template #default="scope">
                   <el-tag size="small">{{ getAnalysisTypeLabel(scope.row.analysisType) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="recordCount" label="记录数" width="100" />
-              <el-table-column prop="size" label="文件大小" width="120" />
-              <el-table-column prop="createTime" label="创建时间" width="180" />
+              <el-table-column prop="recordCount" label="记录数" width="90" align="center" />
+              <el-table-column prop="size" label="文件大小" width="100" align="center" />
+              <el-table-column prop="createTime" label="创建时间" width="160" />
               <el-table-column label="操作" width="200" fixed="right">
                 <template #default="scope">
                   <el-button size="small" type="primary" @click="handleDownloadResult(scope.row)">
@@ -388,8 +460,8 @@
                 v-model:current-page="analysisCurrentPage"
                 v-model:page-size="analysisPageSize"
                 :page-sizes="[10, 20, 50]"
-                layout="total, sizes, prev, pager, next"
-                :total="analysisResults.length"
+                layout="total, sizes, prev, pager, next, jumper"
+                :total="filteredAnalysisResults.length"
               />
             </div>
           </div>
@@ -700,15 +772,170 @@
         <el-button type="primary" @click="handleSaveEdit">保存修改</el-button>
       </template>
     </el-dialog>
+
+    <!-- 下载确认对话框 -->
+    <el-dialog
+      v-model="showDownloadDialog"
+      title="确认下载"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <div v-if="downloadFileInfo" style="padding: 20px 0;">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="文件名称">
+            <strong>{{ downloadFileInfo.name }}</strong>
+          </el-descriptions-item>
+          <el-descriptions-item label="文件格式">
+            <el-tag :type="downloadFileInfo.type === 'SHP' ? 'warning' : downloadFileInfo.type === 'KMZ' ? 'info' : 'success'">
+              {{ downloadFileInfo.type }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="文件大小">
+            {{ downloadFileInfo.size }}
+          </el-descriptions-item>
+          <el-descriptions-item label="来源任务">
+            {{ downloadFileInfo.taskName }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <el-alert
+          v-if="downloadFileInfo.type === 'SHP'"
+          title="提示：SHP文件将会打包下载"
+          type="info"
+          :closable="false"
+          style="margin-top: 20px;"
+        >
+          <div>下载的压缩包（.zip）将包含以下文件：</div>
+          <div style="margin-top: 5px; color: #666;">
+            • .shp (矢量要素几何)
+            <br>• .shx (索引文件)
+            <br>• .dbf (属性数据表)
+            <br>• .prj (坐标系统)
+          </div>
+        </el-alert>
+
+        <!-- 保存位置选择 -->
+        <div style="margin-top: 20px;">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+            <span style="font-weight: 600; color: #303133;">保存位置：</span>
+            <el-button 
+              type="primary" 
+              size="small"
+              @click="selectSavePath"
+            >
+              <Settings :size="14" style="margin-right: 4px;" />
+              选择自定义路径
+            </el-button>
+          </div>
+          
+          <!-- 显示已选择的路径 -->
+          <div v-if="selectedSavePath" style="padding: 12px; background: #f0f9ff; border-radius: 4px; border: 1px solid #91d5ff;">
+            <div style="display: flex; align-items: center; gap: 8px; color: #1890ff;">
+              <el-icon><SuccessFilled /></el-icon>
+              <span style="font-weight: 500;">已选择保存路径</span>
+            </div>
+            <div style="margin-top: 8px; color: #606266; font-size: 13px; word-break: break-all;">
+              文件名：{{ selectedSavePath }}
+            </div>
+          </div>
+          
+          <!-- 未选择路径的提示 -->
+          <div v-else style="padding: 12px; background: #fafafa; border-radius: 4px; border: 1px solid #e8e8e8;">
+            <div style="color: #909399; font-size: 13px;">
+              <el-icon style="vertical-align: middle;"><InfoFilled /></el-icon>
+              未选择自定义路径，将使用浏览器默认下载位置
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="showDownloadDialog = false" :disabled="isDownloading">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="confirmDownload"
+          :loading="isDownloading"
+          :disabled="isDownloading"
+        >
+          <Download v-if="!isDownloading" :size="16" style="margin-right: 4px;" />
+          {{ isDownloading ? '下载中...' : '确认下载' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 上传结果文件对话框 -->
+    <el-dialog
+      v-model="showResultUploadDialog"
+      title="上传分析结果文件"
+      width="600px"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        title="支持的文件格式"
+        type="info"
+        :closable="false"
+        style="margin-bottom: 20px;"
+      >
+        <div>支持上传：<el-tag size="small" style="margin: 0 5px;">SHP</el-tag><el-tag size="small" style="margin: 0 5px;">GeoJSON</el-tag><el-tag size="small" style="margin: 0 5px;">JSON</el-tag><el-tag size="small" style="margin: 0 5px;">KMZ</el-tag></div>
+        <div style="margin-top: 5px;">文件大小限制：500MB</div>
+      </el-alert>
+
+      <el-upload
+        ref="resultUploadRef"
+        :auto-upload="false"
+        :on-change="handleResultFileChange"
+        :on-remove="handleResultFileRemove"
+        :file-list="resultFileList"
+        drag
+        multiple
+        accept=".shp,.geojson,.json,.kmz"
+      >
+        <div class="upload-area">
+          <UploadIcon :size="50" style="color: #409eff; margin-bottom: 10px;" />
+          <div class="upload-text">
+            <div>将文件拖到此处，或<em>点击选择文件</em></div>
+            <div style="color: #999; font-size: 12px; margin-top: 5px;">
+              支持批量选择，点击"开始上传"后统一上传
+            </div>
+          </div>
+        </div>
+      </el-upload>
+
+      <div v-if="resultFileList.length > 0" style="margin-top: 15px;">
+        <el-alert
+          :title="`已选择 ${resultFileList.length} 个文件`"
+          type="info"
+          :closable="false"
+        >
+          <div style="color: #666;">
+            总大小: {{ formatTotalSize(resultFileList) }}
+          </div>
+        </el-alert>
+      </div>
+
+      <template #footer>
+        <el-button @click="cancelUpload">取消</el-button>
+        <el-button 
+          type="primary" 
+          :disabled="resultFileList.length === 0"
+          :loading="isUploading"
+          @click="startUpload"
+        >
+          <Upload :size="16" style="margin-right: 4px;" />
+          {{ isUploading ? '上传中...' : '开始上传' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings, FileArchive, RefreshCw } from 'lucide-vue-next'
-import { Loading, Picture, DataAnalysis } from '@element-plus/icons-vue'
+import { Loading, Picture, DataAnalysis, SuccessFilled, InfoFilled } from '@element-plus/icons-vue'
 import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage, getOptimizeProgress } from '@/api/image'
+import { getRecognitionResults, convertShpToGeojson, downloadAnalysisFile, deleteAnalysisFile } from '@/api/analysis'
 import * as GeoTIFF from 'geotiff'
 
 const searchKeyword = ref('')
@@ -756,44 +983,89 @@ const recognitionPageSize = ref(10)
 
 // 分析结果队列
 const analysisResults = ref([])
+
+// 搜索关键词
+const resultSearchKeyword = ref('')
+
+// 结果队列选中的行
+const selectedResultRows = ref([])
+
+// 过滤后的识别结果（computed，实时响应搜索）
+const filteredRecognitionResults = computed(() => {
+  if (!resultSearchKeyword.value) {
+    return recognitionResults.value
+  }
+  
+  const keyword = resultSearchKeyword.value.toLowerCase().trim()
+  return recognitionResults.value.filter(item => 
+    item.name.toLowerCase().includes(keyword) ||
+    (item.taskName && item.taskName.toLowerCase().includes(keyword)) ||
+    (item.type && item.type.toLowerCase().includes(keyword))
+  )
+})
+
+// 过滤后的分析结果（computed，实时响应搜索）
+const filteredAnalysisResults = computed(() => {
+  if (!resultSearchKeyword.value) {
+    return analysisResults.value
+  }
+  
+  const keyword = resultSearchKeyword.value.toLowerCase().trim()
+  return analysisResults.value.filter(item => 
+    item.name.toLowerCase().includes(keyword) ||
+    (item.taskName && item.taskName.toLowerCase().includes(keyword)) ||
+    (item.type && item.type.toLowerCase().includes(keyword))
+  )
+})
+
+// 结果文件上传相关
+const showResultUploadDialog = ref(false)
+const resultUploadRef = ref()
+const uploadHeaders = ref({})
+const baseUrl = import.meta.env.VITE_BASE_URL || 'http://localhost:8080'
+const resultFileList = ref([])
+const isUploading = ref(false)
 const analysisCurrentPage = ref(1)
 const analysisPageSize = ref(10)
 
-// 分页后的识别结果
+// 分页后的识别结果（支持搜索过滤）
 const paginatedRecognitionResults = computed(() => {
   const start = (recognitionCurrentPage.value - 1) * recognitionPageSize.value
   const end = start + recognitionPageSize.value
-  return recognitionResults.value.slice(start, end)
+  return filteredRecognitionResults.value.slice(start, end)
 })
 
-// 分页后的分析结果
+// 分页后的分析结果（支持搜索过滤）
 const paginatedAnalysisResults = computed(() => {
   const start = (analysisCurrentPage.value - 1) * analysisPageSize.value
   const end = start + analysisPageSize.value
-  return analysisResults.value.slice(start, end)
+  return filteredAnalysisResults.value.slice(start, end)
 })
 
-// 当前队列的数据（根据activeQueueTab）
-const currentQueueData = computed(() => {
-  return activeQueueTab.value === 'recognition' ? recognitionResults.value : analysisResults.value
-})
 
 // 加载所有结果队列
-const loadAllResults = () => {
+const loadAllResults = async () => {
   try {
+    // 从后端API加载识别结果（扫描data_shp和data_geojson目录）
+    try {
+      const response = await getRecognitionResults()
+      if (response.code === 200) {
+        recognitionResults.value = response.data || []
+        console.log('✅ 从后端加载识别结果:', recognitionResults.value.length, '个')
+      }
+    } catch (error) {
+      console.error('从后端加载识别结果失败:', error)
+      recognitionResults.value = []
+    }
+    
+    // 从localStorage加载分析结果（差异检测、时序分析等）
     const QUEUE_KEY = 'analysis_result_queue'
     const stored = localStorage.getItem(QUEUE_KEY)
     if (stored) {
       const allResults = JSON.parse(stored)
-      
-      // 分离识别结果和分析结果
-      recognitionResults.value = allResults.filter(r => r.analysisType === 'recognition')
       analysisResults.value = allResults.filter(r => r.analysisType !== 'recognition')
-      
-      console.log('已加载识别结果:', recognitionResults.value.length, '个')
-      console.log('已加载分析结果:', analysisResults.value.length, '个')
+      console.log('✅ 从localStorage加载分析结果:', analysisResults.value.length, '个')
     } else {
-      recognitionResults.value = []
       analysisResults.value = []
     }
   } catch (error) {
@@ -816,6 +1088,391 @@ const getAnalysisTypeLabel = (type) => {
   return map[type] || type
 }
 
+// 转换SHP为GeoJSON
+const convertingFiles = ref(new Set())
+
+const handleConvertToGeojson = async (row) => {
+  convertingFiles.value.add(row.name)
+  try {
+    const response = await convertShpToGeojson(row.name)
+    
+    if (response.code === 200) {
+      ElNotification({
+        title: '转换成功',
+        message: '✅ GeoJSON文件已生成，可以在识别结果中查看',
+        type: 'success',
+        duration: 3000
+      })
+      // 重新加载结果列表
+      await loadAllResults()
+    } else if (response.code === 400 && response.data?.existed) {
+      // 文件已存在
+      ElMessage.warning(response.message)
+    } else {
+      ElMessage.error('转换失败: ' + (response.message || '未知错误'))
+    }
+  } catch (error) {
+    console.error('转换失败:', error)
+    ElMessage.error('转换失败: ' + (error.message || '网络错误'))
+  } finally {
+    convertingFiles.value.delete(row.name)
+  }
+}
+
+// 下载确认对话框
+const showDownloadDialog = ref(false)
+const downloadFileInfo = ref(null)
+const selectedSavePath = ref('')
+const fileHandleRef = ref(null)
+const isDownloading = ref(false)
+
+const handleDownloadFile = async (row) => {
+  downloadFileInfo.value = row
+  selectedSavePath.value = ''
+  fileHandleRef.value = null
+  showDownloadDialog.value = true
+}
+
+// 选择保存路径
+const selectSavePath = async () => {
+  try {
+    if (!('showSaveFilePicker' in window)) {
+      ElMessage.warning('您的浏览器不支持自定义保存路径功能，将使用默认下载位置')
+      return
+    }
+    
+    const row = downloadFileInfo.value
+    let fileType = 'geojson'
+    if (row.type === 'SHP') {
+      fileType = 'shp'
+    } else if (row.type === 'KMZ') {
+      fileType = 'kmz'
+    }
+    
+    const filename = row.name
+    const downloadFilename = fileType === 'shp' ? filename.replace('.shp', '.zip') : filename
+    
+    const options = {
+      suggestedName: downloadFilename,
+      types: []
+    }
+    
+    // 根据文件类型设置建议的文件扩展名
+    if (fileType === 'shp') {
+      options.types = [{
+        description: 'SHP压缩包',
+        accept: { 'application/zip': ['.zip'] }
+      }]
+    } else if (fileType === 'geojson') {
+      options.types = [{
+        description: 'GeoJSON文件',
+        accept: { 'application/json': ['.geojson', '.json'] }
+      }]
+    } else if (fileType === 'kmz') {
+      options.types = [{
+        description: 'KMZ文件',
+        accept: { 'application/vnd.google-earth.kmz': ['.kmz'] }
+      }]
+    }
+    
+    const fileHandle = await window.showSaveFilePicker(options)
+    fileHandleRef.value = fileHandle
+    selectedSavePath.value = fileHandle.name
+    ElMessage.success('保存路径已选择')
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      // 用户取消选择
+      return
+    }
+    console.error('选择路径失败:', error)
+    ElMessage.error('选择路径失败: ' + error.message)
+  }
+}
+
+// 执行下载
+const confirmDownload = async () => {
+  isDownloading.value = true
+  try {
+    const row = downloadFileInfo.value
+    let fileType = 'geojson'
+    if (row.type === 'SHP') {
+      fileType = 'shp'
+    } else if (row.type === 'KMZ') {
+      fileType = 'kmz'
+    }
+    const filename = row.name
+    
+    // SHP文件下载时，文件名应该是zip
+    const downloadFilename = fileType === 'shp' ? filename.replace('.shp', '.zip') : filename
+    
+    // 显示下载提示
+    ElMessage.info('正在准备下载文件，请稍候...')
+    
+    // 开始下载文件
+    const response = await downloadAnalysisFile(fileType, filename)
+    
+    // 检查响应是否是blob
+    if (!(response instanceof Blob)) {
+      throw new Error('下载失败：响应格式错误')
+    }
+    
+    // 如果用户已经选择了保存路径
+    if (fileHandleRef.value) {
+      const writable = await fileHandleRef.value.createWritable()
+      await writable.write(response)
+      await writable.close()
+      
+      showDownloadDialog.value = false
+      
+      ElNotification({
+        title: '下载成功',
+        message: `✅ ${downloadFilename} 已保存到您选择的位置`,
+        type: 'success',
+        duration: 2000
+      })
+    } else {
+      // 使用传统方式下载到浏览器默认位置
+      const url = window.URL.createObjectURL(response)
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', downloadFilename)
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+      
+      showDownloadDialog.value = false
+      
+      ElNotification({
+        title: '下载成功',
+        message: `✅ ${downloadFilename} 已保存到浏览器默认下载位置`,
+        type: 'success',
+        duration: 2000
+      })
+    }
+  } catch (error) {
+    console.error('下载失败:', error)
+    
+    // 如果错误响应是blob，尝试读取错误信息
+    if (error.response && error.response.data instanceof Blob) {
+      try {
+        const text = await error.response.data.text()
+        ElMessage.error('下载失败: ' + text)
+      } catch {
+        ElMessage.error('下载失败: 请检查文件是否存在')
+      }
+    } else {
+      ElMessage.error('下载失败: ' + (error.response?.data?.message || error.message || '请求失败'))
+    }
+  } finally {
+    isDownloading.value = false
+  }
+}
+
+
+// 结果队列选择变化
+const handleResultSelectionChange = (selection) => {
+  selectedResultRows.value = selection
+}
+
+// 批量删除结果文件
+const handleBatchDeleteResults = async () => {
+  if (selectedResultRows.value.length === 0) {
+    ElMessage.warning('请先选择要删除的文件')
+    return
+  }
+  
+  const queueType = activeQueueTab.value
+  const queueName = queueType === 'recognition' ? '识别结果' : '分析结果'
+  
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除选中的 ${selectedResultRows.value.length} 个${queueName}文件吗？此操作将永久删除这些文件！`,
+      '批量删除确认',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    let successCount = 0
+    let failCount = 0
+    
+    for (const row of selectedResultRows.value) {
+      try {
+        // 如果是识别结果（SHP、GeoJSON、KMZ），调用后端API删除
+        if (queueType === 'recognition' && (row.type === 'SHP' || row.type === 'GeoJSON' || row.type === 'KMZ')) {
+          let fileType = 'geojson'
+          if (row.type === 'SHP') {
+            fileType = 'shp'
+          } else if (row.type === 'KMZ') {
+            fileType = 'kmz'
+          }
+          
+          const response = await deleteAnalysisFile(fileType, row.name)
+          if (response.code === 200) {
+            successCount++
+          } else {
+            failCount++
+          }
+        } else {
+          // 分析结果，从localStorage删除
+          const QUEUE_KEY = 'analysis_result_queue'
+          const stored = localStorage.getItem(QUEUE_KEY)
+          if (stored) {
+            let allQueue = JSON.parse(stored)
+            allQueue = allQueue.filter(item => item.id !== row.id)
+            localStorage.setItem(QUEUE_KEY, JSON.stringify(allQueue))
+            successCount++
+          }
+        }
+      } catch (error) {
+        console.error(`删除失败: ${row.name}`, error)
+        failCount++
+      }
+    }
+    
+    // 显示结果
+    if (failCount === 0) {
+      ElMessage.success(`成功删除 ${successCount} 个文件`)
+    } else {
+      ElMessage.warning(`删除完成: 成功 ${successCount} 个，失败 ${failCount} 个`)
+    }
+    
+    // 重新加载结果
+    await loadAllResults()
+    
+    // 清空选择
+    selectedResultRows.value = []
+    
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('批量删除失败:', error)
+      ElMessage.error('批量删除失败')
+    }
+  }
+}
+
+// 文件选择回调
+const handleResultFileChange = (file, fileList) => {
+  // 验证文件
+  const fileName = file.name.toLowerCase()
+  const validExtensions = ['.shp', '.geojson', '.json', '.kmz']
+  const isValidType = validExtensions.some(ext => fileName.endsWith(ext))
+  
+  if (!isValidType) {
+    ElMessage.error(`不支持的文件格式: ${file.name}`)
+    // 从列表中移除
+    const index = fileList.findIndex(f => f.uid === file.uid)
+    if (index > -1) {
+      fileList.splice(index, 1)
+    }
+    return
+  }
+  
+  const isLt500M = file.size / 1024 / 1024 < 500
+  if (!isLt500M) {
+    ElMessage.error(`文件过大: ${file.name}（限制500MB）`)
+    const index = fileList.findIndex(f => f.uid === file.uid)
+    if (index > -1) {
+      fileList.splice(index, 1)
+    }
+    return
+  }
+  
+  resultFileList.value = fileList
+}
+
+// 移除文件回调
+const handleResultFileRemove = (file, fileList) => {
+  resultFileList.value = fileList
+}
+
+// 计算总大小
+const formatTotalSize = (fileList) => {
+  const totalBytes = fileList.reduce((sum, file) => sum + (file.size || 0), 0)
+  const totalMB = totalBytes / (1024 * 1024)
+  if (totalMB < 1) {
+    return `${(totalBytes / 1024).toFixed(2)} KB`
+  }
+  return `${totalMB.toFixed(2)} MB`
+}
+
+// 取消上传
+const cancelUpload = () => {
+  resultFileList.value = []
+  showResultUploadDialog.value = false
+}
+
+// 开始上传
+const startUpload = async () => {
+  if (resultFileList.value.length === 0) {
+    return
+  }
+  
+  isUploading.value = true
+  let successCount = 0
+  let failCount = 0
+  
+  try {
+    for (const fileItem of resultFileList.value) {
+      try {
+        const formData = new FormData()
+        formData.append('file', fileItem.raw)
+        
+        const response = await fetch(`${baseUrl}/analysis/upload`, {
+          method: 'POST',
+          body: formData
+        })
+        
+        const result = await response.json()
+        
+        if (result.code === 200) {
+          successCount++
+          console.log(`✅ 上传成功: ${fileItem.name}`)
+        } else {
+          failCount++
+          console.error(`❌ 上传失败: ${fileItem.name}`, result.message)
+        }
+      } catch (error) {
+        failCount++
+        console.error(`❌ 上传失败: ${fileItem.name}`, error)
+      }
+    }
+    
+    // 显示结果
+    if (failCount === 0) {
+      ElNotification({
+        title: '上传完成',
+        message: `✅ 成功上传 ${successCount} 个文件`,
+        type: 'success',
+        duration: 3000
+      })
+    } else {
+      ElNotification({
+        title: '上传完成',
+        message: `成功: ${successCount} 个，失败: ${failCount} 个`,
+        type: 'warning',
+        duration: 3000
+      })
+    }
+    
+    // 刷新列表
+    await loadAllResults()
+    
+    // 关闭对话框
+    resultFileList.value = []
+    showResultUploadDialog.value = false
+    
+  } catch (error) {
+    console.error('上传过程出错:', error)
+    ElMessage.error('上传失败: ' + error.message)
+  } finally {
+    isUploading.value = false
+  }
+}
+
 // 下载分析结果
 const handleDownloadResult = (row) => {
   ElMessage.info(`正在下载: ${row.name}`)
@@ -826,81 +1483,52 @@ const handleDownloadResult = (row) => {
 }
 
 // 删除单个分析结果
-const handleDeleteResult = (row, queueType) => {
-  ElMessageBox.confirm(
-    `确定要删除 ${row.name} 吗？`,
-    '删除确认',
-    {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
-    }
-  ).then(() => {
-    const QUEUE_KEY = 'analysis_result_queue'
-    try {
+const handleDeleteResult = async (row, queueType) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除 ${row.name} 吗？此操作将永久删除该文件！`,
+      '删除确认',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    // 如果是识别结果（SHP、GeoJSON、KMZ），调用后端API删除
+    if (queueType === 'recognition' && (row.type === 'SHP' || row.type === 'GeoJSON' || row.type === 'KMZ')) {
+      let fileType = 'geojson'
+      if (row.type === 'SHP') {
+        fileType = 'shp'
+      } else if (row.type === 'KMZ') {
+        fileType = 'kmz'
+      }
+      
+      const response = await deleteAnalysisFile(fileType, row.name)
+      if (response.code === 200) {
+        ElMessage.success('删除成功')
+        await loadAllResults() // 刷新列表
+      }
+    } else {
+      // 分析结果，从localStorage删除
+      const QUEUE_KEY = 'analysis_result_queue'
       const stored = localStorage.getItem(QUEUE_KEY)
       if (stored) {
         let allQueue = JSON.parse(stored)
-        // 删除指定ID的文件
         allQueue = allQueue.filter(item => item.id !== row.id)
         localStorage.setItem(QUEUE_KEY, JSON.stringify(allQueue))
-        
-        // 重新加载
-        loadAllResults()
         ElMessage.success('删除成功')
+        await loadAllResults()
       }
-    } catch (error) {
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
       console.error('删除失败:', error)
-      ElMessage.error('删除失败')
+      ElMessage.error('删除失败: ' + (error.message || '请求失败'))
     }
-  })
+  }
 }
 
-// 清空当前队列
-const handleClearCurrentQueue = () => {
-  const queueName = activeQueueTab.value === 'recognition' ? '识别结果' : '分析结果'
-  const count = currentQueueData.value.length
-  
-  ElMessageBox.confirm(
-    `确定要清空${queueName}队列吗？这将删除所有 ${count} 个文件，此操作不可恢复。`,
-    '清空确认',
-    {
-      confirmButtonText: '确定清空',
-      cancelButtonText: '取消',
-      type: 'warning',
-      confirmButtonClass: 'el-button--danger'
-    }
-  ).then(() => {
-    const QUEUE_KEY = 'analysis_result_queue'
-    try {
-      const stored = localStorage.getItem(QUEUE_KEY)
-      if (stored) {
-        let allQueue = JSON.parse(stored)
-        
-        // 根据当前tab删除对应的文件
-        if (activeQueueTab.value === 'recognition') {
-          // 只保留非recognition类型的
-          allQueue = allQueue.filter(item => item.analysisType !== 'recognition')
-        } else {
-          // 只保留recognition类型的
-          allQueue = allQueue.filter(item => item.analysisType === 'recognition')
-        }
-        
-        localStorage.setItem(QUEUE_KEY, JSON.stringify(allQueue))
-        
-        // 重新加载
-        loadAllResults()
-        ElMessage.success(`${queueName}队列已清空`)
-      }
-    } catch (error) {
-      console.error('清空失败:', error)
-      ElMessage.error('清空失败')
-    }
-  })
-}
-
-// 兼容旧方法名
-const handleClearResultQueue = handleClearCurrentQueue
 
 // 编辑相关状态
 const showEditDialog = ref(false)
@@ -1492,7 +2120,32 @@ const handleCurrentChange = (val) => {
 }
 
 const handleFileChange = (file) => {
+  // 文件格式检测
+  const fileName = file.name.toLowerCase()
+  const validExtensions = ['.tif', '.tiff', '.img', '.jp2']
+  const isValidFormat = validExtensions.some(ext => fileName.endsWith(ext))
+  
+  if (!isValidFormat) {
+    ElMessage.error(`文件格式不支持: ${file.name}，只支持 .tif、.tiff、.img、.jp2 格式`)
+    return
+  }
+  
+  // 文件大小检测（2GB限制）
+  const maxSize = 2 * 1024 * 1024 * 1024 // 2GB in bytes
+  if (file.size > maxSize) {
+    ElMessage.error(`文件过大: ${file.name}，单个文件不能超过 2GB`)
+    return
+  }
+  
+  // 检查是否已经添加过同名文件
+  const isDuplicate = uploadFiles.value.some(f => f.name === file.name)
+  if (isDuplicate) {
+    ElMessage.warning(`文件已存在: ${file.name}`)
+    return
+  }
+  
   uploadFiles.value.push(file.raw)
+  ElMessage.success(`✅ 已添加: ${file.name}`)
 }
 
 const removeFile = (index) => {
@@ -1612,6 +2265,18 @@ const handleUpload = async () => {
   }
 }
 
+// 监听tab切换，清空选择
+watch(activeQueueTab, () => {
+  selectedResultRows.value = []
+})
+
+// 监听搜索关键词变化，重置页码和清空选择（实现实时搜索效果）
+watch(resultSearchKeyword, () => {
+  recognitionCurrentPage.value = 1
+  analysisCurrentPage.value = 1
+  selectedResultRows.value = []
+})
+
 // 组件挂载时加载数据
 onMounted(() => {
   loadImageList() // 加载影像列表
@@ -1632,9 +2297,12 @@ onUnmounted(() => {
 
 <style scoped lang="scss">
 .image-management-container {
-  .action-card, .filter-card {
-    margin-bottom: 20px;
-    border-radius: 8px;
+  .filter-section {
+    padding: 16px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    border: 1px solid #e8e8e8;
   }
 
   .action-bar {
