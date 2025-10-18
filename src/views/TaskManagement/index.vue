@@ -103,17 +103,8 @@
         </el-table-column>
         <el-table-column prop="createTime" label="创建时间" width="160" />
         <el-table-column prop="duration" label="耗时" width="100" />
-        <el-table-column label="操作" width="450" fixed="right">
+        <el-table-column label="操作" width="350" fixed="right">
           <template #default="scope">
-            <el-button
-              v-if="scope.row.status === 'completed'"
-              size="small"
-              :type="selectedTask?.id === scope.row.id ? 'success' : 'primary'"
-              @click="handleSelectTask(scope.row)"
-            >
-              <template #icon><GitCompare :size="14" /></template>
-              {{ selectedTask?.id === scope.row.id ? '已选择' : '选择' }}
-            </el-button>
             <el-button
               v-if="scope.row.status === 'completed'"
               size="small"
@@ -171,10 +162,6 @@
               <el-icon><DataAnalysis /></el-icon>
               变化检测与差异分析
             </span>
-            <el-tag v-if="selectedTask" type="success">
-              已选择任务：{{ selectedTask.name }}
-            </el-tag>
-            <el-tag v-else type="info">请先在上方任务列表中选择一个已完成的任务</el-tag>
           </div>
           <el-button 
             v-if="hasAnalysisData" 
@@ -188,351 +175,53 @@
         </div>
       </template>
 
-      <!-- 未选择任务时的提示 -->
-      <div v-if="!selectedTask" class="empty-state">
-        <el-empty description="请在上方任务列表中点击【选择】按钮，选择一个已完成的分析任务">
-          <el-button type="primary" @click="scrollToTaskList">
-            <template #icon><RefreshCw :size="14" /></template>
-            前往选择任务
-          </el-button>
-        </el-empty>
+      <!-- 功能按钮区 -->
+      <div class="analysis-actions">
+        <el-card shadow="hover" class="action-button-card" @click="showDifferenceDialog = true">
+          <div class="action-content">
+            <el-icon class="action-icon" color="#E6A23C"><Location /></el-icon>
+            <div class="action-text">
+              <div class="action-title">种植差异检测</div>
+              <div class="action-desc">对比规划与实际种植情况</div>
+            </div>
+          </div>
+        </el-card>
+
+        <el-card shadow="hover" class="action-button-card" @click="showTemporalDialog = true">
+          <div class="action-content">
+            <el-icon class="action-icon" color="#409EFF"><DataAnalysis /></el-icon>
+            <div class="action-text">
+              <div class="action-title">时序变化分析</div>
+              <div class="action-desc">分析不同时期作物变化</div>
+            </div>
+          </div>
+        </el-card>
+
+        <el-card shadow="hover" class="action-button-card" @click="showStatisticsDialog = true">
+          <div class="action-content">
+            <el-icon class="action-icon" color="#67C23A"><Tickets /></el-icon>
+            <div class="action-text">
+              <div class="action-title">统计汇总</div>
+              <div class="action-desc">生成多维度统计报告</div>
+            </div>
+          </div>
+        </el-card>
       </div>
 
-      <!-- 已选择任务时显示功能tabs -->
-      <el-tabs v-else v-model="activeAnalysisTab" class="analysis-tabs">
-        <!-- Tab 1: 种植差异检测 -->
-        <el-tab-pane label="种植差异检测" name="difference">
-          <div class="analysis-content">
-            <el-row :gutter="20">
-              <el-col :span="16">
-                <el-card shadow="hover">
-                  <template #header>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                      <span>差异检测配置</span>
-                      <el-button type="primary" @click="handleRunDifferenceDetection" :loading="differenceLoading">
-                        <template #icon><Play :size="14" /></template>
-                        {{ differenceLoading ? '检测中...' : '执行检测' }}
-                      </el-button>
-                    </div>
-                  </template>
-
-                  <el-form label-width="120px">
-                    <el-form-item label="分析任务">
-                      <el-input :value="selectedTask.name" disabled />
-                    </el-form-item>
-                    <el-form-item label="影像数据">
-                      <el-input :value="selectedTask.imageId || 'Sentinel2_XJ_20240315_L2A'" disabled />
-                    </el-form-item>
-                    <el-form-item label="地块数据">
-                      <el-select v-model="differenceConfig.plotData" style="width: 100%">
-                        <el-option label="乌鲁木齐市地块数据（含规划作物）" value="plot001" />
-                        <el-option label="喀什地区地块数据（含规划作物）" value="plot002" />
-                        <el-option label="全疆地块数据汇总" value="plot_all" />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="差异阈值">
-                      <el-slider v-model="differenceConfig.threshold" :min="0" :max="100" :step="5" />
-                      <span style="margin-left: 10px">{{ differenceConfig.threshold }}%</span>
-                    </el-form-item>
-                  </el-form>
-                </el-card>
-
-                <!-- 差异检测结果 -->
-                <el-card v-if="differenceResultData.length" shadow="hover" style="margin-top: 20px;">
-                  <template #header>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                      <span>差异检测结果</span>
-                      <el-space>
-                        <el-select v-model="differenceTypeFilter" placeholder="筛选差异类型" style="width: 160px" size="small" clearable>
-                          <el-option label="全部" value="" />
-                          <el-option label="类型不符" value="typeMismatch" />
-                          <el-option label="撂荒/未种植" value="abandoned" />
-                          <el-option label="非规划种植" value="unplanned" />
-                        </el-select>
-                        <el-button size="small" @click="handleExportDifference">
-                          <template #icon><Download :size="14" /></template>
-                          导出
-                        </el-button>
-                      </el-space>
-                    </div>
-                  </template>
-
-                  <el-table :data="filteredDifferenceData" max-height="400" stripe>
-                    <el-table-column prop="plotId" label="地块编号" width="100" />
-                    <el-table-column prop="plotName" label="地块名称" width="140" />
-                    <el-table-column prop="plannedCrop" label="规划作物" width="100">
-                      <template #default="scope">
-                        <el-tag type="info" size="small">{{ scope.row.plannedCrop }}</el-tag>
-                      </template>
-                    </el-table-column>
-                    <el-table-column prop="detectedCrop" label="识别作物" width="100">
-                      <template #default="scope">
-                        <el-tag size="small">{{ scope.row.detectedCrop }}</el-tag>
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="差异类型" width="120">
-                      <template #default="scope">
-                        <el-tag :type="getDiffTagType(scope.row.diffType)" size="small">
-                          {{ getDiffTypeText(scope.row.diffType) }}
-                        </el-tag>
-                      </template>
-                    </el-table-column>
-                    <el-table-column prop="area" label="面积(亩)" width="100" />
-                    <el-table-column prop="confidence" label="置信度" width="90">
-                      <template #default="scope">
-                        {{ (scope.row.confidence * 100).toFixed(1) }}%
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="操作" width="100" fixed="right">
-                      <template #default="scope">
-                        <el-button type="primary" link size="small" @click="handleLocateOnMap(scope.row)">
-                          <el-icon><Location /></el-icon>
-                          定位
-                        </el-button>
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                </el-card>
-              </el-col>
-
-              <el-col :span="8">
-                <!-- 差异统计 -->
-                <el-card shadow="hover" class="stats-card">
-                  <template #header>统计概览</template>
-                  <div v-if="differenceResultData.length" class="stats-list">
-                    <div class="stat-item">
-                      <div class="stat-label">检测地块总数</div>
-                      <div class="stat-value primary">{{ differenceStats.total }}</div>
-                    </div>
-                    <el-divider />
-                    <div class="stat-item">
-                      <div class="stat-label">类型不符</div>
-                      <div class="stat-value warning">{{ differenceStats.typeMismatch }}</div>
-                    </div>
-                    <el-divider />
-                    <div class="stat-item">
-                      <div class="stat-label">撂荒/未种植</div>
-                      <div class="stat-value danger">{{ differenceStats.abandoned }}</div>
-                    </div>
-                    <el-divider />
-                    <div class="stat-item">
-                      <div class="stat-label">非规划种植</div>
-                      <div class="stat-value info">{{ differenceStats.unplanned }}</div>
-                    </div>
-                    <el-divider />
-                    <div class="stat-item">
-                      <div class="stat-label">正常</div>
-                      <div class="stat-value success">{{ differenceStats.normal }}</div>
-                    </div>
-                  </div>
-                  <el-empty v-else description="暂无数据" :image-size="100" />
-                </el-card>
-
-                <!-- 差异分布图 -->
-                <el-card shadow="hover" style="margin-top: 20px;">
-                  <template #header>差异类型分布</template>
-                  <div v-if="differenceResultData.length" style="height: 250px; display: flex; align-items: center; justify-content: center;">
-                    <el-text type="info">图表区域（可集成 ECharts）</el-text>
-                  </div>
-                  <el-empty v-else description="暂无数据" :image-size="100" />
-                </el-card>
-              </el-col>
-            </el-row>
-          </div>
-        </el-tab-pane>
-
-        <!-- Tab 2: 时序变化分析 -->
-        <el-tab-pane label="时序变化分析" name="temporal">
-          <div class="analysis-content">
-            <el-row :gutter="20">
-              <el-col :span="16">
-                <el-card shadow="hover">
-                  <template #header>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                      <span>时序对比配置</span>
-                      <el-button type="primary" @click="handleRunTemporalAnalysis" :loading="temporalLoading">
-                        <template #icon><Play :size="14" /></template>
-                        {{ temporalLoading ? '分析中...' : '执行分析' }}
-                      </el-button>
-                    </div>
-                  </template>
-
-                  <el-form label-width="120px">
-                    <el-form-item label="基准任务">
-                      <el-input :value="selectedTask.name" disabled />
-                    </el-form-item>
-                    <el-form-item label="对比任务">
-                      <el-select v-model="temporalConfig.compareTaskId" placeholder="选择另一个年份的任务" style="width: 100%">
-                        <el-option 
-                          v-for="task in completedTasks.filter(t => t.id !== selectedTask.id)" 
-                          :key="task.id"
-                          :label="task.name" 
-                          :value="task.id" 
-                        />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="对比维度">
-                      <el-checkbox-group v-model="temporalConfig.dimensions">
-                        <el-checkbox label="cropChange">作物类型变化</el-checkbox>
-                        <el-checkbox label="areaChange">种植面积变化</el-checkbox>
-                        <el-checkbox label="coverageChange">植被覆盖变化</el-checkbox>
-                      </el-checkbox-group>
-                    </el-form-item>
-                  </el-form>
-                </el-card>
-
-                <!-- 时序变化结果 -->
-                <el-card v-if="temporalResultData.length" shadow="hover" style="margin-top: 20px;">
-                  <template #header>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                      <span>变化检测结果</span>
-                      <el-button size="small" @click="handleExportTemporal">
-                        <template #icon><Download :size="14" /></template>
-                        导出
-                      </el-button>
-                    </div>
-                  </template>
-
-                  <el-table :data="temporalResultData" max-height="400" stripe>
-                    <el-table-column prop="plotId" label="地块编号" width="100" />
-                    <el-table-column prop="plotName" label="地块名称" width="140" />
-                    <el-table-column label="基准期作物" width="110">
-                      <template #default="scope">
-                        <el-tag size="small">{{ scope.row.baseCrop }}</el-tag>
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="对比期作物" width="110">
-                      <template #default="scope">
-                        <el-tag size="small" type="success">{{ scope.row.compareCrop }}</el-tag>
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="变化类型" width="120">
-                      <template #default="scope">
-                        <el-tag :type="scope.row.changeType === 'noChange' ? 'info' : 'warning'" size="small">
-                          {{ scope.row.changeType === 'noChange' ? '无变化' : '作物变化' }}
-                        </el-tag>
-                      </template>
-                    </el-table-column>
-                    <el-table-column prop="area" label="面积(亩)" width="100" />
-                    <el-table-column label="操作" width="100" fixed="right">
-                      <template #default="scope">
-                        <el-button type="primary" link size="small" @click="handleLocateOnMap(scope.row)">
-                          <el-icon><Location /></el-icon>
-                          定位
-                        </el-button>
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                </el-card>
-              </el-col>
-
-              <el-col :span="8">
-                <el-card shadow="hover" class="stats-card">
-                  <template #header>变化统计</template>
-                  <div v-if="temporalResultData.length" class="stats-list">
-                    <div class="stat-item">
-                      <div class="stat-label">对比地块总数</div>
-                      <div class="stat-value primary">{{ temporalStats.total }}</div>
-                    </div>
-                    <el-divider />
-                    <div class="stat-item">
-                      <div class="stat-label">发生变化</div>
-                      <div class="stat-value warning">{{ temporalStats.changed }}</div>
-                    </div>
-                    <el-divider />
-                    <div class="stat-item">
-                      <div class="stat-label">无变化</div>
-                      <div class="stat-value success">{{ temporalStats.unchanged }}</div>
-                    </div>
-                  </div>
-                  <el-empty v-else description="暂无数据" :image-size="100" />
-                </el-card>
-
-                <el-card shadow="hover" style="margin-top: 20px;">
-                  <template #header>变化趋势</template>
-                  <div v-if="temporalResultData.length" style="height: 250px; display: flex; align-items: center; justify-content: center;">
-                    <el-text type="info">图表区域（可集成 ECharts）</el-text>
-                  </div>
-                  <el-empty v-else description="暂无数据" :image-size="100" />
-                </el-card>
-              </el-col>
-            </el-row>
-          </div>
-        </el-tab-pane>
-
-        <!-- Tab 3: 统计汇总 -->
-        <el-tab-pane label="统计汇总" name="statistics">
-          <div class="analysis-content">
-            <el-row :gutter="20">
-              <el-col :span="24">
-                <el-card shadow="hover">
-                  <template #header>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                      <span>统计维度选择</span>
-                      <el-button type="primary" @click="handleGenerateStatistics" :loading="statisticsLoading">
-                        <template #icon><DataAnalysis /></template>
-                        {{ statisticsLoading ? '生成中...' : '生成统计' }}
-                      </el-button>
-                    </div>
-                  </template>
-
-                  <el-form :inline="true">
-                    <el-form-item label="统计依据">
-                      <el-radio-group v-model="statisticsConfig.source">
-                        <el-radio label="difference">种植差异检测结果</el-radio>
-                        <el-radio label="temporal">时序变化分析结果</el-radio>
-                      </el-radio-group>
-                    </el-form-item>
-                    <el-form-item label="统计维度">
-                      <el-checkbox-group v-model="statisticsConfig.dimensions">
-                        <el-checkbox label="region">按行政区划</el-checkbox>
-                        <el-checkbox label="crop">按作物类型</el-checkbox>
-                        <el-checkbox label="diffType">按差异类型</el-checkbox>
-                      </el-checkbox-group>
-                    </el-form-item>
-                  </el-form>
-                </el-card>
-
-                <!-- 统计结果展示 -->
-                <el-row v-if="statisticsData.length" :gutter="20" style="margin-top: 20px;">
-                  <el-col :span="12">
-                    <el-card shadow="hover">
-                      <template #header>
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                          <span>统计表格</span>
-                          <el-button size="small" @click="handleExportStatistics">
-                            <template #icon><Download :size="14" /></template>
-                            导出
-                          </el-button>
-                        </div>
-                      </template>
-                      <el-table :data="statisticsData" max-height="450" stripe>
-                        <el-table-column prop="category" label="分类" width="150" />
-                        <el-table-column prop="count" label="地块数" width="100" />
-                        <el-table-column prop="area" label="面积(亩)" width="120" />
-                        <el-table-column prop="percentage" label="占比" width="100">
-                          <template #default="scope">
-                            {{ scope.row.percentage }}%
-                          </template>
-                        </el-table-column>
-                      </el-table>
-                    </el-card>
-                  </el-col>
-
-                  <el-col :span="12">
-                    <el-card shadow="hover">
-                      <template #header>统计图表</template>
-                      <div style="height: 450px; display: flex; align-items: center; justify-content: center;">
-                        <el-text type="info">图表区域（可集成 ECharts 饼图/柱状图）</el-text>
-                      </div>
-                    </el-card>
-                  </el-col>
-                </el-row>
-              </el-col>
-            </el-row>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
+      <!-- 任务执行状态显示 -->
+      <el-card v-if="analysisTaskRunning" shadow="never" class="task-running-card">
+        <el-result icon="info" title="分析任务执行中">
+          <template #sub-title>
+            <div style="margin: 20px 0;">
+              <el-progress :percentage="analysisProgress" :status="analysisProgress === 100 ? 'success' : ''" />
+              <div style="margin-top: 12px; color: #606266;">{{ analysisStatusText }}</div>
+            </div>
+          </template>
+          <template #extra>
+            <el-button type="primary" @click="handleViewAnalysisQueue">前往数据管理查看结果</el-button>
+          </template>
+        </el-result>
+      </el-card>
     </el-card>
 
     <!-- 新建任务对话框 -->
@@ -652,6 +341,184 @@
         <pre>{{ currentLog }}</pre>
       </div>
     </el-dialog>
+
+    <!-- 种植差异检测配置对话框 -->
+    <el-dialog
+      v-model="showDifferenceDialog"
+      title="种植差异检测配置"
+      width="650px"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        title="说明"
+        type="info"
+        :closable="false"
+        style="margin-bottom: 20px;"
+      >
+        从识别结果队列中选择两个识别结果文件进行对比，时间早的作为原始图，时间晚的作为对比图
+      </el-alert>
+      
+      <el-form :model="differenceConfig" label-width="100px">
+        <el-form-item label="原始图" required>
+          <el-select 
+            v-model="differenceConfig.baseFileId" 
+            placeholder="选择时间较早的识别结果" 
+            style="width: 100%"
+            filterable
+          >
+            <el-option 
+              v-for="file in recognitionFiles" 
+              :key="file.id"
+              :label="`${file.taskName} (${file.createTime})`" 
+              :value="file.id"
+              :disabled="file.id === differenceConfig.compareFileId"
+            >
+              <div style="display: flex; justify-content: space-between;">
+                <span>{{ file.taskName }}</span>
+                <span style="color: #8492a6; font-size: 13px;">{{ file.createTime }}</span>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="对比图" required>
+          <el-select 
+            v-model="differenceConfig.compareFileId" 
+            placeholder="选择时间较晚的识别结果" 
+            style="width: 100%"
+            filterable
+          >
+            <el-option 
+              v-for="file in recognitionFiles.filter(f => f.id !== differenceConfig.baseFileId)" 
+              :key="file.id"
+              :label="`${file.taskName} (${file.createTime})`" 
+              :value="file.id"
+            >
+              <div style="display: flex; justify-content: space-between;">
+                <span>{{ file.taskName }}</span>
+                <span style="color: #8492a6; font-size: 13px;">{{ file.createTime }}</span>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showDifferenceDialog = false">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="handleRunDifferenceDetection" 
+          :loading="differenceLoading"
+          :disabled="!differenceConfig.baseFileId || !differenceConfig.compareFileId"
+        >
+          开始检测
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 时序变化分析配置对话框 -->
+    <el-dialog
+      v-model="showTemporalDialog"
+      title="时序变化分析配置"
+      width="700px"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        title="说明"
+        type="info"
+        :closable="false"
+        style="margin-bottom: 20px;"
+      >
+        从分析结果队列中选择多个识别结果文件进行时序变化分析，系统将按时间顺序自动排列
+      </el-alert>
+      
+      <el-form :model="temporalConfig" label-width="120px">
+        <el-form-item label="选择文件">
+          <el-select 
+            v-model="temporalConfig.selectedFileIds" 
+            placeholder="选择多个识别结果（至少2个）" 
+            style="width: 100%"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+          >
+            <el-option 
+              v-for="file in recognitionFiles" 
+              :key="file.id"
+              :label="`${file.taskName} (${file.createTime})`" 
+              :value="file.id"
+            >
+              <div style="display: flex; justify-content: space-between;">
+                <span>{{ file.taskName }}</span>
+                <span style="color: #8492a6; font-size: 13px;">{{ file.createTime }}</span>
+              </div>
+            </el-option>
+          </el-select>
+          <div style="margin-top: 8px; font-size: 12px; color: #909399;">
+            已选择 {{ temporalConfig.selectedFileIds.length }} 个文件
+          </div>
+        </el-form-item>
+        
+        <el-form-item label="对比维度">
+          <el-checkbox-group v-model="temporalConfig.dimensions">
+            <el-checkbox label="cropChange">作物类型变化</el-checkbox>
+            <el-checkbox label="areaChange">种植面积变化</el-checkbox>
+            <el-checkbox label="coverageChange">植被覆盖变化</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showTemporalDialog = false">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="handleRunTemporalAnalysis" 
+          :loading="temporalLoading"
+          :disabled="temporalConfig.selectedFileIds.length < 2"
+        >
+          开始分析
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 统计汇总配置对话框 -->
+    <el-dialog
+      v-model="showStatisticsDialog"
+      title="统计汇总配置"
+      width="600px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="statisticsConfig" label-width="120px">
+        <el-form-item label="选择任务">
+          <el-select v-model="statisticsConfig.taskId" placeholder="选择已完成的分析任务" style="width: 100%">
+            <el-option 
+              v-for="task in completedTasks" 
+              :key="task.id"
+              :label="task.name" 
+              :value="task.id" 
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="统计依据">
+          <el-radio-group v-model="statisticsConfig.source">
+            <el-radio label="difference">种植差异检测结果</el-radio>
+            <el-radio label="temporal">时序变化分析结果</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="统计维度">
+          <el-checkbox-group v-model="statisticsConfig.dimensions">
+            <el-checkbox label="region">按行政区划</el-checkbox>
+            <el-checkbox label="crop">按作物类型</el-checkbox>
+            <el-checkbox label="diffType">按差异类型</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showStatisticsDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleGenerateStatistics" :loading="statisticsLoading">
+          生成统计
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -662,7 +529,7 @@ import {
   Plus, RefreshCw, Search, Eye, File, Play, Trash2, Upload, Download, GitCompare
 } from 'lucide-vue-next'
 import {
-  Tickets, Loading, CircleCheck, CircleClose, List, DataAnalysis, Location
+  Tickets, Loading, CircleCheck, CircleClose, List, DataAnalysis, Location, Right, ArrowLeft, ArrowRight
 } from '@element-plus/icons-vue'
 
 const statusFilter = ref('')
@@ -674,16 +541,25 @@ const showLogDialog = ref(false)
 const currentStep = ref(0)
 const currentLog = ref('')
 
-// 新模块：变化检测与差异分析
-const selectedTask = ref(null)
-const activeAnalysisTab = ref('difference')
+// 对话框显示状态
+const showDifferenceDialog = ref(false)
+const showTemporalDialog = ref(false)
+const showStatisticsDialog = ref(false)
+
+// 分析任务执行状态
+const analysisTaskRunning = ref(false)
+const analysisProgress = ref(0)
+const analysisStatusText = ref('')
+
+// 识别结果文件列表（从数据管理模块的分析结果队列加载）
+const recognitionFiles = ref([])
 
 // 功能B.1：种植差异检测
 const differenceLoading = ref(false)
 const differenceTypeFilter = ref('')
 const differenceConfig = ref({
-  plotData: 'plot001',
-  threshold: 80
+  baseFileId: '',
+  compareFileId: ''
 })
 const differenceResultData = ref([])
 const differenceStats = ref({
@@ -697,7 +573,7 @@ const differenceStats = ref({
 // 功能B.2：时序变化分析
 const temporalLoading = ref(false)
 const temporalConfig = ref({
-  compareTaskId: '',
+  selectedFileIds: [],
   dimensions: ['cropChange']
 })
 const temporalResultData = ref([])
@@ -707,9 +583,13 @@ const temporalStats = ref({
   unchanged: 0
 })
 
+// 时间轴相关
+const currentTimelineIndex = ref(0)
+
 // 功能B.3：统计汇总
 const statisticsLoading = ref(false)
 const statisticsConfig = ref({
+  taskId: '',
   source: 'difference',
   dimensions: ['region']
 })
@@ -814,6 +694,21 @@ const completedTasks = computed(() => {
   return taskList.value.filter(t => t.status === 'completed')
 })
 
+// 计算属性：按时间排序的识别结果文件
+const sortedRecognitionFiles = computed(() => {
+  return [...recognitionFiles.value].sort((a, b) => {
+    return new Date(a.createTime) - new Date(b.createTime)
+  })
+})
+
+// 计算属性：当前时间轴项目
+const currentTimelineItem = computed(() => {
+  if (currentAnalysisResult.value && currentAnalysisResult.value.timelineData) {
+    return currentAnalysisResult.value.timelineData[currentTimelineIndex.value]
+  }
+  return null
+})
+
 // 计算属性：过滤后的差异检测数据
 const filteredDifferenceData = computed(() => {
   if (!differenceTypeFilter.value) {
@@ -824,8 +719,7 @@ const filteredDifferenceData = computed(() => {
 
 // 计算属性：判断是否有分析数据
 const hasAnalysisData = computed(() => {
-  return selectedTask.value !== null || 
-         differenceResultData.value.length > 0 || 
+  return differenceResultData.value.length > 0 || 
          temporalResultData.value.length > 0 || 
          statisticsData.value.length > 0
 })
@@ -835,135 +729,48 @@ watch([statusFilter, searchKeyword], () => {
   currentPage.value = 1
 })
 
-// LocalStorage 键名
-const STORAGE_KEY = 'task_analysis_data'
-
-// 保存分析数据到 localStorage
-const saveAnalysisData = () => {
-  const data = {
-    selectedTask: selectedTask.value,
-    activeAnalysisTab: activeAnalysisTab.value,
-    differenceResultData: differenceResultData.value,
-    differenceStats: differenceStats.value,
-    differenceConfig: differenceConfig.value,
-    temporalResultData: temporalResultData.value,
-    temporalStats: temporalStats.value,
-    temporalConfig: temporalConfig.value,
-    statisticsData: statisticsData.value,
-    statisticsConfig: statisticsConfig.value,
-    timestamp: new Date().getTime()
-  }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-  } catch (error) {
-    console.error('保存分析数据失败:', error)
-  }
-}
-
-// 从 localStorage 加载分析数据
-const loadAnalysisData = () => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) {
-      const data = JSON.parse(stored)
-      
-      // 检查数据是否过期（24小时）
-      const now = new Date().getTime()
-      const oneDayMs = 24 * 60 * 60 * 1000
-      if (data.timestamp && (now - data.timestamp) < oneDayMs) {
-        selectedTask.value = data.selectedTask
-        activeAnalysisTab.value = data.activeAnalysisTab || 'difference'
-        differenceResultData.value = data.differenceResultData || []
-        differenceStats.value = data.differenceStats || {
-          total: 0,
-          typeMismatch: 0,
-          abandoned: 0,
-          unplanned: 0,
-          normal: 0
-        }
-        differenceConfig.value = data.differenceConfig || {
-          plotData: 'plot001',
-          threshold: 80
-        }
-        temporalResultData.value = data.temporalResultData || []
-        temporalStats.value = data.temporalStats || {
-          total: 0,
-          changed: 0,
-          unchanged: 0
-        }
-        temporalConfig.value = data.temporalConfig || {
-          compareTaskId: '',
-          dimensions: ['cropChange']
-        }
-        statisticsData.value = data.statisticsData || []
-        statisticsConfig.value = data.statisticsConfig || {
-          source: 'difference',
-          dimensions: ['region']
-        }
-        
-        console.log('已恢复分析数据')
-      } else {
-        console.log('分析数据已过期，已清除')
-        localStorage.removeItem(STORAGE_KEY)
-      }
-    }
-  } catch (error) {
-    console.error('加载分析数据失败:', error)
-    localStorage.removeItem(STORAGE_KEY)
-  }
-}
-
 // 清空所有分析数据
 const clearAnalysisData = () => {
-  selectedTask.value = null
-  activeAnalysisTab.value = 'difference'
   differenceResultData.value = []
-  differenceStats.value = {
-    total: 0,
-    typeMismatch: 0,
-    abandoned: 0,
-    unplanned: 0,
-    normal: 0
-  }
   differenceConfig.value = {
-    plotData: 'plot001',
-    threshold: 80
+    baseFileId: '',
+    compareFileId: ''
   }
   temporalResultData.value = []
-  temporalStats.value = {
-    total: 0,
-    changed: 0,
-    unchanged: 0
-  }
   temporalConfig.value = {
-    compareTaskId: '',
+    selectedFileIds: '',
     dimensions: ['cropChange']
   }
   statisticsData.value = []
   statisticsConfig.value = {
+    taskId: '',
     source: 'difference',
     dimensions: ['region']
   }
-  differenceTypeFilter.value = ''
-  
-  // 清除 localStorage
-  localStorage.removeItem(STORAGE_KEY)
 }
 
-// 监听关键数据变化，自动保存
-watch([
-  selectedTask, 
-  differenceResultData, 
-  temporalResultData, 
-  statisticsData,
-  activeAnalysisTab
-], () => {
-  saveAnalysisData()
-}, { deep: true })
+// 加载识别结果文件列表（从数据管理的分析结果队列）
+const loadRecognitionFiles = () => {
+  try {
+    const QUEUE_KEY = 'analysis_result_queue'
+    const stored = localStorage.getItem(QUEUE_KEY)
+    if (stored) {
+      const allResults = JSON.parse(stored)
+      // 只加载 recognition 类型的结果（识别任务生成的图像）
+      recognitionFiles.value = allResults.filter(r => r.analysisType === 'recognition')
+      console.log('已加载识别结果文件:', recognitionFiles.value.length, '个')
+    } else {
+      recognitionFiles.value = []
+    }
+  } catch (error) {
+    console.error('加载识别结果文件失败:', error)
+    recognitionFiles.value = []
+  }
+}
 
-// 组件挂载时恢复数据
+// 组件挂载时加载数据
 onMounted(() => {
-  loadAnalysisData()
+  loadRecognitionFiles()
 })
 
 const getStatusType = (status) => {
@@ -1034,7 +841,63 @@ const handleDelete = (row) => {
 }
 
 const handleSubmitTask = () => {
-  ElMessage.success('任务提交成功')
+  // 创建新任务
+  const newTask = {
+    id: `TASK${String(taskList.value.length + 1).padStart(3, '0')}`,
+    name: taskForm.value.name,
+    method: taskForm.value.method,
+    status: 'pending',
+    progress: 0,
+    createTime: new Date().toLocaleString('zh-CN'),
+    duration: '-',
+    imageId: taskForm.value.imageId
+  }
+  
+  taskList.value.unshift(newTask)
+  
+  ElMessage.success('任务提交成功，开始执行识别...')
+  
+  // 模拟任务执行过程
+  setTimeout(() => {
+    newTask.status = 'running'
+    newTask.progress = 30
+  }, 1000)
+  
+  setTimeout(() => {
+    newTask.progress = 60
+  }, 3000)
+  
+  setTimeout(() => {
+    newTask.status = 'completed'
+    newTask.progress = 100
+    newTask.duration = '5分钟'
+    
+    // 任务完成后，将识别结果添加到分析结果队列
+    const resultFile = {
+      id: `recognition_${new Date().getTime()}`,
+      name: `${newTask.name}_识别结果.tif`,
+      type: 'TIF',
+      taskId: newTask.id,
+      taskName: newTask.name,
+      analysisType: 'recognition',
+      recordCount: '-',
+      size: `${(Math.random() * 50 + 50).toFixed(2)} MB`,
+      createTime: new Date().toLocaleString('zh-CN'),
+      timestamp: new Date().getTime(),
+      downloadUrl: `/api/download/${newTask.name}_recognition.tif`
+    }
+    
+    // 保存到 localStorage
+    saveRecognitionResultToQueue(resultFile)
+    
+    ElNotification({
+      title: '✅ 识别任务完成',
+      message: `${newTask.name} 已完成识别，结果已保存到数据管理的分析结果队列`,
+      type: 'success',
+      duration: 5000
+    })
+  }, 5000)
+  
   showTaskDialog.value = false
   currentStep.value = 0
   taskForm.value = {
@@ -1048,6 +911,35 @@ const handleSubmitTask = () => {
       kernel: 'rbf',
       trainRatio: 70
     }
+  }
+}
+
+// 保存识别结果到队列
+const saveRecognitionResultToQueue = (fileInfo) => {
+  try {
+    const QUEUE_KEY = 'analysis_result_queue'
+    let queue = []
+    
+    const stored = localStorage.getItem(QUEUE_KEY)
+    if (stored) {
+      queue = JSON.parse(stored)
+    }
+    
+    // 添加新结果到队列头部
+    queue.unshift(fileInfo)
+    
+    // 限制队列长度
+    if (queue.length > 50) {
+      queue = queue.slice(0, 50)
+    }
+    
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(queue))
+    console.log('识别结果已保存到队列:', fileInfo)
+    
+    // 刷新识别结果文件列表
+    loadRecognitionFiles()
+  } catch (error) {
+    console.error('保存识别结果失败:', error)
   }
 }
 
@@ -1075,376 +967,240 @@ const getDiffTypeText = (diffType) => {
 
 // ============ 新模块方法 ============
 
-// 选择任务用于分析
-const handleSelectTask = (task) => {
-  selectedTask.value = task
-  ElMessage.success(`已选择任务: ${task.name}`)
-  // 滚动到分析模块
-  setTimeout(() => {
-    const analysisModule = document.querySelector('.analysis-module-card')
-    if (analysisModule) {
-      analysisModule.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-  }, 100)
-}
-
-// 滚动到任务列表
-const scrollToTaskList = () => {
-  console.log('点击了前往选择任务按钮')
-  // 滚动到页面顶部
-  window.scrollTo({ 
-    top: 0, 
-    behavior: 'smooth' 
-  })
-  // 或者尝试滚动到任务列表卡片
-  setTimeout(() => {
-    const taskListCard = document.querySelector('.task-list-card')
-    if (taskListCard) {
-      taskListCard.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-  }, 100)
-  ElMessage.info('已定位到任务列表')
+// 前往数据管理查看分析结果
+const handleViewAnalysisQueue = () => {
+  // 这里可以添加路由跳转到数据管理界面
+  ElMessage.info('请前往数据管理界面的分析结果队列查看')
 }
 
 // 功能B.1：执行种植差异检测
 const handleRunDifferenceDetection = () => {
-  if (!selectedTask.value) {
-    ElMessage.warning('请先选择一个分析任务')
+  if (!differenceConfig.value.baseFileId || !differenceConfig.value.compareFileId) {
+    ElMessage.warning('请选择两个识别结果文件进行对比')
     return
   }
 
   differenceLoading.value = true
+  showDifferenceDialog.value = false
+  
+  // 显示任务执行状态
+  analysisTaskRunning.value = true
+  analysisProgress.value = 0
+  analysisStatusText.value = '正在加载识别结果文件...'
 
-  // 模拟API调用
+  // 获取选择的文件
+  const baseFile = recognitionFiles.value.find(f => f.id === differenceConfig.value.baseFileId)
+  const compareFile = recognitionFiles.value.find(f => f.id === differenceConfig.value.compareFileId)
+
+  // 模拟执行步骤
   setTimeout(() => {
-    const mockData = [
-      {
-        plotId: 'P0001',
-        plotName: '张家地块A区',
-        plannedCrop: '小麦',
-        detectedCrop: '水稻',
-        confidence: 0.92,
-        diffType: 'typeMismatch',
-        area: 125.5
-      },
-      {
-        plotId: 'P0002',
-        plotName: '李家地块B区',
-        plannedCrop: '玉米',
-        detectedCrop: '裸地',
-        confidence: 0.88,
-        diffType: 'abandoned',
-        area: 86.3
-      },
-      {
-        plotId: 'P0003',
-        plotName: '王家地块C区',
-        plannedCrop: '休耕',
-        detectedCrop: '棉花',
-        confidence: 0.85,
-        diffType: 'unplanned',
-        area: 156.8
-      },
-      {
-        plotId: 'P0004',
-        plotName: '赵家地块D区',
-        plannedCrop: '小麦',
-        detectedCrop: '小麦',
-        confidence: 0.95,
-        diffType: 'normal',
-        area: 98.2
-      },
-      {
-        plotId: 'P0005',
-        plotName: '陈家地块E区',
-        plannedCrop: '棉花',
-        detectedCrop: '玉米',
-        confidence: 0.91,
-        diffType: 'typeMismatch',
-        area: 142.6
-      },
-      {
-        plotId: 'P0006',
-        plotName: '刘家地块F区',
-        plannedCrop: '水稻',
-        detectedCrop: '低植被',
-        confidence: 0.83,
-        diffType: 'abandoned',
-        area: 76.4
-      },
-      {
-        plotId: 'P0007',
-        plotName: '杨家地块G区',
-        plannedCrop: '玉米',
-        detectedCrop: '玉米',
-        confidence: 0.94,
-        diffType: 'normal',
-        area: 113.7
-      },
-      {
-        plotId: 'P0008',
-        plotName: '周家地块H区',
-        plannedCrop: '非农用地',
-        detectedCrop: '蔬菜',
-        confidence: 0.87,
-        diffType: 'unplanned',
-        area: 45.9
-      }
-    ]
+    analysisProgress.value = 30
+    analysisStatusText.value = '正在进行空间叠加分析...'
+  }, 500)
+  
+  setTimeout(() => {
+    analysisProgress.value = 60
+    analysisStatusText.value = '正在识别差异类型...'
+  }, 1200)
+  
+  setTimeout(() => {
+    analysisProgress.value = 90
+    analysisStatusText.value = '正在生成分析报告...'
+  }, 1800)
 
-    differenceResultData.value = mockData
-
-    // 计算统计数据
-    differenceStats.value = {
-      total: mockData.length,
-      typeMismatch: mockData.filter(r => r.diffType === 'typeMismatch').length,
-      abandoned: mockData.filter(r => r.diffType === 'abandoned').length,
-      unplanned: mockData.filter(r => r.diffType === 'unplanned').length,
-      normal: mockData.filter(r => r.diffType === 'normal').length
+  // 模拟API调用生成结果文件
+  setTimeout(() => {
+    analysisProgress.value = 100
+    analysisStatusText.value = '分析完成！正在保存结果...'
+    
+    // 生成结果文件记录（SHP格式）
+    const resultFile = {
+      id: `difference_${new Date().getTime()}`,
+      name: `差异检测_${baseFile.taskName}_vs_${compareFile.taskName}.shp`,
+      type: 'SHP',
+      taskId: `DIFF_${new Date().getTime()}`,
+      taskName: `${baseFile.taskName} vs ${compareFile.taskName}`,
+      analysisType: 'difference',
+      recordCount: 6,  // 模拟数据记录数
+      size: `${(Math.random() * 5 + 2).toFixed(2)} MB`,
+      createTime: new Date().toLocaleString('zh-CN'),
+      timestamp: new Date().getTime(),
+      description: `种植差异检测结果 - 对比${baseFile.taskName}和${compareFile.taskName}`,
+      baseFileId: baseFile.id,
+      compareFileId: compareFile.id,
+      downloadUrl: `/api/download/difference_${new Date().getTime()}.shp`
     }
+    
+    // 保存到分析结果队列
+    saveAnalysisResultToQueue(resultFile)
 
     differenceLoading.value = false
-    ElMessage.success('差异检测完成！')
-  }, 2000)
+    
+    setTimeout(() => {
+      analysisTaskRunning.value = false
+      ElNotification({
+        title: '✅ 差异检测完成',
+        message: '分析结果已保存到数据管理的分析结果队列，可前往结果查看与比对界面查看详情',
+        type: 'success',
+        duration: 5000
+      })
+    }, 500)
+  }, 2500)
 }
 
 // 功能B.2：执行时序变化分析
 const handleRunTemporalAnalysis = () => {
-  if (!selectedTask.value) {
-    ElMessage.warning('请先选择一个基准任务')
-    return
-  }
-
-  if (!temporalConfig.value.compareTaskId) {
-    ElMessage.warning('请选择对比任务')
+  if (!temporalConfig.value.selectedFileIds || temporalConfig.value.selectedFileIds.length < 2) {
+    ElMessage.warning('请至少选择2个识别结果文件进行时序分析')
     return
   }
 
   temporalLoading.value = true
+  showTemporalDialog.value = false
+  
+  // 显示任务执行状态
+  analysisTaskRunning.value = true
+  analysisProgress.value = 0
+  analysisStatusText.value = '正在加载多期识别结果...'
 
-  // 模拟API调用
+  // 获取选择的文件并按时间排序
+  const selectedFiles = temporalConfig.value.selectedFileIds
+    .map(id => recognitionFiles.value.find(f => f.id === id))
+    .filter(f => f)
+    .sort((a, b) => new Date(a.createTime) - new Date(b.createTime))
+
+  // 模拟执行步骤
   setTimeout(() => {
-    const mockData = [
-      {
-        plotId: 'P0001',
-        plotName: '张家地块A区',
-        baseCrop: '小麦',
-        compareCrop: '水稻',
-        changeType: 'changed',
-        area: 125.5
-      },
-      {
-        plotId: 'P0002',
-        plotName: '李家地块B区',
-        baseCrop: '玉米',
-        compareCrop: '玉米',
-        changeType: 'noChange',
-        area: 86.3
-      },
-      {
-        plotId: 'P0003',
-        plotName: '王家地块C区',
-        baseCrop: '水稻',
-        compareCrop: '棉花',
-        changeType: 'changed',
-        area: 156.8
-      },
-      {
-        plotId: 'P0004',
-        plotName: '赵家地块D区',
-        baseCrop: '小麦',
-        compareCrop: '小麦',
-        changeType: 'noChange',
-        area: 98.2
-      },
-      {
-        plotId: 'P0005',
-        plotName: '陈家地块E区',
-        baseCrop: '棉花',
-        compareCrop: '玉米',
-        changeType: 'changed',
-        area: 142.6
-      }
-    ]
+    analysisProgress.value = 25
+    analysisStatusText.value = '正在进行时序对比分析...'
+  }, 500)
+  
+  setTimeout(() => {
+    analysisProgress.value = 50
+    analysisStatusText.value = '正在识别变化轨迹...'
+  }, 1200)
+  
+  setTimeout(() => {
+    analysisProgress.value = 75
+    analysisStatusText.value = '正在生成统计报表...'
+  }, 1800)
 
-    temporalResultData.value = mockData
-
-    // 计算统计
-    temporalStats.value = {
-      total: mockData.length,
-      changed: mockData.filter(r => r.changeType === 'changed').length,
-      unchanged: mockData.filter(r => r.changeType === 'noChange').length
+  // 模拟API调用生成结果文件
+  setTimeout(() => {
+    analysisProgress.value = 100
+    analysisStatusText.value = '分析完成！正在保存结果...'
+    
+    const timeRange = `${selectedFiles[0].taskName}_至_${selectedFiles[selectedFiles.length - 1].taskName}`
+    
+    // 生成时序分析结果文件记录（包含统计报表数据）
+    const resultFile = {
+      id: `temporal_${new Date().getTime()}`,
+      name: `时序变化分析_${timeRange}.shp`,
+      type: 'SHP',
+      taskId: `TEMP_${new Date().getTime()}`,
+      taskName: `${selectedFiles.length}期时序对比`,
+      analysisType: 'temporal',
+      recordCount: 5,  // 模拟变化记录数
+      size: `${(Math.random() * 8 + 3).toFixed(2)} MB`,
+      createTime: new Date().toLocaleString('zh-CN'),
+      timestamp: new Date().getTime(),
+      description: `时序变化分析 - ${selectedFiles.length}个时间点对比`,
+      selectedFileIds: temporalConfig.value.selectedFileIds,
+      fileCount: selectedFiles.length,
+      timelineData: selectedFiles.map(f => ({
+        id: f.id,
+        taskName: f.taskName,
+        createTime: f.createTime
+      })),
+      downloadUrl: `/api/download/temporal_${new Date().getTime()}.shp`
     }
+    
+    // 保存到分析结果队列
+    saveAnalysisResultToQueue(resultFile)
 
     temporalLoading.value = false
-    ElMessage.success('时序变化分析完成！')
-  }, 2000)
+    
+    setTimeout(() => {
+      analysisTaskRunning.value = false
+      ElNotification({
+        title: '✅ 时序分析完成',
+        message: `已完成${selectedFiles.length}期时序变化分析，结果已保存到数据管理的分析结果队列`,
+        type: 'success',
+        duration: 5000
+      })
+    }, 500)
+  }, 2500)
 }
 
 // 功能B.3：生成统计汇总
 const handleGenerateStatistics = () => {
-  if (statisticsConfig.value.source === 'difference' && !differenceResultData.value.length) {
-    ElMessage.warning('请先执行种植差异检测')
-    return
-  }
-
-  if (statisticsConfig.value.source === 'temporal' && !temporalResultData.value.length) {
-    ElMessage.warning('请先执行时序变化分析')
+  if (!statisticsConfig.value.taskId) {
+    ElMessage.warning('请先选择一个分析任务')
     return
   }
 
   statisticsLoading.value = true
+  showStatisticsDialog.value = false
+  
+  // 显示任务执行状态
+  analysisTaskRunning.value = true
+  analysisProgress.value = 0
+  analysisStatusText.value = '正在加载分析数据...'
 
-  // 模拟生成统计数据
+  // 模拟执行步骤
   setTimeout(() => {
-    const mockData = [
-      { category: '类型不符', count: 2, area: 268.1, percentage: 35.2 },
-      { category: '撂荒/未种植', count: 2, area: 162.7, percentage: 21.4 },
-      { category: '非规划种植', count: 2, area: 202.7, percentage: 26.6 },
-      { category: '正常', count: 2, area: 211.9, percentage: 27.8 }
-    ]
+    analysisProgress.value = 40
+    analysisStatusText.value = '正在统计分析...'
+  }, 500)
+  
+  setTimeout(() => {
+    analysisProgress.value = 80
+    analysisStatusText.value = '正在生成报表...'
+  }, 1000)
 
-    statisticsData.value = mockData
+  // 模拟生成统计报表
+  setTimeout(() => {
+    analysisProgress.value = 100
+    analysisStatusText.value = '统计完成！正在保存结果...'
+    
+    const selectedTask = taskList.value.find(t => t.id === statisticsConfig.value.taskId)
+    const selectedTaskName = selectedTask?.name || '未知任务'
+    
+    // 生成统计汇总结果文件
+    const resultFile = {
+      id: `statistics_${new Date().getTime()}`,
+      name: `统计汇总_${selectedTaskName}.xlsx`,
+      type: 'XLSX',
+      taskId: statisticsConfig.value.taskId,
+      taskName: selectedTaskName,
+      analysisType: 'statistics',
+      recordCount: 3,  // 统计维度数量
+      size: `${(Math.random() * 2 + 0.5).toFixed(2)} MB`,
+      createTime: new Date().toLocaleString('zh-CN'),
+      timestamp: new Date().getTime(),
+      description: `统计汇总报表 - ${statisticsConfig.value.dimensions.join('、')}`,
+      dimensions: statisticsConfig.value.dimensions,
+      source: statisticsConfig.value.source,
+      downloadUrl: `/api/download/statistics_${new Date().getTime()}.xlsx`
+    }
+    
+    // 保存到分析结果队列
+    saveAnalysisResultToQueue(resultFile)
+
     statisticsLoading.value = false
-    ElMessage.success('统计汇总生成完成！')
-  }, 1500)
+    
+    setTimeout(() => {
+      analysisTaskRunning.value = false
+      ElNotification({
+        title: '✅ 统计汇总完成',
+        message: '统计报表已生成并保存到数据管理的分析结果队列',
+        type: 'success',
+        duration: 5000
+      })
+    }, 500)
+  }, 1800)
 }
 
-// 导出差异检测结果
-const handleExportDifference = () => {
-  if (!differenceResultData.value.length) {
-    ElMessage.warning('暂无数据可导出')
-    return
-  }
-  
-  ElMessageBox.confirm(
-    '请选择导出格式',
-    '导出差异检测结果',
-    {
-      distinguishCancelAndClose: true,
-      confirmButtonText: '导出为 SHP',
-      cancelButtonText: '导出为 KMZ',
-      type: 'info'
-    }
-  ).then(() => {
-    // 导出为 SHP
-    exportAnalysisResult('difference', 'shp')
-  }).catch((action) => {
-    if (action === 'cancel') {
-      // 导出为 KMZ
-      exportAnalysisResult('difference', 'kmz')
-    }
-  })
-}
-
-// 导出时序分析结果
-const handleExportTemporal = () => {
-  if (!temporalResultData.value.length) {
-    ElMessage.warning('暂无数据可导出')
-    return
-  }
-  
-  ElMessageBox.confirm(
-    '请选择导出格式',
-    '导出时序变化结果',
-    {
-      distinguishCancelAndClose: true,
-      confirmButtonText: '导出为 SHP',
-      cancelButtonText: '导出为 KMZ',
-      type: 'info'
-    }
-  ).then(() => {
-    exportAnalysisResult('temporal', 'shp')
-  }).catch((action) => {
-    if (action === 'cancel') {
-      exportAnalysisResult('temporal', 'kmz')
-    }
-  })
-}
-
-// 导出统计汇总
-const handleExportStatistics = () => {
-  if (!statisticsData.value.length) {
-    ElMessage.warning('暂无数据可导出')
-    return
-  }
-  
-  ElMessageBox.confirm(
-    '请选择导出格式',
-    '导出统计汇总结果',
-    {
-      distinguishCancelAndClose: true,
-      confirmButtonText: '导出为 SHP',
-      cancelButtonText: '导出为 KMZ',
-      type: 'info'
-    }
-  ).then(() => {
-    exportAnalysisResult('statistics', 'shp')
-  }).catch((action) => {
-    if (action === 'cancel') {
-      exportAnalysisResult('statistics', 'kmz')
-    }
-  })
-}
-
-// 在地图上定位
-const handleLocateOnMap = (row) => {
-  ElMessage.info(`定位到地块: ${row.plotName}`)
-}
-
-// 统一的导出分析结果函数
-const exportAnalysisResult = (type, format) => {
-  let data, fileName, description
-  
-  switch(type) {
-    case 'difference':
-      data = differenceResultData.value
-      fileName = `差异检测结果_${selectedTask.value?.name || '未命名'}_${new Date().getTime()}`
-      description = `差异检测分析 - ${selectedTask.value?.name}`
-      break
-    case 'temporal':
-      data = temporalResultData.value
-      fileName = `时序变化结果_${selectedTask.value?.name || '未命名'}_${new Date().getTime()}`
-      description = `时序变化分析 - ${selectedTask.value?.name}`
-      break
-    case 'statistics':
-      data = statisticsData.value
-      fileName = `统计汇总结果_${selectedTask.value?.name || '未命名'}_${new Date().getTime()}`
-      description = `统计汇总分析 - ${selectedTask.value?.name}`
-      break
-  }
-  
-  // 模拟文件生成（实际项目中应该调用后端API）
-  const fileInfo = {
-    id: `result_${new Date().getTime()}`,
-    name: `${fileName}.${format}`,
-    type: format.toUpperCase(),
-    size: `${(Math.random() * 10 + 1).toFixed(2)} MB`,
-    createTime: new Date().toLocaleString('zh-CN'),
-    description: description,
-    taskId: selectedTask.value?.id,
-    taskName: selectedTask.value?.name,
-    analysisType: type,
-    recordCount: data.length,
-    downloadUrl: `/api/download/${fileName}.${format}` // 模拟下载链接
-  }
-  
-  // 保存到分析结果队列（localStorage）
-  saveAnalysisResultToQueue(fileInfo)
-  
-  // 模拟文件下载
-  ElMessage.success({
-    message: `正在导出 ${format.toUpperCase()} 格式文件...`,
-    duration: 2000
-  })
-  
-  setTimeout(() => {
-    ElMessage.success({
-      message: `${fileName}.${format} 导出成功！已添加到数据管理的分析结果队列`,
-      duration: 3000
-    })
-  }, 2000)
-}
 
 // 保存分析结果到队列
 const saveAnalysisResultToQueue = (fileInfo) => {
@@ -1627,60 +1383,65 @@ const handleClearAllData = () => {
     }
   }
   
-  .empty-state {
-    padding: 40px 20px;
-    min-height: 300px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  
-  .analysis-tabs {
-    margin-top: 20px;
+  // 功能按钮区域
+  .analysis-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    padding: 20px 0;
     
-    .analysis-content {
-      padding: 20px 0;
-    }
-  }
-  
-  .stats-card {
-    .stats-list {
-      .stat-item {
+    .action-button-card {
+      cursor: pointer;
+      transition: all 0.3s;
+      border: 2px solid #ebeef5;
+      
+      &:hover {
+        border-color: #409EFF;
+        box-shadow: 0 4px 12px rgba(64, 158, 255, 0.2);
+        transform: translateY(-4px);
+      }
+      
+      .action-content {
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        padding: 12px 0;
+        gap: 16px;
+        padding: 8px;
         
-        .stat-label {
-          font-size: 14px;
-          color: #606266;
+        .action-icon {
+          font-size: 48px;
+          opacity: 0.9;
         }
         
-        .stat-value {
-          font-size: 24px;
-          font-weight: 600;
+        .action-text {
+          flex: 1;
           
-          &.primary {
-            color: #409EFF;
+          .action-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #303133;
+            margin-bottom: 8px;
           }
           
-          &.success {
-            color: #67C23A;
-          }
-          
-          &.warning {
-            color: #E6A23C;
-          }
-          
-          &.danger {
-            color: #F56C6C;
-          }
-          
-          &.info {
+          .action-desc {
+            font-size: 14px;
             color: #909399;
           }
         }
       }
+    }
+  }
+  
+  // 任务执行状态卡片
+  .task-running-card {
+    margin-top: 20px;
+    
+    :deep(.el-result__title) {
+      font-size: 20px;
+      margin-top: 16px;
+    }
+    
+    :deep(.el-result__subtitle) {
+      margin-top: 16px;
     }
   }
 }

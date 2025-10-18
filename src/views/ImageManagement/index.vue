@@ -244,25 +244,25 @@
       </div>
     </el-card>
 
-    <!-- 分析结果队列 -->
+    <!-- 结果队列（带Tab切换） -->
     <el-card shadow="never" class="result-queue-card" style="margin-top: 20px;">
       <template #header>
         <div class="card-header">
           <span>
             <FileArchive :size="16" style="margin-right: 8px" /> 
-            分析结果队列 (共 {{ analysisResults.length }} 个文件)
+            结果队列
           </span>
           <div>
             <el-button 
-              v-if="analysisResults.length > 0" 
+              v-if="currentQueueData.length > 0" 
               type="danger" 
               size="small"
-              @click="handleClearResultQueue"
+              @click="handleClearCurrentQueue"
             >
               <Trash2 :size="14" style="margin-right: 4px" />
-              清空队列
+              清空当前队列
             </el-button>
-            <el-button size="small" @click="loadAnalysisResults">
+            <el-button size="small" @click="loadAllResults">
               <RefreshCw :size="14" style="margin-right: 4px" />
               刷新
             </el-button>
@@ -270,54 +270,119 @@
         </div>
       </template>
 
-      <el-empty v-if="analysisResults.length === 0" description="暂无分析结果文件">
-        <el-text type="info">从任务管理中导出分析结果后，会自动出现在这里</el-text>
-      </el-empty>
+      <!-- Tab切换 -->
+      <el-tabs v-model="activeQueueTab" class="queue-tabs">
+        <!-- 识别结果队列 -->
+        <el-tab-pane name="recognition">
+          <template #label>
+            <span class="tab-label">
+              <el-icon><Picture /></el-icon>
+              识别结果 ({{ recognitionResults.length }})
+            </span>
+          </template>
+          
+          <el-empty v-if="recognitionResults.length === 0" description="暂无识别结果文件">
+            <el-text type="info">识别任务完成后，结果会自动保存到这里</el-text>
+          </el-empty>
 
-      <el-table v-else :data="paginatedResults" style="width: 100%">
-        <el-table-column prop="name" label="文件名称" min-width="300" show-overflow-tooltip />
-        <el-table-column prop="type" label="格式" width="100">
-          <template #default="scope">
-            <el-tag 
-              :type="scope.row.type === 'SHP' ? 'success' : 'primary'" 
-              size="small"
-            >
-              {{ scope.row.type }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="taskName" label="来源任务" width="200" show-overflow-tooltip />
-        <el-table-column prop="analysisType" label="分析类型" width="120">
-          <template #default="scope">
-            <el-tag size="small">{{ getAnalysisTypeLabel(scope.row.analysisType) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="recordCount" label="记录数" width="100" />
-        <el-table-column prop="size" label="文件大小" width="120" />
-        <el-table-column prop="createTime" label="创建时间" width="180" />
-        <el-table-column label="操作" width="200" fixed="right">
-          <template #default="scope">
-            <el-button size="small" type="primary" @click="handleDownloadResult(scope.row)">
-              <Download :size="14" style="margin-right: 4px" />
-              下载
-            </el-button>
-            <el-button size="small" type="danger" @click="handleDeleteResult(scope.row)">
-              <Trash2 :size="14" style="margin-right: 4px" />
-              删除
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+          <div v-else>
+            <el-table :data="paginatedRecognitionResults" style="width: 100%">
+              <el-table-column prop="name" label="文件名称" min-width="300" show-overflow-tooltip />
+              <el-table-column prop="type" label="格式" width="100">
+                <template #default="scope">
+                  <el-tag type="success" size="small">{{ scope.row.type }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="taskName" label="来源任务" width="200" show-overflow-tooltip />
+              <el-table-column prop="size" label="文件大小" width="120" />
+              <el-table-column prop="createTime" label="创建时间" width="180" />
+              <el-table-column label="操作" width="200" fixed="right">
+                <template #default="scope">
+                  <el-button size="small" type="primary" @click="handleDownloadResult(scope.row)">
+                    <Download :size="14" style="margin-right: 4px" />
+                    下载
+                  </el-button>
+                  <el-button size="small" type="danger" @click="handleDeleteResult(scope.row, 'recognition')">
+                    <Trash2 :size="14" style="margin-right: 4px" />
+                    删除
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
 
-      <div v-if="analysisResults.length > 0" class="pagination-container">
-        <el-pagination
-          v-model:current-page="resultCurrentPage"
-          v-model:page-size="resultPageSize"
-          :page-sizes="[10, 20, 50]"
-          layout="total, sizes, prev, pager, next"
-          :total="analysisResults.length"
-        />
-      </div>
+            <div class="pagination-container">
+              <el-pagination
+                v-model:current-page="recognitionCurrentPage"
+                v-model:page-size="recognitionPageSize"
+                :page-sizes="[10, 20, 50]"
+                layout="total, sizes, prev, pager, next"
+                :total="recognitionResults.length"
+              />
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- 分析结果队列 -->
+        <el-tab-pane name="analysis">
+          <template #label>
+            <span class="tab-label">
+              <el-icon><DataAnalysis /></el-icon>
+              分析结果 ({{ analysisResults.length }})
+            </span>
+          </template>
+          
+          <el-empty v-if="analysisResults.length === 0" description="暂无分析结果文件">
+            <el-text type="info">从任务管理中导出分析结果后，会自动出现在这里</el-text>
+          </el-empty>
+
+          <div v-else>
+            <el-table :data="paginatedAnalysisResults" style="width: 100%">
+              <el-table-column prop="name" label="文件名称" min-width="300" show-overflow-tooltip />
+              <el-table-column prop="type" label="格式" width="100">
+                <template #default="scope">
+                  <el-tag 
+                    :type="scope.row.type === 'SHP' ? 'success' : 'primary'" 
+                    size="small"
+                  >
+                    {{ scope.row.type }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="taskName" label="来源任务" width="200" show-overflow-tooltip />
+              <el-table-column prop="analysisType" label="分析类型" width="120">
+                <template #default="scope">
+                  <el-tag size="small">{{ getAnalysisTypeLabel(scope.row.analysisType) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="recordCount" label="记录数" width="100" />
+              <el-table-column prop="size" label="文件大小" width="120" />
+              <el-table-column prop="createTime" label="创建时间" width="180" />
+              <el-table-column label="操作" width="200" fixed="right">
+                <template #default="scope">
+                  <el-button size="small" type="primary" @click="handleDownloadResult(scope.row)">
+                    <Download :size="14" style="margin-right: 4px" />
+                    下载
+                  </el-button>
+                  <el-button size="small" type="danger" @click="handleDeleteResult(scope.row, 'analysis')">
+                    <Trash2 :size="14" style="margin-right: 4px" />
+                    删除
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+
+            <div class="pagination-container">
+              <el-pagination
+                v-model:current-page="analysisCurrentPage"
+                v-model:page-size="analysisPageSize"
+                :page-sizes="[10, 20, 50]"
+                layout="total, sizes, prev, pager, next"
+                :total="analysisResults.length"
+              />
+            </div>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
     </el-card>
 
     <!-- 上传对话框 -->
@@ -630,7 +695,7 @@
 import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings, FileArchive, RefreshCw } from 'lucide-vue-next'
-import { Loading } from '@element-plus/icons-vue'
+import { Loading, Picture, DataAnalysis } from '@element-plus/icons-vue'
 import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage, getOptimizeProgress } from '@/api/image'
 import * as GeoTIFF from 'geotiff'
 
@@ -669,34 +734,65 @@ const previewImageUrl = ref('')
 const loadingPreview = ref(false)
 const previewError = ref('')
 
-// 分析结果队列相关
+// 结果队列相关
+const activeQueueTab = ref('recognition') // 'recognition' 或 'analysis'
+
+// 识别结果队列
+const recognitionResults = ref([])
+const recognitionCurrentPage = ref(1)
+const recognitionPageSize = ref(10)
+
+// 分析结果队列
 const analysisResults = ref([])
-const resultCurrentPage = ref(1)
-const resultPageSize = ref(10)
+const analysisCurrentPage = ref(1)
+const analysisPageSize = ref(10)
+
+// 分页后的识别结果
+const paginatedRecognitionResults = computed(() => {
+  const start = (recognitionCurrentPage.value - 1) * recognitionPageSize.value
+  const end = start + recognitionPageSize.value
+  return recognitionResults.value.slice(start, end)
+})
 
 // 分页后的分析结果
-const paginatedResults = computed(() => {
-  const start = (resultCurrentPage.value - 1) * resultPageSize.value
-  const end = start + resultPageSize.value
+const paginatedAnalysisResults = computed(() => {
+  const start = (analysisCurrentPage.value - 1) * analysisPageSize.value
+  const end = start + analysisPageSize.value
   return analysisResults.value.slice(start, end)
 })
 
-// 加载分析结果队列
-const loadAnalysisResults = () => {
+// 当前队列的数据（根据activeQueueTab）
+const currentQueueData = computed(() => {
+  return activeQueueTab.value === 'recognition' ? recognitionResults.value : analysisResults.value
+})
+
+// 加载所有结果队列
+const loadAllResults = () => {
   try {
     const QUEUE_KEY = 'analysis_result_queue'
     const stored = localStorage.getItem(QUEUE_KEY)
     if (stored) {
-      analysisResults.value = JSON.parse(stored)
-      console.log('已加载分析结果队列:', analysisResults.value.length, '个文件')
+      const allResults = JSON.parse(stored)
+      
+      // 分离识别结果和分析结果
+      recognitionResults.value = allResults.filter(r => r.analysisType === 'recognition')
+      analysisResults.value = allResults.filter(r => r.analysisType !== 'recognition')
+      
+      console.log('已加载识别结果:', recognitionResults.value.length, '个')
+      console.log('已加载分析结果:', analysisResults.value.length, '个')
     } else {
+      recognitionResults.value = []
       analysisResults.value = []
     }
   } catch (error) {
-    console.error('加载分析结果失败:', error)
+    console.error('加载结果队列失败:', error)
+    recognitionResults.value = []
     analysisResults.value = []
   }
 }
+
+// 兼容旧方法名
+const loadAnalysisResults = loadAllResults
 
 // 获取分析类型标签
 const getAnalysisTypeLabel = (type) => {
@@ -718,7 +814,7 @@ const handleDownloadResult = (row) => {
 }
 
 // 删除单个分析结果
-const handleDeleteResult = (row) => {
+const handleDeleteResult = (row, queueType) => {
   ElMessageBox.confirm(
     `确定要删除 ${row.name} 吗？`,
     '删除确认',
@@ -728,21 +824,33 @@ const handleDeleteResult = (row) => {
       type: 'warning'
     }
   ).then(() => {
-    const index = analysisResults.value.findIndex(item => item.id === row.id)
-    if (index > -1) {
-      analysisResults.value.splice(index, 1)
-      // 更新 localStorage
-      const QUEUE_KEY = 'analysis_result_queue'
-      localStorage.setItem(QUEUE_KEY, JSON.stringify(analysisResults.value))
-      ElMessage.success('删除成功')
+    const QUEUE_KEY = 'analysis_result_queue'
+    try {
+      const stored = localStorage.getItem(QUEUE_KEY)
+      if (stored) {
+        let allQueue = JSON.parse(stored)
+        // 删除指定ID的文件
+        allQueue = allQueue.filter(item => item.id !== row.id)
+        localStorage.setItem(QUEUE_KEY, JSON.stringify(allQueue))
+        
+        // 重新加载
+        loadAllResults()
+        ElMessage.success('删除成功')
+      }
+    } catch (error) {
+      console.error('删除失败:', error)
+      ElMessage.error('删除失败')
     }
   })
 }
 
-// 清空分析结果队列
-const handleClearResultQueue = () => {
+// 清空当前队列
+const handleClearCurrentQueue = () => {
+  const queueName = activeQueueTab.value === 'recognition' ? '识别结果' : '分析结果'
+  const count = currentQueueData.value.length
+  
   ElMessageBox.confirm(
-    `确定要清空所有分析结果文件吗？共 ${analysisResults.value.length} 个文件将被删除。`,
+    `确定要清空${queueName}队列吗？这将删除所有 ${count} 个文件，此操作不可恢复。`,
     '清空确认',
     {
       confirmButtonText: '确定清空',
@@ -751,11 +859,36 @@ const handleClearResultQueue = () => {
       confirmButtonClass: 'el-button--danger'
     }
   ).then(() => {
-    analysisResults.value = []
-    localStorage.removeItem('analysis_result_queue')
-    ElMessage.success('分析结果队列已清空')
+    const QUEUE_KEY = 'analysis_result_queue'
+    try {
+      const stored = localStorage.getItem(QUEUE_KEY)
+      if (stored) {
+        let allQueue = JSON.parse(stored)
+        
+        // 根据当前tab删除对应的文件
+        if (activeQueueTab.value === 'recognition') {
+          // 只保留非recognition类型的
+          allQueue = allQueue.filter(item => item.analysisType !== 'recognition')
+        } else {
+          // 只保留recognition类型的
+          allQueue = allQueue.filter(item => item.analysisType === 'recognition')
+        }
+        
+        localStorage.setItem(QUEUE_KEY, JSON.stringify(allQueue))
+        
+        // 重新加载
+        loadAllResults()
+        ElMessage.success(`${queueName}队列已清空`)
+      }
+    } catch (error) {
+      console.error('清空失败:', error)
+      ElMessage.error('清空失败')
+    }
   })
 }
+
+// 兼容旧方法名
+const handleClearResultQueue = handleClearCurrentQueue
 
 // 编辑相关状态
 const showEditDialog = ref(false)
@@ -1459,8 +1592,8 @@ const handleUpload = async () => {
 
 // 组件挂载时加载数据
 onMounted(() => {
-  loadImageList()
-  loadAnalysisResults()
+  loadImageList() // 加载影像列表
+  loadAllResults() // 加载本地存储的分析结果
 })
 
 // 组件卸载时清理所有定时器
@@ -1757,6 +1890,34 @@ onUnmounted(() => {
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+// 结果队列Tab样式
+.result-queue-card {
+  .queue-tabs {
+    margin-top: 10px;
+    
+    .tab-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 14px;
+    }
+    
+    :deep(.el-tabs__item) {
+      font-size: 15px;
+      font-weight: 500;
+    }
+    
+    :deep(.el-tabs__item.is-active) {
+      color: #409EFF;
+      font-weight: 600;
+    }
+    
+    :deep(.el-tabs__nav-wrap::after) {
+      background-color: #e4e7ed;
+    }
   }
 }
 </style>
