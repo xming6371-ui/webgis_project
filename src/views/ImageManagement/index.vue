@@ -68,10 +68,22 @@
       <template #header>
         <div class="card-header">
           <span><Image :size="16" style="margin-right: 8px" /> 影像目录 (共 {{ tableData.length }} 条)</span>
-          <el-radio-group v-model="viewMode" size="small">
-            <el-radio-button label="table"><List :size="14" style="margin-right: 6px" /> 列表</el-radio-button>
-            <el-radio-button label="grid"><Grid3X3 :size="14" style="margin-right: 6px" /> 缩略图</el-radio-button>
-          </el-radio-group>
+          <div style="display: flex; align-items: center; gap: 12px">
+            <el-button 
+              type="success" 
+              size="small" 
+              @click="handleRefresh"
+              :loading="loading"
+              plain
+            >
+              <RefreshCw :size="14" style="margin-right: 6px" />
+              刷新列表
+            </el-button>
+            <el-radio-group v-model="viewMode" size="small">
+              <el-radio-button label="table"><List :size="14" style="margin-right: 6px" /> 列表</el-radio-button>
+              <el-radio-button label="grid"><Grid3X3 :size="14" style="margin-right: 6px" /> 缩略图</el-radio-button>
+            </el-radio-group>
+          </div>
         </div>
       </template>
 
@@ -985,6 +997,16 @@ const loadImageList = async () => {
     ElMessage.error('加载影像列表失败')
   } finally {
     loading.value = false
+  }
+}
+
+// 刷新列表
+const handleRefresh = async () => {
+  try {
+    await loadImageList()
+    ElMessage.success('刷新成功')
+  } catch (error) {
+    ElMessage.error('刷新失败')
   }
 }
 

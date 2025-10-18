@@ -21,6 +21,14 @@ export const uploadImage = (data) => {
   })
 }
 
+export const updateImage = (id, data) => {
+  return request({
+    url: `/image/${id}`,
+    method: 'put',
+    data
+  })
+}
+
 // 删除影像
 export const deleteImage = (id) => {
   return request({

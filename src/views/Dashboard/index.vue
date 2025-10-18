@@ -85,6 +85,10 @@
           </div>
           <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
           <el-button :icon="Refresh" @click="handleReset">重置</el-button>
+          <el-button type="success" @click="handleRefreshOptions" plain>
+            <RefreshCw :size="16" style="margin-right: 6px" />
+            刷新选项
+          </el-button>
         </el-space>
       </div>
     </el-card>
@@ -240,6 +244,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Search, Refresh, Grid, SuccessFilled, WarningFilled, DocumentChecked, Location, ZoomIn, ZoomOut, Position, PieChart, DataLine, TrendCharts, ArrowDown, Loading } from '@element-plus/icons-vue'
+import { RefreshCw } from 'lucide-vue-next'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 
@@ -271,6 +276,7 @@ const filterForm = ref({
 })
 
 // 选中的作物类型（多选）
+// 默认显示所有类型（包括裸地）
 const selectedCropTypes = ref([])
 
 // 过滤后的图例（根据选中的作物类型）
@@ -322,18 +328,19 @@ const legendCollapsed = ref(false) // 图例是否收起
 const tiffLayerVisible = ref(false) // TIF 图层是否可见（默认关闭）
 const currentBaseMap = ref('amap-vector') // 当前底图类型（默认路网图）
 
-// 作物分类图例配置（0-9对应不同作物类型）
+// 作物分类图例配置（使用像素值+1后的映射：1-10对应不同作物类型）
+// 注意：像素值已经整体+1，0表示NoData（透明）
 const cropLegend = [
-  { value: 0, label: '裸地', color: '#D2B48C' },
-  { value: 1, label: '棉花', color: '#FFFFFF' },
-  { value: 2, label: '小麦', color: '#FFD700' },
-  { value: 3, label: '玉米', color: '#FFA500' },
-  { value: 4, label: '番茄', color: '#FF6347' },
-  { value: 5, label: '甜菜', color: '#FF1493' },
-  { value: 6, label: '打瓜', color: '#00FF7F' },
-  { value: 7, label: '辣椒', color: '#DC143C' },
-  { value: 8, label: '籽用葫芦', color: '#9370DB' },
-  { value: 9, label: '其它耕地', color: '#808080' }
+  { value: 1, label: '裸地', color: '#D2B48C' },      // 原0
+  { value: 2, label: '棉花', color: '#FFFFFF' },      // 原1
+  { value: 3, label: '小麦', color: '#FFD700' },      // 原2
+  { value: 4, label: '玉米', color: '#FFA500' },      // 原3
+  { value: 5, label: '番茄', color: '#FF6347' },      // 原4
+  { value: 6, label: '甜菜', color: '#FF1493' },      // 原5
+  { value: 7, label: '打瓜', color: '#00FF7F' },      // 原6
+  { value: 8, label: '辣椒', color: '#DC143C' },      // 原7
+  { value: 9, label: '籽用葫芦', color: '#9370DB' },  // 原8
+  { value: 10, label: '其它耕地', color: '#808080' }  // 原9
 ]
 
 // 获取影像数据列表
@@ -500,8 +507,8 @@ const loadTiffData = async () => {
 const generateColorStyle = () => {
   const colorArray = ['case']
   
-  // NoData (255) 始终透明
-  colorArray.push(['==', ['band', 1], 255], [0, 0, 0, 0])
+  // NoData (0) 始终透明（像素值已+1，0表示NoData）
+  colorArray.push(['==', ['band', 1], 0], [0, 0, 0, 0])
   
   // 遍历所有作物类型
   cropLegend.forEach(crop => {
@@ -662,6 +669,16 @@ const handleReset = () => {
   ElMessage.info('筛选条件已重置')
 }
 
+// 刷新选项（重新从后端加载数据）
+const handleRefreshOptions = async () => {
+  try {
+    await fetchImageData()
+    ElMessage.success('选项已刷新')
+  } catch (error) {
+    ElMessage.error('刷新失败')
+  }
+}
+
 // 地图控制函数
 const handleZoomIn = () => {
   if (map) {
@@ -770,30 +787,31 @@ const toggleTiffLayerOld = async () => {
           visible: true,
           style: {
             // 颜色通道：根据像素值显示不同颜色
+            // 像素值已+1，范围从1-10（0表示NoData透明）
             color: [
               'case',
-              // NoData (255) - 完全透明
-              ['==', ['band', 1], 255], [0, 0, 0, 0],
-              // 0 - 裸地
-              ['==', ['band', 1], 0], [210, 180, 140, 1],
-              // 1 - 棉花
-              ['==', ['band', 1], 1], [255, 255, 255, 1],
-              // 2 - 小麦
-              ['==', ['band', 1], 2], [255, 215, 0, 1],
-              // 3 - 玉米
-              ['==', ['band', 1], 3], [255, 165, 0, 1],
-              // 4 - 番茄
-              ['==', ['band', 1], 4], [255, 99, 71, 1],
-              // 5 - 甜菜
-              ['==', ['band', 1], 5], [255, 20, 147, 1],
-              // 6 - 打瓜
-              ['==', ['band', 1], 6], [0, 255, 127, 1],
-              // 7 - 辣椒
-              ['==', ['band', 1], 7], [220, 20, 60, 1],
-              // 8 - 籽用葫芦
-              ['==', ['band', 1], 8], [147, 112, 219, 1],
-              // 9 - 其它耕地
-              ['==', ['band', 1], 9], [128, 128, 128, 1],
+              // NoData (0) - 完全透明
+              ['==', ['band', 1], 0], [0, 0, 0, 0],
+              // 1 - 裸地（原0）
+              ['==', ['band', 1], 1], [210, 180, 140, 1],
+              // 2 - 棉花（原1）
+              ['==', ['band', 1], 2], [255, 255, 255, 1],
+              // 3 - 小麦（原2）
+              ['==', ['band', 1], 3], [255, 215, 0, 1],
+              // 4 - 玉米（原3）
+              ['==', ['band', 1], 4], [255, 165, 0, 1],
+              // 5 - 番茄（原4）
+              ['==', ['band', 1], 5], [255, 99, 71, 1],
+              // 6 - 甜菜（原5）
+              ['==', ['band', 1], 6], [255, 20, 147, 1],
+              // 7 - 打瓜（原6）
+              ['==', ['band', 1], 7], [0, 255, 127, 1],
+              // 8 - 辣椒（原7）
+              ['==', ['band', 1], 8], [220, 20, 60, 1],
+              // 9 - 籽用葫芦（原8）
+              ['==', ['band', 1], 9], [147, 112, 219, 1],
+              // 10 - 其它耕地（原9）
+              ['==', ['band', 1], 10], [128, 128, 128, 1],
               // 其他所有值：完全透明
               [0, 0, 0, 0]
             ]

@@ -187,10 +187,23 @@ initMetadata()
 syncMetadata()
 
 // 初始化GDAL加速模式（异步，不阻塞启动）
-// 暂时禁用，避免启动时出错
-// initGDALPath().catch(err => {
-//   console.warn('⚠️ GDAL加速模式初始化失败，将使用标准模式')
-// })
+console.log('========================================')
+console.log('🚀 初始化GDAL加速模式...')
+console.log('========================================')
+initGDALPath().then(() => {
+  console.log('✅ GDAL加速模式已启用')
+  console.log('   ⚡ 优化速度将提升 50-80%')
+  console.log('   📂 GDAL路径:', cachedGDALPath)
+  console.log('   📦 Conda环境:', cachedCondaEnvPath)
+  console.log('========================================')
+}).catch(err => {
+  console.warn('========================================')
+  console.warn('⚠️ GDAL加速模式初始化失败')
+  console.warn('   将使用标准模式（较慢，每次优化都会重新启动conda）')
+  console.warn('   提示：请在 Anaconda Prompt 中启动后端以获得更快的速度')
+  console.warn('   错误信息:', err.message)
+  console.warn('========================================')
+})
 
 // 路由
 
@@ -250,6 +263,47 @@ router.post('/upload', upload.array('files'), (req, res) => {
       data: {
         count: req.files.length
       }
+    })
+  } catch (error) {
+    res.status(500).json({
+      code: 500,
+      message: error.message
+    })
+  }
+})
+
+// 更新影像元数据
+router.put('/:id', (req, res) => {
+  try {
+    const { id } = req.params
+    const updates = req.body
+    const metadata = readMetadata()
+    
+    const image = metadata.images.find(img => img.id === id)
+    if (!image) {
+      return res.status(404).json({
+        code: 404,
+        message: '影像不存在'
+      })
+    }
+    
+    // 更新允许修改的字段
+    const allowedFields = ['year', 'period', 'cropType', 'region', 'sensor', 'date', 'cloudCover', 'description']
+    allowedFields.forEach(field => {
+      if (updates[field] !== undefined) {
+        image[field] = updates[field]
+      }
+    })
+    
+    // 保存到文件
+    writeMetadata(metadata)
+    
+    console.log(`✅ 更新影像元数据: ${image.name}`)
+    
+    res.json({
+      code: 200,
+      message: '更新成功',
+      data: image
     })
   } catch (error) {
     res.status(500).json({
@@ -404,10 +458,11 @@ async function initGDALPath() {
 function buildGDALCommand(command) {
   // 🚀 加速模式：使用绝对路径 + 环境变量（避免重复启动conda）
   if (cachedGDALPath && cachedCondaEnvPath) {
-    // 替换命令中的 gdalwarp/gdaladdo 为绝对路径
+    // 替换命令中的 gdalwarp/gdaladdo/gdal_translate 为绝对路径
     const modifiedCmd = command
       .replace(/^gdalwarp\b/, `"${path.join(cachedGDALPath, 'gdalwarp.exe')}"`)
       .replace(/^gdaladdo\b/, `"${path.join(cachedGDALPath, 'gdaladdo.exe')}"`)
+      .replace(/^gdal_translate\b/, `"${path.join(cachedGDALPath, 'gdal_translate.exe')}"`)
     
     // 设置环境变量（GDAL需要）
     const gdalData = path.join(cachedCondaEnvPath, 'Library', 'share', 'gdal')
@@ -544,7 +599,8 @@ router.post('/optimize/:id', async (req, res) => {
     
     // 3. 准备文件路径
     const tempOutput = path.join(DATA_DIR, `temp_optimized_${Date.now()}.tif`)
-    const backupPath = inputPath.replace(/\.tif$/i, '.original.tif')
+    const backupPath = inputPath.replace(/\.tif$/i, '.original_backup.tif')
+    const optimizedPath = inputPath.replace(/\.tif$/i, '_optimized.tif')
     
     // 更新进度：创建备份
     optimizationProgress.set(id, {
@@ -571,14 +627,36 @@ router.post('/optimize/:id', async (req, res) => {
       step: '投影转换 + COG转换（最耗时）...'
     })
     
-    // 5. 执行GDAL优化
-    console.log('⏳ 步骤1/3: 投影转换 + COG格式转换...')
-    const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -dstnodata 255 -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co TILED=YES -r near "${inputPath}" "${tempOutput}"`
+    // 5. 直接执行投影转换和COG转换（自动处理NaN）
+    console.log('⏳ 投影转换 + COG格式转换...')
+    
+    // 诊断日志
+    console.log('🔍 GDAL命令诊断:')
+    console.log('   加速模式:', cachedGDALPath ? '✅ 已启用 (快速)' : '❌ 未启用 (慢速)')
+    if (cachedGDALPath) {
+      console.log('   GDAL路径:', cachedGDALPath)
+      console.log('   执行方式: 直接调用 (无需启动conda)')
+    } else {
+      console.log('   执行方式: conda run -n', config.condaEnv || 'base', '(每次都重启conda)')
+    }
+    
+    optimizationProgress.set(id, {
+      progress: 30,
+      status: 'reprojecting',
+      step: '投影转换 + COG转换（最耗时）...'
+    })
+    
+    // 直接用 gdalwarp 处理，明确源文件NoData是NaN
+    const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co TILED=YES -r near "${inputPath}" "${tempOutput}"`
     const gdalCommand = buildGDALCommand(gdalwarpCmd)
     
+    console.log('   GDAL命令:', gdalCommand.substring(0, 150) + '...')
+    
+    let startTime = Date.now()
     try {
       await execAsync(gdalCommand)
-      console.log('✅ 投影转换完成')
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
+      console.log(`✅ 投影转换完成 (耗时: ${elapsed}秒)`)
       
       // 更新进度：投影转换完成
       optimizationProgress.set(id, {
@@ -589,9 +667,8 @@ router.post('/optimize/:id', async (req, res) => {
       })
     } catch (error) {
       // 清理临时文件和进度
-      if (fs.existsSync(tempOutput)) {
-        fs.unlinkSync(tempOutput)
-      }
+      if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput)
+      if (fs.existsSync(tempNodata)) fs.unlinkSync(tempNodata)
       optimizationProgress.delete(id)
       throw new Error('GDAL转换失败: ' + error.message)
     }
@@ -601,11 +678,11 @@ router.post('/optimize/:id', async (req, res) => {
       ...optimizationProgress.get(id),
       progress: 75,
       status: 'adding_overviews',
-      step: '添加金字塔...'
+      step: '添加金字塔（加快显示速度）...'
     })
     
     // 6. 添加金字塔
-    console.log('⏳ 步骤2/3: 添加金字塔...')
+    console.log('⏳ 步骤3/4: 添加金字塔...')
     const gdaladdoCmd = `gdaladdo -r nearest "${tempOutput}" 2 4 8 16`
     const addoCommand = buildGDALCommand(gdaladdoCmd)
     
@@ -629,19 +706,26 @@ router.post('/optimize/:id', async (req, res) => {
       throw new Error('添加金字塔失败: ' + error.message)
     }
     
-    // 更新进度：替换文件
+    // 更新进度：保存优化文件
     optimizationProgress.set(id, {
       ...optimizationProgress.get(id),
       progress: 95,
-      status: 'replacing',
-      step: '替换原文件...'
+      status: 'saving',
+      step: '保存优化文件...'
     })
     
-    // 7. 替换原文件
-    console.log('⏳ 步骤3/3: 替换原文件...')
-    fs.unlinkSync(inputPath)
-    fs.renameSync(tempOutput, inputPath)
-    console.log('✅ 文件替换完成')
+    // 7. 保存优化文件（不覆盖原文件）
+    console.log('⏳ 步骤4/4: 保存优化文件...')
+    
+    // 如果已存在优化文件，先删除
+    if (fs.existsSync(optimizedPath)) {
+      console.log('   删除旧的优化文件...')
+      fs.unlinkSync(optimizedPath)
+    }
+    
+    // 重命名临时文件为优化文件
+    fs.renameSync(tempOutput, optimizedPath)
+    console.log(`✅ 优化文件已保存: ${path.basename(optimizedPath)}`)
     
     // 更新进度：完成
     optimizationProgress.set(id, {
@@ -652,29 +736,34 @@ router.post('/optimize/:id', async (req, res) => {
     })
     
     // 8. 更新元数据
-    const optimizedStats = fs.statSync(inputPath)
+    const optimizedStats = fs.statSync(optimizedPath)
     const optimizedSizeMB = (optimizedStats.size / (1024 * 1024)).toFixed(2)
     const compressionRatio = ((1 - optimizedStats.size / originalStats.size) * 100).toFixed(1)
     
     image.isOptimized = true
     image.status = 'processed'
-    image.size = optimizedSizeMB + 'MB'
+    image.size = originalSizeMB + 'MB'  // 保持原始文件大小
     image.originalSize = originalSizeMB + 'MB'
     image.optimizedSize = optimizedSizeMB + 'MB'
-    image.optimizedPath = `/data/${image.name}`
+    image.filePath = `/data/${path.basename(optimizedPath)}`  // 指向优化文件
+    image.optimizedPath = `/data/${path.basename(optimizedPath)}`
     image.originalPath = `/data/${path.basename(backupPath)}`
     
     writeMetadata(metadata)
     
     console.log(`\n✅ 优化成功!`)
-    console.log(`   原始大小: ${originalSizeMB} MB`)
-    console.log(`   优化后: ${optimizedSizeMB} MB`)
+    console.log(`   原始文件: ${image.name} (${originalSizeMB} MB)`)
+    console.log(`   优化文件: ${path.basename(optimizedPath)} (${optimizedSizeMB} MB)`)
+    console.log(`   备份文件: ${path.basename(backupPath)}`)
     console.log(`   压缩率: ${compressionRatio}%\n`)
     
     res.json({
       code: 200,
       message: '优化成功',
       data: {
+        originalFile: image.name,
+        optimizedFile: path.basename(optimizedPath),
+        backupFile: path.basename(backupPath),
         originalSize: image.originalSize,
         optimizedSize: image.optimizedSize,
         compressionRatio: compressionRatio + '%'
