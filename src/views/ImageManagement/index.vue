@@ -422,10 +422,10 @@
             >
               <el-table-column type="selection" width="55" />
               <el-table-column prop="name" label="文件名称" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="type" label="格式" width="80" align="center">
+              <el-table-column prop="type" label="格式" width="90" align="center">
                 <template #default="scope">
                   <el-tag 
-                    :type="scope.row.type === 'SHP' ? 'success' : 'primary'" 
+                    :type="getFileTypeTagType(scope.row.type)" 
                     size="small"
                   >
                     {{ scope.row.type }}
@@ -1083,9 +1083,22 @@ const getAnalysisTypeLabel = (type) => {
   const map = {
     difference: '差异检测',
     temporal: '时序变化',
-    statistics: '统计汇总'
+    statistics: '统计汇总',
+    recognition: '识别结果'
   }
   return map[type] || type
+}
+
+// 获取文件类型标签颜色
+const getFileTypeTagType = (type) => {
+  const map = {
+    'SHP': 'success',
+    'KMZ': 'warning',
+    'EXCEL': 'primary',
+    'CSV': 'info',
+    'GEOJSON': 'success'
+  }
+  return map[type] || 'info'
 }
 
 // 转换SHP为GeoJSON
@@ -1475,11 +1488,22 @@ const startUpload = async () => {
 
 // 下载分析结果
 const handleDownloadResult = (row) => {
-  ElMessage.info(`正在下载: ${row.name}`)
-  // 实际项目中应该从后端下载文件
-  setTimeout(() => {
-    ElMessage.success(`${row.name} 下载完成`)
-  }, 1000)
+  if (row.type === 'EXCEL' || row.type === 'CSV') {
+    // Excel/CSV文件在分析时已经导出到本地
+    ElMessage({
+      message: `该文件已在任务执行时导出到本地下载文件夹，文件名: ${row.name}`,
+      type: 'info',
+      duration: 5000,
+      showClose: true
+    })
+  } else {
+    // SHP/KMZ/GEOJSON文件从服务器下载
+    ElMessage.info(`正在下载: ${row.name}`)
+    // TODO: 实际项目中应该从后端下载文件
+    setTimeout(() => {
+      ElMessage.success(`${row.name} 下载完成`)
+    }, 1000)
+  }
 }
 
 // 删除单个分析结果

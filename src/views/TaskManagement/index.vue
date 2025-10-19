@@ -458,14 +458,6 @@
             已选择 {{ temporalConfig.selectedFileIds.length }} 个文件
           </div>
         </el-form-item>
-        
-        <el-form-item label="对比维度">
-          <el-checkbox-group v-model="temporalConfig.dimensions">
-            <el-checkbox label="cropChange">作物类型变化</el-checkbox>
-            <el-checkbox label="areaChange">种植面积变化</el-checkbox>
-            <el-checkbox label="coverageChange">植被覆盖变化</el-checkbox>
-          </el-checkbox-group>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showTemporalDialog = false">取消</el-button>
@@ -524,13 +516,20 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   Plus, RefreshCw, Search, Eye, File, Play, Trash2, Upload, Download, GitCompare
 } from 'lucide-vue-next'
 import {
   Tickets, Loading, CircleCheck, CircleClose, List, DataAnalysis, Location, Right, ArrowLeft, ArrowRight
 } from '@element-plus/icons-vue'
+import { getRecognitionResults, readGeojsonContent } from '@/api/analysis'
+import { useAnalysisStore } from '@/stores/analysis'
+import { exportDifferenceToExcel, exportTemporalToExcel, exportStatisticsToExcel, saveFileMetadata } from '@/utils/export'
+
+const router = useRouter()
+const analysisStore = useAnalysisStore()
 
 const statusFilter = ref('')
 const searchKeyword = ref('')
@@ -573,8 +572,7 @@ const differenceStats = ref({
 // 功能B.2：时序变化分析
 const temporalLoading = ref(false)
 const temporalConfig = ref({
-  selectedFileIds: [],
-  dimensions: ['cropChange']
+  selectedFileIds: []
 })
 const temporalResultData = ref([])
 const temporalStats = ref({
@@ -738,8 +736,7 @@ const clearAnalysisData = () => {
   }
   temporalResultData.value = []
   temporalConfig.value = {
-    selectedFileIds: '',
-    dimensions: ['cropChange']
+    selectedFileIds: []
   }
   statisticsData.value = []
   statisticsConfig.value = {
@@ -749,21 +746,29 @@ const clearAnalysisData = () => {
   }
 }
 
-// 加载识别结果文件列表（从数据管理的分析结果队列）
-const loadRecognitionFiles = () => {
+// 加载识别结果文件列表（从后端API读取GeoJSON文件）
+const loadRecognitionFiles = async () => {
   try {
-    const QUEUE_KEY = 'analysis_result_queue'
-    const stored = localStorage.getItem(QUEUE_KEY)
-    if (stored) {
-      const allResults = JSON.parse(stored)
-      // 只加载 recognition 类型的结果（识别任务生成的图像）
-      recognitionFiles.value = allResults.filter(r => r.analysisType === 'recognition')
-      console.log('已加载识别结果文件:', recognitionFiles.value.length, '个')
+    // 从后端API加载识别结果
+    const response = await getRecognitionResults()
+    if (response.code === 200) {
+      const allResults = response.data || []
+      
+      // 只加载 GeoJSON 类型的识别结果文件
+      recognitionFiles.value = allResults.filter(r => {
+        // 检查文件类型是否为 GeoJSON 或 GEOJSON（不区分大小写）
+        const isGeoJSON = r.type && r.type.toUpperCase() === 'GEOJSON'
+        return isGeoJSON
+      })
+      
+      console.log('✅ 已从后端加载GeoJSON识别结果文件:', recognitionFiles.value.length, '个')
+      console.log('识别结果文件列表:', recognitionFiles.value)
     } else {
       recognitionFiles.value = []
+      console.log('后端返回数据为空')
     }
   } catch (error) {
-    console.error('加载识别结果文件失败:', error)
+    console.error('❌ 从后端加载识别结果文件失败:', error)
     recognitionFiles.value = []
   }
 }
@@ -872,30 +877,15 @@ const handleSubmitTask = () => {
     newTask.progress = 100
     newTask.duration = '5分钟'
     
-    // 任务完成后，将识别结果添加到分析结果队列
-    const resultFile = {
-      id: `recognition_${new Date().getTime()}`,
-      name: `${newTask.name}_识别结果.tif`,
-      type: 'TIF',
-      taskId: newTask.id,
-      taskName: newTask.name,
-      analysisType: 'recognition',
-      recordCount: '-',
-      size: `${(Math.random() * 50 + 50).toFixed(2)} MB`,
-      createTime: new Date().toLocaleString('zh-CN'),
-      timestamp: new Date().getTime(),
-      downloadUrl: `/api/download/${newTask.name}_recognition.tif`
-    }
-    
-    // 保存到 localStorage
-    saveRecognitionResultToQueue(resultFile)
-    
     ElNotification({
       title: '✅ 识别任务完成',
-      message: `${newTask.name} 已完成识别，结果已保存到数据管理的分析结果队列`,
+      message: `${newTask.name} 已完成识别，结果已保存到识别结果队列`,
       type: 'success',
       duration: 5000
     })
+    
+    // 刷新识别结果文件列表（从后端重新加载）
+    loadRecognitionFiles()
   }, 5000)
   
   showTaskDialog.value = false
@@ -911,35 +901,6 @@ const handleSubmitTask = () => {
       kernel: 'rbf',
       trainRatio: 70
     }
-  }
-}
-
-// 保存识别结果到队列
-const saveRecognitionResultToQueue = (fileInfo) => {
-  try {
-    const QUEUE_KEY = 'analysis_result_queue'
-    let queue = []
-    
-    const stored = localStorage.getItem(QUEUE_KEY)
-    if (stored) {
-      queue = JSON.parse(stored)
-    }
-    
-    // 添加新结果到队列头部
-    queue.unshift(fileInfo)
-    
-    // 限制队列长度
-    if (queue.length > 50) {
-      queue = queue.slice(0, 50)
-    }
-    
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(queue))
-    console.log('识别结果已保存到队列:', fileInfo)
-    
-    // 刷新识别结果文件列表
-    loadRecognitionFiles()
-  } catch (error) {
-    console.error('保存识别结果失败:', error)
   }
 }
 
@@ -973,8 +934,8 @@ const handleViewAnalysisQueue = () => {
   ElMessage.info('请前往数据管理界面的分析结果队列查看')
 }
 
-// 功能B.1：执行种植差异检测
-const handleRunDifferenceDetection = () => {
+// 功能B.1：执行种植差异检测（真实数据分析）
+const handleRunDifferenceDetection = async () => {
   if (!differenceConfig.value.baseFileId || !differenceConfig.value.compareFileId) {
     ElMessage.warning('请选择两个识别结果文件进行对比')
     return
@@ -988,68 +949,310 @@ const handleRunDifferenceDetection = () => {
   analysisProgress.value = 0
   analysisStatusText.value = '正在加载识别结果文件...'
 
-  // 获取选择的文件
-  const baseFile = recognitionFiles.value.find(f => f.id === differenceConfig.value.baseFileId)
-  const compareFile = recognitionFiles.value.find(f => f.id === differenceConfig.value.compareFileId)
+  try {
+    // 获取选择的文件
+    const baseFile = recognitionFiles.value.find(f => f.id === differenceConfig.value.baseFileId)
+    const compareFile = recognitionFiles.value.find(f => f.id === differenceConfig.value.compareFileId)
 
-  // 模拟执行步骤
-  setTimeout(() => {
-    analysisProgress.value = 30
-    analysisStatusText.value = '正在进行空间叠加分析...'
-  }, 500)
-  
-  setTimeout(() => {
-    analysisProgress.value = 60
-    analysisStatusText.value = '正在识别差异类型...'
-  }, 1200)
-  
-  setTimeout(() => {
-    analysisProgress.value = 90
-    analysisStatusText.value = '正在生成分析报告...'
-  }, 1800)
+    if (!baseFile || !compareFile) {
+      throw new Error('未找到选择的文件，请重新选择')
+    }
 
-  // 模拟API调用生成结果文件
-  setTimeout(() => {
-    analysisProgress.value = 100
-    analysisStatusText.value = '分析完成！正在保存结果...'
+    console.log('开始差异检测分析')
+    console.log('原始图文件:', baseFile)
+    console.log('对比图文件:', compareFile)
+
+    // 1. 读取两个GeoJSON文件
+    analysisProgress.value = 20
+    analysisStatusText.value = '正在读取原始图数据...'
+    console.log(`正在读取原始图: ${baseFile.name}`)
+    const baseResponse = await readGeojsonContent(baseFile.name)
+    console.log('原始图响应:', baseResponse)
     
-    // 生成结果文件记录（SHP格式）
-    const resultFile = {
-      id: `difference_${new Date().getTime()}`,
-      name: `差异检测_${baseFile.taskName}_vs_${compareFile.taskName}.shp`,
-      type: 'SHP',
-      taskId: `DIFF_${new Date().getTime()}`,
-      taskName: `${baseFile.taskName} vs ${compareFile.taskName}`,
-      analysisType: 'difference',
-      recordCount: 6,  // 模拟数据记录数
-      size: `${(Math.random() * 5 + 2).toFixed(2)} MB`,
-      createTime: new Date().toLocaleString('zh-CN'),
-      timestamp: new Date().getTime(),
-      description: `种植差异检测结果 - 对比${baseFile.taskName}和${compareFile.taskName}`,
-      baseFileId: baseFile.id,
-      compareFileId: compareFile.id,
-      downloadUrl: `/api/download/difference_${new Date().getTime()}.shp`
+    analysisProgress.value = 35
+    analysisStatusText.value = '正在读取对比图数据...'
+    const compareResponse = await readGeojsonContent(compareFile.name)
+    
+    if (baseResponse.code !== 200 || compareResponse.code !== 200) {
+      throw new Error('读取GeoJSON文件失败')
     }
     
-    // 保存到分析结果队列
-    saveAnalysisResultToQueue(resultFile)
+    const baseGeojson = baseResponse.data
+    const compareGeojson = compareResponse.data
+    
+    console.log(`原始图包含 ${baseGeojson.features?.length || 0} 个要素`)
+    console.log(`对比图包含 ${compareGeojson.features?.length || 0} 个要素`)
+    
+    // 2. 进行差异分析
+    analysisProgress.value = 50
+    analysisStatusText.value = '正在进行空间叠加分析...'
+    
+    const diffResult = performDifferenceAnalysis(baseGeojson, compareGeojson, baseFile, compareFile)
+    
+    analysisProgress.value = 75
+    analysisStatusText.value = '正在生成分析报告...'
+    
+    // 3. 保存分析结果到全局状态（用于ResultCompare直接展示）
+    const analysisResult = {
+      type: 'difference',
+      title: `${baseFile.taskName} vs ${compareFile.taskName}`,
+      baseFile: {
+        id: baseFile.id,
+        name: baseFile.name,
+        taskName: baseFile.taskName,
+        geojson: baseGeojson
+      },
+      compareFile: {
+        id: compareFile.id,
+        name: compareFile.name,
+        taskName: compareFile.taskName,
+        geojson: compareGeojson
+      },
+      features: diffResult.geojson.features,
+      stats: diffResult.stats,
+      metadata: diffResult.geojson.metadata,
+      analysisTime: new Date().toLocaleString('zh-CN')
+    }
+    
+    analysisProgress.value = 90
+    analysisStatusText.value = '正在准备可视化...'
+    
+    console.log('差异检测完成，结果:', analysisResult)
+    console.log(`共 ${diffResult.stats.total} 个地块，${diffResult.stats.changed} 个有变化`)
+    
+    // 保存到全局状态
+    analysisStore.setDifferenceResult(analysisResult)
 
+    analysisProgress.value = 95
+    analysisStatusText.value = '正在导出Excel报告...'
+    
+    // 导出Excel文件
+    const excelFileName = exportDifferenceToExcel(
+      analysisResult, 
+      baseFile.taskName, 
+      compareFile.taskName
+    )
+    
+    // 保存文件元数据到localStorage
+    const fileMetadata = {
+      id: `diff_${new Date().getTime()}`,
+      name: excelFileName,
+      type: 'EXCEL',
+      analysisType: 'difference',
+      taskName: `${baseFile.taskName} vs ${compareFile.taskName}`,
+      recordCount: diffResult.stats.changed,
+      size: `${((diffResult.stats.changed * 0.5) + 5).toFixed(2)} KB`,
+      createTime: new Date().toLocaleString('zh-CN'),
+      timestamp: new Date().getTime(),
+      description: `种植差异检测结果 - 共${diffResult.stats.changed}个变化地块`,
+      baseFileId: baseFile.id,
+      compareFileId: compareFile.id,
+      downloadUrl: `/data/exports/${excelFileName}`,
+      stats: diffResult.stats
+    }
+    
+    saveFileMetadata(fileMetadata)
+    
+    analysisProgress.value = 100
+    analysisStatusText.value = '分析完成！即将跳转...'
+    
+    differenceLoading.value = false
+    analysisTaskRunning.value = false
+    
+    // 显示成功提示
+    ElNotification({
+      title: '✅ 差异检测完成',
+      message: `已检测到${diffResult.stats.changed}个变化地块，Excel报告已导出并保存，正在跳转到结果查看界面...`,
+      type: 'success',
+      duration: 5000
+    })
+    
+    // 等待800ms后跳转
+    setTimeout(() => {
+      router.push('/result-compare')
+    }, 800)
+    
+  } catch (error) {
+    console.error('差异检测失败:', error)
+    console.error('错误详情:', error.response?.data || error.response || error)
+    analysisTaskRunning.value = false
     differenceLoading.value = false
     
-    setTimeout(() => {
-      analysisTaskRunning.value = false
-      ElNotification({
-        title: '✅ 差异检测完成',
-        message: '分析结果已保存到数据管理的分析结果队列，可前往结果查看与比对界面查看详情',
-        type: 'success',
-        duration: 5000
-      })
-    }, 500)
-  }, 2500)
+    let errorMsg = '差异检测失败'
+    if (error.response?.data?.message) {
+      errorMsg += ': ' + error.response.data.message
+    } else if (error.message) {
+      errorMsg += ': ' + error.message
+    }
+    
+    ElMessage({
+      message: errorMsg,
+      type: 'error',
+      duration: 8000,
+      showClose: true
+    })
+  }
 }
 
-// 功能B.2：执行时序变化分析
-const handleRunTemporalAnalysis = () => {
+// 执行差异分析（对比两个GeoJSON）
+const performDifferenceAnalysis = (baseGeojson, compareGeojson, baseFile, compareFile) => {
+  const baseFeatures = baseGeojson.features || []
+  const compareFeatures = compareGeojson.features || []
+  
+  console.log('=== 差异分析开始 ===')
+  console.log(`原始图要素数: ${baseFeatures.length}`)
+  console.log(`对比图要素数: ${compareFeatures.length}`)
+  
+  // 打印第一个要素的属性，帮助调试
+  if (baseFeatures.length > 0) {
+    console.log('原始图第一个要素属性:', baseFeatures[0].properties)
+  }
+  if (compareFeatures.length > 0) {
+    console.log('对比图第一个要素属性:', compareFeatures[0].properties)
+  }
+  
+  // 构建对比图的快速查找索引（按plotId或FID）
+  const compareMap = new Map()
+  compareFeatures.forEach((feature, idx) => {
+    const props = feature.properties || {}
+    const id = props.FID || props.id || props.plotId || props.OBJECTID || idx
+    compareMap.set(String(id), feature)
+  })
+  
+  console.log(`对比图索引构建完成，共 ${compareMap.size} 个地块`)
+  
+  const resultFeatures = []
+  let changedCount = 0
+  let unchangedCount = 0
+  let matchedCount = 0
+  
+  // 对比每个地块
+  baseFeatures.forEach((baseFeature, index) => {
+    const baseProps = baseFeature.properties || {}
+    const id = baseProps.FID || baseProps.id || baseProps.plotId || baseProps.OBJECTID || index
+    
+    // 优先使用gridcode字段判断作物类型！
+    const baseGridcode = baseProps.gridcode || baseProps.GRIDCODE || baseProps.GridCode
+    const baseCrop = baseGridcode !== undefined 
+      ? `作物${baseGridcode}` 
+      : (baseProps.label || baseProps.crop || baseProps.class || baseProps.type || baseProps.作物类型 || baseProps.cropType || '未知')
+    
+    // 在对比图中查找对应地块
+    const compareFeature = compareMap.get(String(id))
+    
+    let currentCrop = '未种植'
+    let currentGridcode = null
+    let diffType = 'unchanged'
+    let hasChange = false
+    
+    if (compareFeature) {
+      matchedCount++
+      const compareProps = compareFeature.properties || {}
+      
+      // 优先使用gridcode字段判断作物类型！
+      currentGridcode = compareProps.gridcode || compareProps.GRIDCODE || compareProps.GridCode
+      currentCrop = currentGridcode !== undefined 
+        ? `作物${currentGridcode}` 
+        : (compareProps.label || compareProps.crop || compareProps.class || compareProps.type || compareProps.作物类型 || compareProps.cropType || '未知')
+      
+      // 判断是否变化（比较gridcode或作物类型）
+      if (baseGridcode !== undefined && currentGridcode !== undefined) {
+        // 如果有gridcode，直接比较gridcode
+        if (baseGridcode !== currentGridcode) {
+          diffType = 'changed'
+          hasChange = true
+          changedCount++
+          
+          // 打印前5个变化的地块，帮助调试
+          if (changedCount <= 5) {
+            console.log(`变化地块 ${changedCount}:`, {
+              id: id,
+              原始gridcode: baseGridcode,
+              当前gridcode: currentGridcode,
+              原始: baseCrop,
+              当前: currentCrop
+            })
+          }
+        } else {
+          unchangedCount++
+        }
+      } else if (baseCrop !== currentCrop) {
+        // 没有gridcode，比较作物名称
+        diffType = 'changed'
+        hasChange = true
+        changedCount++
+        
+        if (changedCount <= 5) {
+          console.log(`变化地块 ${changedCount}:`, {
+            id: id,
+            原始: baseCrop,
+            当前: currentCrop
+          })
+        }
+      } else {
+        unchangedCount++
+      }
+    } else {
+      // 在对比图中找不到，可能是撂荒或删除
+      diffType = 'abandoned'
+      hasChange = true
+      changedCount++
+    }
+    
+    // 创建结果要素
+    resultFeatures.push({
+      type: 'Feature',
+      properties: {
+        ...baseProps,
+        plotId: String(id),
+        plotName: baseProps.name || baseProps.plotName || `地块${id}`,
+        originalCrop: baseCrop,
+        currentCrop: currentCrop,
+        diffType: diffType,
+        hasChange: hasChange,
+        area: baseProps.area || baseProps.Area || baseProps.面积 || 0
+      },
+      geometry: baseFeature.geometry
+    })
+  })
+  
+  console.log('=== 差异分析完成 ===')
+  console.log(`总地块数: ${resultFeatures.length}`)
+  console.log(`匹配成功: ${matchedCount}`)
+  console.log(`有变化: ${changedCount}`)
+  console.log(`无变化: ${unchangedCount}`)
+  
+  // 构建结果GeoJSON
+  const resultGeojson = {
+    type: 'FeatureCollection',
+    metadata: {
+      analysisType: 'difference',
+      baseFile: baseFile.name,
+      compareFile: compareFile.name,
+      baseTaskName: baseFile.taskName,
+      compareTaskName: compareFile.taskName,
+      analysisTime: new Date().toLocaleString('zh-CN'),
+      totalFeatures: resultFeatures.length,
+      changed: changedCount,
+      unchanged: unchangedCount,
+      matched: matchedCount
+    },
+    features: resultFeatures
+  }
+  
+  return {
+    geojson: resultGeojson,
+    stats: {
+      total: resultFeatures.length,
+      changed: changedCount,
+      unchanged: unchangedCount,
+      matched: matchedCount
+    }
+  }
+}
+
+// 功能B.2：执行时序变化分析（真实数据分析）
+const handleRunTemporalAnalysis = async () => {
   if (!temporalConfig.value.selectedFileIds || temporalConfig.value.selectedFileIds.length < 2) {
     ElMessage.warning('请至少选择2个识别结果文件进行时序分析')
     return
@@ -1063,73 +1266,254 @@ const handleRunTemporalAnalysis = () => {
   analysisProgress.value = 0
   analysisStatusText.value = '正在加载多期识别结果...'
 
-  // 获取选择的文件并按时间排序
-  const selectedFiles = temporalConfig.value.selectedFileIds
-    .map(id => recognitionFiles.value.find(f => f.id === id))
-    .filter(f => f)
-    .sort((a, b) => new Date(a.createTime) - new Date(b.createTime))
+  try {
+    // 获取选择的文件并按时间排序
+    const selectedFiles = temporalConfig.value.selectedFileIds
+      .map(id => recognitionFiles.value.find(f => f.id === id))
+      .filter(f => f)
+      .sort((a, b) => new Date(a.createTime) - new Date(b.createTime))
 
-  // 模拟执行步骤
-  setTimeout(() => {
-    analysisProgress.value = 25
-    analysisStatusText.value = '正在进行时序对比分析...'
-  }, 500)
-  
-  setTimeout(() => {
+    console.log(`开始时序变化分析: ${selectedFiles.length}个时间点`)
+    console.log('选择的文件:', selectedFiles)
+
+    // 1. 读取所有GeoJSON文件
+    const geojsonDataList = []
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i]
+      analysisProgress.value = 10 + (i / selectedFiles.length) * 30
+      analysisStatusText.value = `正在读取第${i + 1}/${selectedFiles.length}个文件...`
+      
+      console.log(`读取文件 ${i + 1}/${selectedFiles.length}: ${file.name}`)
+      const response = await readGeojsonContent(file.name)
+      console.log(`文件 ${i + 1} 响应:`, response)
+      if (response.code === 200) {
+        geojsonDataList.push({
+          file: file,
+          geojson: response.data,
+          time: file.createTime
+        })
+        console.log(`读取 ${file.name}: ${response.data.features?.length || 0} 个要素`)
+      }
+    }
+
+    // 2. 进行时序分析
     analysisProgress.value = 50
-    analysisStatusText.value = '正在识别变化轨迹...'
-  }, 1200)
-  
-  setTimeout(() => {
+    analysisStatusText.value = '正在分析时序变化轨迹...'
+    
+    const temporalResult = performTemporalAnalysis(geojsonDataList)
+    
     analysisProgress.value = 75
-    analysisStatusText.value = '正在生成统计报表...'
-  }, 1800)
-
-  // 模拟API调用生成结果文件
-  setTimeout(() => {
-    analysisProgress.value = 100
-    analysisStatusText.value = '分析完成！正在保存结果...'
+    analysisStatusText.value = '正在生成分析报告...'
     
-    const timeRange = `${selectedFiles[0].taskName}_至_${selectedFiles[selectedFiles.length - 1].taskName}`
-    
-    // 生成时序分析结果文件记录（包含统计报表数据）
-    const resultFile = {
-      id: `temporal_${new Date().getTime()}`,
-      name: `时序变化分析_${timeRange}.shp`,
-      type: 'SHP',
-      taskId: `TEMP_${new Date().getTime()}`,
-      taskName: `${selectedFiles.length}期时序对比`,
-      analysisType: 'temporal',
-      recordCount: 5,  // 模拟变化记录数
-      size: `${(Math.random() * 8 + 3).toFixed(2)} MB`,
-      createTime: new Date().toLocaleString('zh-CN'),
-      timestamp: new Date().getTime(),
-      description: `时序变化分析 - ${selectedFiles.length}个时间点对比`,
-      selectedFileIds: temporalConfig.value.selectedFileIds,
-      fileCount: selectedFiles.length,
-      timelineData: selectedFiles.map(f => ({
+    // 3. 保存分析结果到全局状态（用于ResultCompare直接展示）
+    const analysisResult = {
+      type: 'temporal',
+      title: `${selectedFiles.length}期时序对比`,
+      files: selectedFiles.map(f => ({
         id: f.id,
+        name: f.name,
         taskName: f.taskName,
         createTime: f.createTime
       })),
-      downloadUrl: `/api/download/temporal_${new Date().getTime()}.shp`
+      timePoints: geojsonDataList.map(d => ({
+        time: d.time,
+        taskName: d.file.taskName,
+        geojson: d.geojson
+      })),
+      features: temporalResult.geojson.features,
+      stats: temporalResult.stats,
+      metadata: temporalResult.geojson.metadata,
+      analysisTime: new Date().toLocaleString('zh-CN')
     }
     
-    // 保存到分析结果队列
-    saveAnalysisResultToQueue(resultFile)
+    analysisProgress.value = 90
+    analysisStatusText.value = '正在准备可视化...'
+    
+    console.log('时序分析完成，结果:', analysisResult)
+    console.log(`共 ${temporalResult.stats.total} 个地块，${temporalResult.stats.changed} 个有变化`)
+    
+    // 保存到全局状态
+    analysisStore.setTemporalResult(analysisResult)
 
+    analysisProgress.value = 95
+    analysisStatusText.value = '正在导出Excel报告...'
+    
+    // 导出Excel文件
+    const excelFileName = exportTemporalToExcel(analysisResult)
+    
+    // 保存文件元数据到localStorage
+    const fileMetadata = {
+      id: `temporal_${new Date().getTime()}`,
+      name: excelFileName,
+      type: 'EXCEL',
+      analysisType: 'temporal',
+      taskName: `${selectedFiles.length}期时序对比`,
+      recordCount: temporalResult.stats.changed,
+      size: `${((temporalResult.stats.changed * 0.8) + 10).toFixed(2)} KB`,
+      createTime: new Date().toLocaleString('zh-CN'),
+      timestamp: new Date().getTime(),
+      description: `时序变化分析结果 - ${selectedFiles.length}期对比，共${temporalResult.stats.changed}个变化地块`,
+      fileCount: selectedFiles.length,
+      downloadUrl: `/data/exports/${excelFileName}`,
+      stats: temporalResult.stats,
+      timePoints: selectedFiles.map(f => ({
+        id: f.id,
+        name: f.taskName,
+        time: f.createTime
+      }))
+    }
+    
+    saveFileMetadata(fileMetadata)
+    
+    analysisProgress.value = 100
+    analysisStatusText.value = '分析完成！即将跳转...'
+    
+    temporalLoading.value = false
+    analysisTaskRunning.value = false
+    
+    // 显示成功提示
+    ElNotification({
+      title: '✅ 时序分析完成',
+      message: `已完成${selectedFiles.length}期时序变化分析，Excel报告已导出并保存，正在跳转到结果查看界面...`,
+      type: 'success',
+      duration: 5000
+    })
+    
+    // 等待800ms后跳转
+    setTimeout(() => {
+      router.push('/result-compare')
+    }, 800)
+    
+  } catch (error) {
+    console.error('时序分析失败:', error)
+    console.error('错误详情:', error.response?.data || error.response || error)
+    analysisTaskRunning.value = false
     temporalLoading.value = false
     
-    setTimeout(() => {
-      analysisTaskRunning.value = false
-      ElNotification({
-        title: '✅ 时序分析完成',
-        message: `已完成${selectedFiles.length}期时序变化分析，结果已保存到数据管理的分析结果队列`,
-        type: 'success',
-        duration: 5000
+    let errorMsg = '时序分析失败'
+    if (error.response?.data?.message) {
+      errorMsg += ': ' + error.response.data.message
+    } else if (error.message) {
+      errorMsg += ': ' + error.message
+    }
+    
+    ElMessage({
+      message: errorMsg,
+      type: 'error',
+      duration: 8000,
+      showClose: true
+    })
+  }
+}
+
+// 执行时序分析（追踪多个时间点的变化）
+const performTemporalAnalysis = (geojsonDataList) => {
+  if (!geojsonDataList || geojsonDataList.length < 2) {
+    throw new Error('时序分析至少需要2个时间点的数据')
+  }
+  
+  // 以第一个时间点为基准，构建地块索引
+  const baseGeojson = geojsonDataList[0].geojson
+  const baseFeatures = baseGeojson.features || []
+  
+  const resultFeatures = []
+  let changedCount = 0
+  let unchangedCount = 0
+  
+  // 对每个地块追踪时序变化
+  baseFeatures.forEach((baseFeature, index) => {
+    const baseProps = baseFeature.properties || {}
+    const plotId = String(baseProps.FID || baseProps.id || baseProps.plotId || index)
+    const plotName = baseProps.name || baseProps.plotName || `地块${plotId}`
+    
+    // 构建时间轴数据
+    const timeline = []
+    let hasChange = false
+    let previousCrop = null
+    
+    geojsonDataList.forEach((dataItem) => {
+      const features = dataItem.geojson.features || []
+      // 在当前时间点查找对应地块
+      const feature = features.find(f => {
+        const fid = String(f.properties?.FID || f.properties?.id || f.properties?.plotId || '')
+        return fid === plotId
       })
-    }, 500)
-  }, 2500)
+      
+      if (feature) {
+        const props = feature.properties || {}
+        const crop = props.label || props.crop || props.class || props.作物类型 || '未知'
+        
+        timeline.push({
+          time: dataItem.time,
+          crop: crop,
+          file: dataItem.file.name
+        })
+        
+        // 检查是否有变化
+        if (previousCrop !== null && previousCrop !== crop) {
+          hasChange = true
+        }
+        previousCrop = crop
+      } else {
+        // 该时间点找不到对应地块
+        timeline.push({
+          time: dataItem.time,
+          crop: '未检测到',
+          file: dataItem.file.name
+        })
+        hasChange = true
+      }
+    })
+    
+    if (hasChange) {
+      changedCount++
+    } else {
+      unchangedCount++
+    }
+    
+    // 创建结果要素
+    resultFeatures.push({
+      type: 'Feature',
+      properties: {
+        ...baseProps,
+        plotId: plotId,
+        plotName: plotName,
+        timeline: timeline,
+        hasChange: hasChange,
+        changeCount: timeline.length > 1 ? timeline.filter((t, i) => i > 0 && t.crop !== timeline[i-1].crop).length : 0,
+        area: baseProps.area || baseProps.Area || baseProps.面积 || 0
+      },
+      geometry: baseFeature.geometry
+    })
+  })
+  
+  // 构建结果GeoJSON
+  const resultGeojson = {
+    type: 'FeatureCollection',
+    metadata: {
+      analysisType: 'temporal',
+      timePoints: geojsonDataList.map(d => ({
+        time: d.time,
+        file: d.file.name,
+        taskName: d.file.taskName
+      })),
+      filesCount: geojsonDataList.length,
+      analysisTime: new Date().toLocaleString('zh-CN'),
+      totalFeatures: resultFeatures.length,
+      changed: changedCount,
+      unchanged: unchangedCount
+    },
+    features: resultFeatures
+  }
+  
+  return {
+    geojson: resultGeojson,
+    stats: {
+      total: resultFeatures.length,
+      changed: changedCount,
+      unchanged: unchangedCount
+    }
+  }
 }
 
 // 功能B.3：生成统计汇总

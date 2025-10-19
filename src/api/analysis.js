@@ -31,3 +31,39 @@ export const convertGeojsonToShp = (geojsonFilename) => {
   })
 }
 
+// 读取GeoJSON文件内容
+export const readGeojsonContent = (filename) => {
+  // 对文件名进行URL编码，避免特殊字符导致404
+  const encodedFilename = encodeURIComponent(filename)
+  console.log('请求读取文件:', filename, '编码后:', encodedFilename)
+  return request.get(`/analysis/read-geojson/${encodedFilename}`)
+}
+
+// 保存分析结果GeoJSON
+export const saveAnalysisResult = (filename, geojsonData) => {
+  return request.post('/analysis/save-result', {
+    filename,
+    geojsonData
+  })
+}
+
+// 导出差异检测CSV
+export const exportDifferenceCSV = (filename, data) => {
+  return request.post('/analysis/export-difference-csv', {
+    filename,
+    data
+  }, {
+    responseType: 'blob'
+  })
+}
+
+// 导出时序分析CSV
+export const exportTemporalCSV = (filename, data) => {
+  return request.post('/analysis/export-temporal-csv', {
+    filename,
+    data
+  }, {
+    responseType: 'blob'
+  })
+}
+
