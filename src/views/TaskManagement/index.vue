@@ -1,346 +1,252 @@
 <template>
   <div class="task-management-container">
-    <!-- 操作栏 -->
-    <el-card class="action-card" shadow="never">
-      <el-space wrap>
-        <el-button type="primary" @click="showTaskDialog = true">
-          <template #icon><Plus :size="16" /></template>
-          新建识别任务
-        </el-button>
-        <el-button @click="handleRefresh">
-          <template #icon><RefreshCw :size="16" /></template>
-          刷新列表
-        </el-button>
-        <el-divider direction="vertical" />
-        <el-select v-model="statusFilter" placeholder="任务状态" style="width: 120px" clearable>
-          <el-option label="全部" value="" />
-          <el-option label="排队中" value="pending" />
-          <el-option label="运行中" value="running" />
-          <el-option label="已完成" value="completed" />
-          <el-option label="失败" value="failed" />
-        </el-select>
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索任务名称"
-          style="width: 200px"
-          :prefix-icon="Search"
-          clearable
-        />
-      </el-space>
-    </el-card>
+    <!-- 页面标题 -->
+    <div class="page-header">
+      <h2 class="page-title">分类分析任务</h2>
+      <p class="page-description">智能识别作物类型，分析种植变化趋势</p>
+    </div>
 
-    <!-- 任务统计 -->
-    <el-row :gutter="20" class="stats-row">
-      <el-col :xs="24" :sm="12" :md="6">
-        <el-card shadow="hover" class="stat-card stat-all">
-          <el-statistic :value="taskStats.total" title="总任务数">
-            <template #prefix>
-              <el-icon><Tickets /></el-icon>
-            </template>
-          </el-statistic>
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="6">
-        <el-card shadow="hover" class="stat-card stat-running">
-          <el-statistic :value="taskStats.running" title="运行中">
-            <template #prefix>
-              <el-icon><Loading /></el-icon>
-            </template>
-          </el-statistic>
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="6">
-        <el-card shadow="hover" class="stat-card stat-completed">
-          <el-statistic :value="taskStats.completed" title="已完成">
-            <template #prefix>
-              <el-icon><CircleCheck /></el-icon>
-            </template>
-          </el-statistic>
-        </el-card>
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="6">
-        <el-card shadow="hover" class="stat-card stat-failed">
-          <el-statistic :value="taskStats.failed" title="失败">
-            <template #prefix>
-              <el-icon><CircleClose /></el-icon>
-            </template>
-          </el-statistic>
-        </el-card>
-      </el-col>
-    </el-row>
+    <!-- 使用教程 -->
+    <el-collapse v-model="activeGuide" class="guide-section">
+      <el-collapse-item name="1">
+        <template #title>
+          <div class="guide-title">
+            <el-icon><QuestionFilled /></el-icon>
+            <span>快速上手指南</span>
+          </div>
+        </template>
+        <div class="guide-content">
+          <div class="guide-step">
+            <div class="step-number">1</div>
+            <div class="step-content">
+              <h4>选择影像来源</h4>
+              <p>支持<strong>本地上传</strong>（可批量选择多个TIF/IMG文件）或从<strong>影像管理</strong>中选择已有影像（支持多选）</p>
+            </div>
+          </div>
+          <div class="guide-step">
+            <div class="step-number">2</div>
+            <div class="step-content">
+              <h4>开始识别</h4>
+              <p>选择好影像后，点击"开始识别"按钮，系统会自动进行批量处理，右侧会显示每个影像的识别进度</p>
+            </div>
+          </div>
+          <div class="guide-step">
+            <div class="step-number">3</div>
+            <div class="step-content">
+              <h4>变化分析</h4>
+              <p>识别完成后，可使用<strong>种植差异检测</strong>（对比2期）或<strong>时序变化分析</strong>（对比多期）查看作物种植变化</p>
+            </div>
+          </div>
+          <div class="guide-tips">
+            <el-icon color="#E6A23C"><WarnTriangleFilled /></el-icon>
+            <span><strong>提示：</strong>单个影像识别通常需要2-5分钟，批量识别会按顺序依次处理</span>
+          </div>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
 
-    <!-- 任务列表 -->
-    <el-card shadow="never" class="task-list-card">
+    <!-- 作物识别模块 -->
+    <el-card shadow="hover" class="module-card classification-module">
       <template #header>
-        <span><el-icon><List /></el-icon> 任务队列</span>
+        <div class="module-header">
+          <span class="module-title">
+            <el-icon><DataAnalysis /></el-icon>
+            作物智能识别
+          </span>
+          <el-tag v-if="batchTasks.length > 0" :type="allTasksCompleted ? 'success' : 'primary'" size="small">
+            {{ completedTasksCount }}/{{ batchTasks.length }}
+          </el-tag>
+        </div>
       </template>
-      
-      <el-table :data="paginatedTaskList" style="width: 100%" max-height="500">
-        <el-table-column prop="id" label="任务ID" width="100" />
-        <el-table-column prop="name" label="任务名称" min-width="200" />
-        <el-table-column prop="method" label="分析方法" width="120">
-          <template #default="scope">
-            <el-tag>{{ scope.row.method }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="120">
-          <template #default="scope">
-            <el-tag
-              :type="getStatusType(scope.row.status)"
-              :icon="getStatusIcon(scope.row.status)"
-            >
-              {{ getStatusText(scope.row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="进度" width="200">
-          <template #default="scope">
-            <el-progress
-              :percentage="scope.row.progress"
-              :status="scope.row.status === 'failed' ? 'exception' : scope.row.status === 'completed' ? 'success' : ''"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column prop="createTime" label="创建时间" width="160" />
-        <el-table-column prop="duration" label="耗时" width="100" />
-        <el-table-column label="操作" width="350" fixed="right">
-          <template #default="scope">
-            <el-button
-              v-if="scope.row.status === 'completed'"
-              size="small"
-              type="success"
-              @click="handleViewResult(scope.row)"
-            >
-              <template #icon><Eye :size="14" /></template>
-              查看结果
-            </el-button>
-            <el-button
-              size="small"
-              @click="handleViewLog(scope.row)"
-            >
-              <template #icon><File :size="14" /></template>
-              日志
-            </el-button>
-            <el-button
-              v-if="scope.row.status === 'pending' || scope.row.status === 'running'"
-              size="small"
-              type="warning"
-              @click="handleStop(scope.row)"
-            >
-              <template #icon><Play :size="14" /></template>
-              停止
-            </el-button>
-            <el-button
-              size="small"
-              type="danger"
-              @click="handleDelete(scope.row)"
-            >
-              <template #icon><Trash2 :size="14" /></template>
-              删除
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
 
-      <div class="pagination-container">
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[10, 20, 50]"
-          layout="total, sizes, prev, pager, next, jumper"
-          :total="totalTasks"
-        />
+      <div class="classification-with-progress">
+        <!-- 左侧：识别操作区 -->
+        <div class="classification-main">
+          <!-- 数据来源选择 -->
+          <el-radio-group v-model="imageSource" class="image-source-selector">
+            <el-radio-button label="local">
+              <Upload :size="16" style="margin-right: 6px;" />
+              本地上传（支持批量）
+            </el-radio-button>
+            <el-radio-button label="library">
+              <el-icon><Folder /></el-icon>
+              影像管理（支持多选）
+            </el-radio-button>
+          </el-radio-group>
+
+          <!-- 本地上传模式 -->
+          <div v-if="imageSource === 'local'" class="upload-area" @click="handleBatchImageUpload">
+            <div class="upload-icon">
+              <Upload :size="48" color="#409EFF" />
+            </div>
+            <div class="upload-text">
+              <h3>批量上传遥感影像</h3>
+              <p>支持同时选择多个 TIF、IMG 文件，系统将自动进行批量识别</p>
+            </div>
+            <el-button type="primary" size="large" class="upload-btn">
+              <Upload :size="18" style="margin-right: 8px;" />
+              选择影像文件（可多选）
+            </el-button>
+          </div>
+
+          <!-- 影像管理模式 -->
+          <div v-else class="library-selection">
+            <el-select 
+              v-model="selectedImageIds" 
+              placeholder="从data文件夹选择影像（可多选）" 
+              size="large"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              class="image-selector"
+            >
+              <el-option
+                v-for="img in imageLibrary"
+                :key="img.id"
+                :label="img.name"
+                :value="img.id"
+              >
+                <div class="image-option">
+                  <span class="image-name">{{ img.name }}</span>
+                  <span class="image-info">{{ img.type }} | {{ img.size }}</span>
+                </div>
+              </el-option>
+            </el-select>
+            <el-button 
+              type="primary" 
+              size="large" 
+              :disabled="selectedImageIds.length === 0"
+              @click="handleLibraryBatchClassify"
+              class="classify-btn"
+            >
+              <el-icon style="margin-right: 8px;"><DataAnalysis /></el-icon>
+              开始批量识别 ({{ selectedImageIds.length }})
+            </el-button>
+          </div>
+
+          <!-- 快速提示 -->
+          <div class="quick-tips">
+            <el-icon><InfoFilled /></el-icon>
+            <span>支持批量上传和识别，系统将按顺序处理每个影像，右侧会显示详细进度</span>
+          </div>
+        </div>
+
+        <!-- 右侧：批量识别进度面板 -->
+        <div class="progress-sidebar">
+          <div class="progress-header">
+            <span class="progress-title">
+              <el-icon><Histogram /></el-icon>
+              识别进度
+            </span>
+          </div>
+
+          <div class="progress-content">
+            <el-empty 
+              v-if="batchTasks.length === 0" 
+              description="暂无任务"
+              :image-size="80"
+            />
+            
+            <div v-else class="task-list">
+              <div 
+                v-for="task in batchTasks" 
+                :key="task.id" 
+                class="task-item"
+                :class="{ 'task-completed': task.status === 'completed', 'task-processing': task.status === 'processing' }"
+              >
+                <div class="task-header">
+                  <div class="task-name">
+                    <el-icon v-if="task.status === 'completed'" color="#67C23A" :size="16"><CircleCheck /></el-icon>
+                    <el-icon v-else-if="task.status === 'processing'" class="rotating" color="#409EFF" :size="16"><Loading /></el-icon>
+                    <el-icon v-else color="#909399" :size="16"><Clock /></el-icon>
+                    <span>{{ task.name }}</span>
+                  </div>
+                  <el-tag :type="getTaskStatusType(task.status)" size="small">
+                    {{ getTaskStatusText(task.status) }}
+                  </el-tag>
+                </div>
+                
+                <el-progress 
+                  :percentage="task.progress" 
+                  :status="task.status === 'completed' ? 'success' : ''"
+                  :stroke-width="6"
+                  :show-text="false"
+                />
+                
+                <div class="task-info">
+                  <span class="task-progress-text">{{ task.statusText }}</span>
+                  <span class="task-time">{{ task.elapsedTime }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="batchTasks.length > 0 && allTasksCompleted" class="batch-summary">
+              <el-alert type="success" :closable="false" class="compact-alert">
+                <template #title>
+                  <div style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                    <el-icon :size="16"><SuccessFilled /></el-icon>
+                    <span>全部完成！</span>
+                  </div>
+                </template>
+              </el-alert>
+              <el-button 
+                type="primary" 
+                size="small" 
+                @click="handleClearBatchTasks"
+                style="margin-top: 8px; width: 100%;"
+              >
+                清空列表
+              </el-button>
+            </div>
+          </div>
+        </div>
       </div>
     </el-card>
 
     <!-- 变化检测与差异分析模块 -->
-    <el-card shadow="never" class="analysis-module-card">
+    <el-card shadow="never" class="module-card analysis-module">
       <template #header>
         <div class="module-header">
-          <div class="module-left">
             <span class="module-title">
-              <el-icon><DataAnalysis /></el-icon>
+            <GitCompare :size="18" style="margin-right: 8px;" />
               变化检测与差异分析
             </span>
-          </div>
           <el-button 
             v-if="hasAnalysisData" 
             type="danger" 
             size="small" 
             @click="handleClearAllData"
           >
-            <template #icon><Trash2 :size="14" /></template>
-            一键清空
+            <Trash2 :size="14" style="margin-right: 6px;" />
+            清空数据
           </el-button>
         </div>
       </template>
 
       <!-- 功能按钮区 -->
       <div class="analysis-actions">
-        <el-card shadow="hover" class="action-button-card" @click="showDifferenceDialog = true">
+        <el-card shadow="hover" class="action-card" @click="showDifferenceDialog = true">
           <div class="action-content">
             <el-icon class="action-icon" color="#E6A23C"><Location /></el-icon>
             <div class="action-text">
               <div class="action-title">种植差异检测</div>
-              <div class="action-desc">对比规划与实际种植情况</div>
+              <div class="action-desc">对比不同时期的作物种植差异</div>
             </div>
           </div>
         </el-card>
 
-        <el-card shadow="hover" class="action-button-card" @click="showTemporalDialog = true">
+        <el-card shadow="hover" class="action-card" @click="showTemporalDialog = true">
           <div class="action-content">
             <el-icon class="action-icon" color="#409EFF"><DataAnalysis /></el-icon>
             <div class="action-text">
               <div class="action-title">时序变化分析</div>
-              <div class="action-desc">分析不同时期作物变化</div>
+              <div class="action-desc">追踪多期作物种植变化轨迹</div>
             </div>
           </div>
         </el-card>
-
-        <el-card shadow="hover" class="action-button-card" @click="showStatisticsDialog = true">
-          <div class="action-content">
-            <el-icon class="action-icon" color="#67C23A"><Tickets /></el-icon>
-            <div class="action-text">
-              <div class="action-title">统计汇总</div>
-              <div class="action-desc">生成多维度统计报告</div>
-            </div>
           </div>
         </el-card>
-      </div>
-
-      <!-- 任务执行状态显示 -->
-      <el-card v-if="analysisTaskRunning" shadow="never" class="task-running-card">
-        <el-result icon="info" title="分析任务执行中">
-          <template #sub-title>
-            <div style="margin: 20px 0;">
-              <el-progress :percentage="analysisProgress" :status="analysisProgress === 100 ? 'success' : ''" />
-              <div style="margin-top: 12px; color: #606266;">{{ analysisStatusText }}</div>
-            </div>
-          </template>
-          <template #extra>
-            <el-button type="primary" @click="handleViewAnalysisQueue">前往数据管理查看结果</el-button>
-          </template>
-        </el-result>
-      </el-card>
-    </el-card>
-
-    <!-- 新建任务对话框 -->
-    <el-dialog
-      v-model="showTaskDialog"
-      title="新建作物识别任务"
-      width="700px"
-      :close-on-click-modal="false"
-    >
-      <el-steps :active="currentStep" finish-status="success" align-center>
-        <el-step title="基本信息" />
-        <el-step title="选择数据" />
-        <el-step title="配置参数" />
-        <el-step title="确认提交" />
-      </el-steps>
-
-      <div class="step-content">
-        <!-- 步骤1: 基本信息 -->
-        <div v-show="currentStep === 0" class="step-panel">
-          <el-form :model="taskForm" label-width="100px">
-            <el-form-item label="任务名称">
-              <el-input v-model="taskForm.name" placeholder="请输入任务名称" />
-            </el-form-item>
-            <el-form-item label="任务描述">
-              <el-input
-                v-model="taskForm.description"
-                type="textarea"
-                :rows="3"
-                placeholder="请输入任务描述"
-              />
-            </el-form-item>
-          </el-form>
-        </div>
-
-        <!-- 步骤2: 选择数据 -->
-        <div v-show="currentStep === 1" class="step-panel">
-          <el-form :model="taskForm" label-width="100px">
-            <el-form-item label="影像数据">
-              <el-select v-model="taskForm.imageId" placeholder="选择影像" style="width: 100%">
-                <el-option label="Sentinel2_XJ_20240315_L2A" value="img001" />
-                <el-option label="Landsat8_XJ_20240312_T1" value="img002" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="地块数据">
-              <el-select v-model="taskForm.plotId" placeholder="选择地块" style="width: 100%">
-                <el-option label="乌鲁木齐市地块数据" value="plot001" />
-                <el-option label="喀什地区地块数据" value="plot002" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="训练样本">
-              <el-upload
-                class="upload-demo"
-                drag
-                :auto-upload="false"
-                accept=".shp,.geojson"
-              >
-                <el-icon class="el-icon--upload"><Upload :size="20" /></el-icon>
-                <div class="el-upload__text">拖拽文件到此处或<em>点击上传</em></div>
-                <template #tip>
-                  <div class="el-upload__tip">支持 .shp, .geojson 格式</div>
-                </template>
-              </el-upload>
-            </el-form-item>
-          </el-form>
-        </div>
-
-        <!-- 步骤3: 配置参数 -->
-        <div v-show="currentStep === 2" class="step-panel">
-          <el-form :model="taskForm" label-width="120px">
-            <el-form-item label="分类方法">
-              <el-radio-group v-model="taskForm.method">
-                <el-radio label="RF">随机森林 (RF)</el-radio>
-                <el-radio label="SVM">支持向量机 (SVM)</el-radio>
-                <el-radio label="DeepLearning">深度学习</el-radio>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item v-if="taskForm.method === 'RF'" label="决策树数量">
-              <el-input-number v-model="taskForm.params.trees" :min="10" :max="1000" />
-            </el-form-item>
-            <el-form-item v-if="taskForm.method === 'SVM'" label="核函数">
-              <el-select v-model="taskForm.params.kernel" style="width: 200px">
-                <el-option label="RBF" value="rbf" />
-                <el-option label="Linear" value="linear" />
-                <el-option label="Polynomial" value="poly" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="训练比例">
-              <el-slider v-model="taskForm.params.trainRatio" :min="50" :max="90" />
-              <span style="margin-left: 10px">{{ taskForm.params.trainRatio }}%</span>
-            </el-form-item>
-          </el-form>
-        </div>
-
-        <!-- 步骤4: 确认提交 -->
-        <div v-show="currentStep === 3" class="step-panel">
-          <el-descriptions title="任务配置信息" :column="1" border>
-            <el-descriptions-item label="任务名称">{{ taskForm.name }}</el-descriptions-item>
-            <el-descriptions-item label="任务描述">{{ taskForm.description }}</el-descriptions-item>
-            <el-descriptions-item label="分类方法">{{ taskForm.method }}</el-descriptions-item>
-            <el-descriptions-item label="影像数据">{{ taskForm.imageId }}</el-descriptions-item>
-            <el-descriptions-item label="地块数据">{{ taskForm.plotId }}</el-descriptions-item>
-          </el-descriptions>
-        </div>
-      </div>
-
-      <template #footer>
-        <el-button v-if="currentStep > 0" @click="currentStep--">上一步</el-button>
-        <el-button @click="showTaskDialog = false">取消</el-button>
-        <el-button v-if="currentStep < 3" type="primary" @click="currentStep++">下一步</el-button>
-        <el-button v-else type="primary" @click="handleSubmitTask">提交任务</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 日志查看对话框 -->
-    <el-dialog v-model="showLogDialog" title="任务日志" width="800px">
-      <div class="log-container">
-        <pre>{{ currentLog }}</pre>
-      </div>
-    </el-dialog>
 
     <!-- 种植差异检测配置对话框 -->
     <el-dialog
@@ -472,79 +378,58 @@
       </template>
     </el-dialog>
 
-    <!-- 统计汇总配置对话框 -->
+    <!-- 分析进度对话框 -->
     <el-dialog
-      v-model="showStatisticsDialog"
-      title="统计汇总配置"
-      width="600px"
+      v-model="analysisTaskRunning"
+      title="分析执行中"
+      width="500px"
       :close-on-click-modal="false"
+      :show-close="false"
     >
-      <el-form :model="statisticsConfig" label-width="120px">
-        <el-form-item label="选择任务">
-          <el-select v-model="statisticsConfig.taskId" placeholder="选择已完成的分析任务" style="width: 100%">
-            <el-option 
-              v-for="task in completedTasks" 
-              :key="task.id"
-              :label="task.name" 
-              :value="task.id" 
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="统计依据">
-          <el-radio-group v-model="statisticsConfig.source">
-            <el-radio label="difference">种植差异检测结果</el-radio>
-            <el-radio label="temporal">时序变化分析结果</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="统计维度">
-          <el-checkbox-group v-model="statisticsConfig.dimensions">
-            <el-checkbox label="region">按行政区划</el-checkbox>
-            <el-checkbox label="crop">按作物类型</el-checkbox>
-            <el-checkbox label="diffType">按差异类型</el-checkbox>
-          </el-checkbox-group>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showStatisticsDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleGenerateStatistics" :loading="statisticsLoading">
-          生成统计
+      <div class="analysis-progress-dialog">
+        <el-progress 
+          type="circle" 
+          :percentage="analysisProgress" 
+          :status="analysisProgress === 100 ? 'success' : ''"
+          :width="120"
+        />
+        <div class="progress-text">{{ analysisStatusText }}</div>
+        <el-button 
+          v-if="analysisProgress === 100" 
+          type="primary" 
+          @click="handleViewAnalysisQueue"
+        >
+          前往查看结果
         </el-button>
-      </template>
+      </div>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
-  Plus, RefreshCw, Search, Eye, File, Play, Trash2, Upload, Download, GitCompare
+  Plus, Trash2, Upload, GitCompare
 } from 'lucide-vue-next'
 import {
-  Tickets, Loading, CircleCheck, CircleClose, List, DataAnalysis, Location, Right, ArrowLeft, ArrowRight
+  Tickets, DataAnalysis, Location, InfoFilled, Folder, QuestionFilled,
+  WarnTriangleFilled, Histogram, CircleCheck, Loading, Clock, SuccessFilled
 } from '@element-plus/icons-vue'
-import { getRecognitionResults, readGeojsonContent, saveAnalysisResultToServer, saveReportToServer } from '@/api/analysis'
+import { getRecognitionResults, readGeojsonContent, saveAnalysisResultToServer } from '@/api/analysis'
 import { useAnalysisStore } from '@/stores/analysis'
-import { exportDifferenceToExcel, exportTemporalToExcel, exportStatisticsToExcel, saveFileMetadata } from '@/utils/export'
-import { buildTemporalTrajectories, exportToCSV as exportTemporalToCSV } from '@/utils/temporalAnalysis'
+import { buildTemporalTrajectories } from '@/utils/temporalAnalysis'
 
 const router = useRouter()
 const analysisStore = useAnalysisStore()
 
-const statusFilter = ref('')
-const searchKeyword = ref('')
-const currentPage = ref(1)
-const pageSize = ref(10)
-const showTaskDialog = ref(false)
-const showLogDialog = ref(false)
-const currentStep = ref(0)
-const currentLog = ref('')
+// 使用教程折叠状态
+const activeGuide = ref([])
 
 // 对话框显示状态
 const showDifferenceDialog = ref(false)
 const showTemporalDialog = ref(false)
-const showStatisticsDialog = ref(false)
 
 // 分析任务执行状态
 const analysisTaskRunning = ref(false)
@@ -554,197 +439,63 @@ const analysisStatusText = ref('')
 // 识别结果文件列表（从数据管理模块的分析结果队列加载）
 const recognitionFiles = ref([])
 
-// 功能B.1：种植差异检测
+// 影像来源选择
+const imageSource = ref('local') // local: 本地上传, library: 影像管理
+const selectedImageIds = ref([]) // 改为数组，支持多选
+const imageLibrary = ref([]) // 影像管理中的影像列表
+
+// 批量识别任务列表
+const batchTasks = ref([])
+let taskIdCounter = 0
+
+// 差异检测配置
 const differenceLoading = ref(false)
-const differenceTypeFilter = ref('')
 const differenceConfig = ref({
   baseFileId: '',
   compareFileId: ''
 })
-const differenceResultData = ref([])
-const differenceStats = ref({
-  total: 0,
-  typeMismatch: 0,
-  abandoned: 0,
-  unplanned: 0,
-  normal: 0
-})
 
-// 功能B.2：时序变化分析
+// 时序变化分析配置
 const temporalLoading = ref(false)
 const temporalConfig = ref({
   selectedFileIds: []
 })
-const temporalResultData = ref([])
-const temporalStats = ref({
-  total: 0,
-  changed: 0,
-  unchanged: 0
-})
 
-// 时间轴相关
-const currentTimelineIndex = ref(0)
-
-// 功能B.3：统计汇总
-const statisticsLoading = ref(false)
-const statisticsConfig = ref({
-  taskId: '',
-  source: 'difference',
-  dimensions: ['region']
-})
-const statisticsData = ref([])
-
-const taskForm = ref({
-  name: '',
-  description: '',
-  imageId: '',
-  plotId: '',
-  method: 'RF',
-  params: {
-    trees: 100,
-    kernel: 'rbf',
-    trainRatio: 70
-  }
-})
-
-const taskList = ref([
-  {
-    id: 'TASK001',
-    name: '2024年春季小麦识别',
-    method: 'RF',
-    status: 'completed',
-    progress: 100,
-    createTime: '2024-03-15 10:30:00',
-    duration: '25分钟'
-  },
-  {
-    id: 'TASK002',
-    name: '棉花种植区域提取',
-    method: 'SVM',
-    status: 'running',
-    progress: 65,
-    createTime: '2024-03-15 14:20:00',
-    duration: '15分钟'
-  },
-  {
-    id: 'TASK003',
-    name: '玉米地块分类识别',
-    method: 'DeepLearning',
-    status: 'pending',
-    progress: 0,
-    createTime: '2024-03-15 15:00:00',
-    duration: '-'
-  },
-  {
-    id: 'TASK004',
-    name: '综合作物类型分类',
-    method: 'RF',
-    status: 'failed',
-    progress: 45,
-    createTime: '2024-03-14 16:30:00',
-    duration: '10分钟'
-  }
-])
-
-// 计算属性：过滤后的任务列表（根据状态和搜索关键字）
-const filteredTaskList = computed(() => {
-  let filtered = taskList.value
-
-  // 按状态筛选
-  if (statusFilter.value) {
-    filtered = filtered.filter(task => task.status === statusFilter.value)
-  }
-
-  // 按名称搜索
-  if (searchKeyword.value) {
-    filtered = filtered.filter(task => 
-      task.name.toLowerCase().includes(searchKeyword.value.toLowerCase())
-    )
-  }
-
-  return filtered
-})
-
-// 计算属性：分页后的任务列表
-const paginatedTaskList = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  const end = start + pageSize.value
-  return filteredTaskList.value.slice(start, end)
-})
-
-// 计算属性：任务总数（用于分页）
-const totalTasks = computed(() => {
-  return filteredTaskList.value.length
-})
-
-// 计算属性：动态统计任务状态
-const taskStats = computed(() => {
-  return {
-    total: taskList.value.length,
-    running: taskList.value.filter(t => t.status === 'running').length,
-    completed: taskList.value.filter(t => t.status === 'completed').length,
-    failed: taskList.value.filter(t => t.status === 'failed').length,
-    pending: taskList.value.filter(t => t.status === 'pending').length
-  }
-})
-
-// 计算属性：已完成的任务列表
-const completedTasks = computed(() => {
-  return taskList.value.filter(t => t.status === 'completed')
-})
-
-// 计算属性：按时间排序的识别结果文件
-const sortedRecognitionFiles = computed(() => {
-  return [...recognitionFiles.value].sort((a, b) => {
-    return new Date(a.createTime) - new Date(b.createTime)
-  })
-})
-
-// 计算属性：当前时间轴项目
-const currentTimelineItem = computed(() => {
-  if (currentAnalysisResult.value && currentAnalysisResult.value.timelineData) {
-    return currentAnalysisResult.value.timelineData[currentTimelineIndex.value]
-  }
-  return null
-})
-
-// 计算属性：过滤后的差异检测数据
-const filteredDifferenceData = computed(() => {
-  if (!differenceTypeFilter.value) {
-    return differenceResultData.value
-  }
-  return differenceResultData.value.filter(r => r.diffType === differenceTypeFilter.value)
-})
-
-// 计算属性：判断是否有分析数据
+// 计算属性：判断是否有分析数据（通过 store 判断）
 const hasAnalysisData = computed(() => {
-  return differenceResultData.value.length > 0 || 
-         temporalResultData.value.length > 0 || 
-         statisticsData.value.length > 0
+  return analysisStore.differenceResult !== null || 
+         analysisStore.temporalResult !== null
 })
 
-// 监听筛选条件变化，自动重置到第一页
-watch([statusFilter, searchKeyword], () => {
-  currentPage.value = 1
+// 批量任务相关计算属性
+const completedTasksCount = computed(() => {
+  return batchTasks.value.filter(task => task.status === 'completed').length
 })
 
-// 清空所有分析数据
-const clearAnalysisData = () => {
-  differenceResultData.value = []
-  differenceConfig.value = {
-    baseFileId: '',
-    compareFileId: ''
+const allTasksCompleted = computed(() => {
+  return batchTasks.value.length > 0 && batchTasks.value.every(task => task.status === 'completed')
+})
+
+// 获取任务状态显示文本
+const getTaskStatusText = (status) => {
+  const statusMap = {
+    'waiting': '等待中',
+    'processing': '识别中',
+    'completed': '已完成',
+    'failed': '失败'
   }
-  temporalResultData.value = []
-  temporalConfig.value = {
-    selectedFileIds: []
+  return statusMap[status] || '未知'
+}
+
+// 获取任务状态标签类型
+const getTaskStatusType = (status) => {
+  const typeMap = {
+    'waiting': 'info',
+    'processing': 'primary',
+    'completed': 'success',
+    'failed': 'danger'
   }
-  statisticsData.value = []
-  statisticsConfig.value = {
-    taskId: '',
-    source: 'difference',
-    dimensions: ['region']
-  }
+  return typeMap[status] || 'info'
 }
 
 // 加载识别结果文件列表（从后端API读取GeoJSON文件）
@@ -774,165 +525,220 @@ const loadRecognitionFiles = async () => {
   }
 }
 
+// 加载影像管理数据（从本地data文件夹）
+const loadImageLibrary = async () => {
+  try {
+    // 从后端API加载data文件夹中的影像列表
+    const { getImageList } = await import('@/api/image')
+    const response = await getImageList()
+    
+    if (response.code === 200 && response.data) {
+      // 过滤出TIF和IMG格式的影像文件
+      imageLibrary.value = response.data
+        .filter(img => {
+          const ext = img.name?.toLowerCase()
+          return ext?.endsWith('.tif') || ext?.endsWith('.tiff') || ext?.endsWith('.img')
+        })
+        .map(img => ({
+          id: img.id,
+          name: img.name,
+          type: img.type || 'TIF',
+          size: img.size || '未知',
+          path: img.path,
+          uploadTime: img.uploadTime || img.createTime
+        }))
+      
+      console.log('✅ 已从data文件夹加载影像列表:', imageLibrary.value.length, '个')
+      console.log('影像列表:', imageLibrary.value)
+    } else {
+      imageLibrary.value = []
+      console.log('⚠️ data文件夹中暂无影像文件')
+    }
+  } catch (error) {
+    console.error('❌ 加载data文件夹影像列表失败:', error)
+    imageLibrary.value = []
+    ElMessage.warning('无法加载影像列表，请检查后端服务')
+  }
+}
+
 // 组件挂载时加载数据
 onMounted(() => {
   loadRecognitionFiles()
+  loadImageLibrary()
 })
-
-const getStatusType = (status) => {
-  const map = {
-    pending: 'info',
-    running: 'warning',
-    completed: 'success',
-    failed: 'danger'
-  }
-  return map[status]
-}
-
-const getStatusIcon = (status) => {
-  const map = {
-    pending: 'Clock',
-    running: 'Loading',
-    completed: 'CircleCheck',
-    failed: 'CircleClose'
-  }
-  return map[status]
-}
-
-const getStatusText = (status) => {
-  const map = {
-    pending: '排队中',
-    running: '运行中',
-    completed: '已完成',
-    failed: '失败'
-  }
-  return map[status]
-}
-
-const handleRefresh = () => {
-  // 清空筛选条件
-  statusFilter.value = ''
-  searchKeyword.value = ''
-  currentPage.value = 1
-  ElMessage.success('列表已刷新')
-}
-
-const handleViewResult = (row) => {
-  ElMessage.success(`查看任务 ${row.name} 的结果`)
-}
-
-const handleViewLog = (row) => {
-  currentLog.value = `[2024-03-15 10:30:00] 任务开始执行...\n[2024-03-15 10:31:23] 加载影像数据...\n[2024-03-15 10:33:45] 加载地块数据...\n[2024-03-15 10:35:12] 数据预处理完成\n[2024-03-15 10:38:56] 模型训练中...\n[2024-03-15 10:50:34] 模型训练完成\n[2024-03-15 10:52:18] 执行分类预测...\n[2024-03-15 10:55:00] 任务执行成功`
-  showLogDialog.value = true
-}
-
-const handleStop = (row) => {
-  ElMessageBox.confirm(`确定要停止任务 ${row.name} 吗？`, '停止确认', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    ElMessage.success('任务已停止')
-  })
-}
-
-const handleDelete = (row) => {
-  ElMessageBox.confirm(`确定要删除任务 ${row.name} 吗？`, '删除确认', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    ElMessage.success('删除成功')
-  })
-}
-
-const handleSubmitTask = () => {
-  // 创建新任务
-  const newTask = {
-    id: `TASK${String(taskList.value.length + 1).padStart(3, '0')}`,
-    name: taskForm.value.name,
-    method: taskForm.value.method,
-    status: 'pending',
-    progress: 0,
-    createTime: new Date().toLocaleString('zh-CN'),
-    duration: '-',
-    imageId: taskForm.value.imageId
-  }
-  
-  taskList.value.unshift(newTask)
-  
-  ElMessage.success('任务提交成功，开始执行识别...')
-  
-  // 模拟任务执行过程
-  setTimeout(() => {
-    newTask.status = 'running'
-    newTask.progress = 30
-  }, 1000)
-  
-  setTimeout(() => {
-    newTask.progress = 60
-  }, 3000)
-  
-  setTimeout(() => {
-    newTask.status = 'completed'
-    newTask.progress = 100
-    newTask.duration = '5分钟'
-    
-    ElNotification({
-      title: '✅ 识别任务完成',
-      message: `${newTask.name} 已完成识别，结果已保存到识别结果队列`,
-      type: 'success',
-      duration: 5000
-    })
-    
-    // 刷新识别结果文件列表（从后端重新加载）
-    loadRecognitionFiles()
-  }, 5000)
-  
-  showTaskDialog.value = false
-  currentStep.value = 0
-  taskForm.value = {
-    name: '',
-    description: '',
-    imageId: '',
-    plotId: '',
-    method: 'RF',
-    params: {
-      trees: 100,
-      kernel: 'rbf',
-      trainRatio: 70
-    }
-  }
-}
-
-// 获取差异类型标签样式
-const getDiffTagType = (diffType) => {
-  const map = {
-    normal: 'success',
-    typeMismatch: 'warning',
-    abandoned: 'danger',
-    unplanned: 'info'
-  }
-  return map[diffType]
-}
-
-// 获取差异类型文本
-const getDiffTypeText = (diffType) => {
-  const map = {
-    normal: '正常',
-    typeMismatch: '类型不符',
-    abandoned: '撂荒/未种植',
-    unplanned: '非规划种植'
-  }
-  return map[diffType]
-}
-
-// ============ 新模块方法 ============
 
 // 前往数据管理查看分析结果
 const handleViewAnalysisQueue = () => {
-  // 这里可以添加路由跳转到数据管理界面
-  ElMessage.info('请前往数据管理界面的分析结果队列查看')
+  router.push('/image-management')
+}
+
+// 批量上传影像文件
+const handleBatchImageUpload = () => {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.tif,.tiff,.img'
+  input.multiple = true // 支持多选
+  
+  input.onchange = (e) => {
+    const files = Array.from(e.target.files)
+    if (files.length > 0) {
+      handleBatchImageFiles(files)
+    }
+  }
+  
+  input.click()
+}
+
+// 处理批量上传的影像文件
+const handleBatchImageFiles = (files) => {
+  console.log(`批量上传 ${files.length} 个文件:`, files)
+  
+  // 为每个文件创建任务
+  const newTasks = files.map(file => ({
+    id: `task_${++taskIdCounter}`,
+    name: file.name,
+    file: file,
+    status: 'waiting',
+    progress: 0,
+    statusText: '等待处理',
+    elapsedTime: '00:00',
+    startTime: null
+  }))
+  
+  batchTasks.value.push(...newTasks)
+  
+  ElMessage.success(`已添加 ${files.length} 个识别任务，开始批量处理`)
+  
+  // 开始处理批量任务
+  processBatchTasks()
+}
+
+// 从影像管理批量识别
+const handleLibraryBatchClassify = () => {
+  if (selectedImageIds.value.length === 0) {
+    ElMessage.warning('请选择要识别的影像')
+    return
+  }
+  
+  const selectedImages = imageLibrary.value.filter(img => 
+    selectedImageIds.value.includes(img.id)
+  )
+  
+  console.log(`从影像管理选择 ${selectedImages.length} 个影像:`, selectedImages)
+  
+  // 为每个影像创建任务
+  const newTasks = selectedImages.map(img => ({
+    id: `task_${++taskIdCounter}`,
+    name: img.name,
+    imageId: img.id,
+    status: 'waiting',
+    progress: 0,
+    statusText: '等待处理',
+    elapsedTime: '00:00',
+    startTime: null
+  }))
+  
+  batchTasks.value.push(...newTasks)
+  
+  ElMessage.success(`已添加 ${selectedImages.length} 个识别任务，开始批量处理`)
+  
+  // 清空选择
+  selectedImageIds.value = []
+  
+  // 开始处理批量任务
+  processBatchTasks()
+}
+
+// 处理批量任务（按顺序依次处理）
+let isProcessing = false
+const processBatchTasks = async () => {
+  if (isProcessing) return
+  
+  isProcessing = true
+  
+  const waitingTasks = batchTasks.value.filter(task => task.status === 'waiting')
+  
+  for (const task of waitingTasks) {
+    await processTask(task)
+  }
+  
+  isProcessing = false
+  
+  // 全部完成后显示通知
+  if (allTasksCompleted.value) {
+    ElNotification({
+      title: '✅ 批量识别完成',
+      message: `已完成 ${batchTasks.value.length} 个影像的识别，结果已保存`,
+      type: 'success',
+      duration: 8000
+    })
+    
+    // 刷新识别结果列表
+    await loadRecognitionFiles()
+  }
+}
+
+// 处理单个任务
+const processTask = (task) => {
+  return new Promise((resolve) => {
+    task.status = 'processing'
+    task.progress = 0
+    task.startTime = Date.now()
+    
+    // 更新经过时间的定时器
+    const timeInterval = setInterval(() => {
+      if (task.status === 'processing') {
+        const elapsed = Math.floor((Date.now() - task.startTime) / 1000)
+        const minutes = Math.floor(elapsed / 60)
+        const seconds = elapsed % 60
+        task.elapsedTime = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+      } else {
+        clearInterval(timeInterval)
+      }
+    }, 1000)
+    
+    // 模拟分类识别过程
+    // 步骤1: 上传/加载 (0-20%)
+    task.statusText = '正在加载影像数据...'
+    setTimeout(() => {
+      task.progress = 20
+      task.statusText = '影像加载完成，正在预处理...'
+    }, 800)
+    
+    // 步骤2: 预处理 (20-40%)
+    setTimeout(() => {
+      task.progress = 40
+      task.statusText = '预处理完成，正在进行智能识别...'
+    }, 1800)
+    
+    // 步骤3: 识别 (40-85%)
+    setTimeout(() => {
+      task.progress = 70
+      task.statusText = '智能识别中...'
+    }, 3000)
+    
+    setTimeout(() => {
+      task.progress = 85
+      task.statusText = '正在保存识别结果...'
+    }, 4200)
+    
+    // 步骤4: 完成 (85-100%)
+    setTimeout(() => {
+      task.progress = 100
+      task.status = 'completed'
+      task.statusText = '识别完成'
+      clearInterval(timeInterval)
+      
+      console.log(`✅ 任务完成: ${task.name}`)
+      resolve()
+    }, 5000)
+  })
+}
+
+// 清空批量任务列表
+const handleClearBatchTasks = () => {
+  batchTasks.value = []
+  ElMessage.success('已清空任务列表')
 }
 
 // 功能B.1：执行种植差异检测（真实数据分析）
@@ -1052,23 +858,23 @@ const handleRunDifferenceDetection = async () => {
     }
     
     analysisProgress.value = 100
-    analysisStatusText.value = '分析完成！即将跳转...'
+    analysisStatusText.value = '分析完成！'
     
     differenceLoading.value = false
-    analysisTaskRunning.value = false
     
     // 显示成功提示
     ElNotification({
       title: '✅ 差异检测完成',
-      message: `已检测到${diffResult.stats.changed}个变化地块，分析结果已保存，正在跳转到结果查看界面...`,
+      message: `已检测到${diffResult.stats.changed}个变化地块，分析结果已保存`,
       type: 'success',
       duration: 5000
     })
     
-    // 等待800ms后跳转
+    // 等待2秒后关闭进度对话框并跳转
     setTimeout(() => {
+      analysisTaskRunning.value = false
       router.push('/result-compare')
-    }, 800)
+    }, 2000)
     
   } catch (error) {
     console.error('差异检测失败:', error)
@@ -1368,24 +1174,23 @@ const handleRunTemporalAnalysis = async () => {
     }
     
     analysisProgress.value = 100
-    analysisStatusText.value = '分析完成！即将跳转...'
+    analysisStatusText.value = '分析完成！'
     
     temporalLoading.value = false
-    analysisTaskRunning.value = false
     
     // 显示成功提示
     ElNotification({
       title: '✅ 时序分析完成',
-      message: `已完成${selectedFiles.length}期时序变化分析（共${temporalResult.stats.total}个地块，${temporalResult.stats.changed}个有变化）。\n\n分析结果已保存，正在跳转到"结果查看与比对"页面...`,
+      message: `已完成${selectedFiles.length}期时序变化分析（共${temporalResult.stats.total}个地块，${temporalResult.stats.changed}个有变化）`,
       type: 'success',
-      duration: 6000,
-      dangerouslyUseHTMLString: false
+      duration: 5000
     })
     
-    // 等待800ms后跳转
+    // 等待2秒后关闭进度对话框并跳转
     setTimeout(() => {
+      analysisTaskRunning.value = false
       router.push('/result-compare')
-    }, 800)
+    }, 2000)
     
   } catch (error) {
     console.error('时序分析失败:', error)
@@ -1458,106 +1263,10 @@ const performTemporalAnalysis = (geojsonDataList) => {
   }
 }
 
-// 功能B.3：生成统计汇总
-const handleGenerateStatistics = () => {
-  if (!statisticsConfig.value.taskId) {
-    ElMessage.warning('请先选择一个分析任务')
-    return
-  }
-
-  statisticsLoading.value = true
-  showStatisticsDialog.value = false
-  
-  // 显示任务执行状态
-  analysisTaskRunning.value = true
-  analysisProgress.value = 0
-  analysisStatusText.value = '正在加载分析数据...'
-
-  // 模拟执行步骤
-  setTimeout(() => {
-    analysisProgress.value = 40
-    analysisStatusText.value = '正在统计分析...'
-  }, 500)
-  
-  setTimeout(() => {
-    analysisProgress.value = 80
-    analysisStatusText.value = '正在生成报表...'
-  }, 1000)
-
-  // 模拟生成统计报表
-  setTimeout(() => {
-    analysisProgress.value = 100
-    analysisStatusText.value = '统计完成！正在保存结果...'
-    
-    const selectedTask = taskList.value.find(t => t.id === statisticsConfig.value.taskId)
-    const selectedTaskName = selectedTask?.name || '未知任务'
-    
-    // 生成统计汇总结果文件
-    const resultFile = {
-      id: `statistics_${new Date().getTime()}`,
-      name: `统计汇总_${selectedTaskName}.xlsx`,
-      type: 'XLSX',
-      taskId: statisticsConfig.value.taskId,
-      taskName: selectedTaskName,
-      analysisType: 'statistics',
-      recordCount: 3,  // 统计维度数量
-      size: `${(Math.random() * 2 + 0.5).toFixed(2)} MB`,
-      createTime: new Date().toLocaleString('zh-CN'),
-      timestamp: new Date().getTime(),
-      description: `统计汇总报表 - ${statisticsConfig.value.dimensions.join('、')}`,
-      dimensions: statisticsConfig.value.dimensions,
-      source: statisticsConfig.value.source,
-      downloadUrl: `/api/download/statistics_${new Date().getTime()}.xlsx`
-    }
-    
-    // 保存到分析结果队列
-    saveAnalysisResultToQueue(resultFile)
-
-    statisticsLoading.value = false
-    
-    setTimeout(() => {
-      analysisTaskRunning.value = false
-      ElNotification({
-        title: '✅ 统计汇总完成',
-        message: '统计报表已生成并保存到数据管理的分析结果队列',
-        type: 'success',
-        duration: 5000
-      })
-    }, 500)
-  }, 1800)
-}
-
-
-// 保存分析结果到队列
-const saveAnalysisResultToQueue = (fileInfo) => {
-  try {
-    const QUEUE_KEY = 'analysis_result_queue'
-    let queue = []
-    
-    const stored = localStorage.getItem(QUEUE_KEY)
-    if (stored) {
-      queue = JSON.parse(stored)
-    }
-    
-    // 添加新结果到队列头部
-    queue.unshift(fileInfo)
-    
-    // 限制队列长度（最多保留50条）
-    if (queue.length > 50) {
-      queue = queue.slice(0, 50)
-    }
-    
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(queue))
-    console.log('分析结果已保存到队列:', fileInfo)
-  } catch (error) {
-    console.error('保存分析结果失败:', error)
-  }
-}
-
 // 一键清空所有分析数据
 const handleClearAllData = () => {
   ElMessageBox.confirm(
-    '清空后将删除所有分析数据（包括选中的任务、差异检测结果、时序分析结果和统计数据），此操作不可恢复，是否继续？',
+    '清空后将删除所有分析数据（包括差异检测结果、时序分析结果），此操作不可恢复，是否继续？',
     '确认清空',
     {
       confirmButtonText: '确定清空',
@@ -1566,164 +1275,439 @@ const handleClearAllData = () => {
       confirmButtonClass: 'el-button--danger'
     }
   ).then(() => {
-    clearAnalysisData()
+    // 清空store中的分析结果
+    analysisStore.clearDifferenceResult()
+    analysisStore.clearTemporalResult()
+    
+    // 重置配置
+    differenceConfig.value = {
+      baseFileId: '',
+      compareFileId: ''
+    }
+    temporalConfig.value = {
+      selectedFileIds: []
+    }
+    
     ElMessage.success({
       message: '所有分析数据已清空',
       duration: 3000
     })
   }).catch(() => {
-    // 用户取消操作，不显示提示或者只显示3秒
-    // ElMessage.info({
-    //   message: '已取消清空操作',
-    //   duration: 3000
-    // })
+    // 用户取消操作
   })
 }
 </script>
 
 <style scoped lang="scss">
 .task-management-container {
-  .action-card {
+  // 页面标题
+  .page-header {
     margin-bottom: 20px;
-    border-radius: 8px;
-  }
-  
-  .stats-row {
-    margin-bottom: 20px;
+    padding: 20px 24px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 12px;
+    color: white;
     
-    .stat-card {
-      border-radius: 8px;
-      
-      &.stat-all {
-        border-left: 4px solid #409EFF;
-      }
-      
-      &.stat-running {
-        border-left: 4px solid #E6A23C;
-      }
-      
-      &.stat-completed {
-        border-left: 4px solid #67C23A;
-      }
-      
-      &.stat-failed {
-        border-left: 4px solid #F56C6C;
-      }
+    .page-title {
+      margin: 0 0 6px 0;
+      font-size: 26px;
+      font-weight: 700;
     }
-  }
-  
-  .pagination-container {
-    display: flex;
-    justify-content: center;
-    margin-top: 20px;
-  }
-  
-  .step-content {
-    margin: 30px 0;
-    min-height: 300px;
     
-    .step-panel {
-      padding: 20px;
-    }
-  }
-  
-  .log-container {
-    background: #1e1e1e;
-    color: #d4d4d4;
-    padding: 15px;
-    border-radius: 4px;
-    max-height: 500px;
-    overflow-y: auto;
-    font-family: 'Courier New', monospace;
-    font-size: 13px;
-    line-height: 1.6;
-    
-    pre {
+    .page-description {
       margin: 0;
-      white-space: pre-wrap;
-      word-wrap: break-word;
+      font-size: 15px;
+      opacity: 0.95;
     }
   }
-}
-
-// 差异检测相关样式
-.difference-detection-container {
-  .config-card {
+  
+  // 使用教程区域
+  .guide-section {
     margin-bottom: 20px;
-    border-radius: 8px;
-  }
-  
-  .difference-stats {
-    margin: 20px 0;
+    border: none;
     
-    .diff-stat-card {
+    :deep(.el-collapse-item__header) {
+      background: #f5f7fa;
       border-radius: 8px;
+      padding: 12px 16px;
+      border: 1px solid #e4e7ed;
       
-      &.diff-total {
-        border-left: 4px solid #409EFF;
-      }
-      
-      &.diff-mismatch {
-        border-left: 4px solid #E6A23C;
-      }
-      
-      &.diff-abandoned {
-        border-left: 4px solid #F56C6C;
-      }
-      
-      &.diff-unplanned {
-        border-left: 4px solid #909399;
+      &:hover {
+        background: #e9ecef;
       }
     }
-  }
-  
-  .results-card {
-    border-radius: 8px;
-  }
-}
-
-// 新模块：变化检测与差异分析样式
-.analysis-module-card {
-  margin-top: 30px;
-  border-radius: 8px;
-  border: 2px solid #409EFF;
-  
-  .module-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
     
-    .module-left {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
+    :deep(.el-collapse-item__content) {
+      padding: 0;
     }
     
-    .module-title {
-      font-size: 16px;
-      font-weight: 600;
+    .guide-title {
       display: flex;
       align-items: center;
       gap: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      color: #409EFF;
+    }
+    
+    .guide-content {
+      padding: 20px;
+      background: #fafbfc;
+      
+      .guide-step {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 20px;
+        
+        &:last-child {
+          margin-bottom: 0;
+        }
+        
+        .step-number {
+          flex-shrink: 0;
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+    display: flex;
+          align-items: center;
+    justify-content: center;
+          font-weight: 700;
+          font-size: 16px;
+  }
+  
+  .step-content {
+          flex: 1;
+          
+          h4 {
+            margin: 0 0 6px 0;
+            font-size: 16px;
+            color: #303133;
+          }
+          
+          p {
+            margin: 0;
+            font-size: 14px;
+            color: #606266;
+            line-height: 1.6;
+            
+            strong {
+              color: #409EFF;
+            }
+          }
+        }
+      }
+      
+      .guide-tips {
+        margin-top: 16px;
+        padding: 12px 16px;
+        background: #fff7e6;
+        border-left: 4px solid #E6A23C;
+    border-radius: 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    font-size: 13px;
+        color: #606266;
+        
+        strong {
+          color: #E6A23C;
+        }
+      }
     }
   }
   
-  // 功能按钮区域
+  // 模块卡片通用样式
+  .module-card {
+    margin-bottom: 24px;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.3s;
+    
+    &:hover {
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    }
+    
+    .module-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      
+      .module-title {
+        font-size: 18px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+    }
+  }
+  
+  // 作物识别模块
+  .classification-module {
+    border: 2px solid #667eea;
+    
+    .classification-with-progress {
+      display: flex;
+      gap: 20px;
+      
+      // 左侧：识别操作区
+      .classification-main {
+        flex: 1;
+        padding: 24px;
+        
+        // 数据来源选择器
+        .image-source-selector {
+          margin-bottom: 24px;
+          display: flex;
+          justify-content: center;
+          
+          :deep(.el-radio-button__inner) {
+            padding: 12px 32px;
+            font-size: 15px;
+            
+            .el-icon {
+              margin-right: 6px;
+            }
+          }
+        }
+        
+        // 本地上传区域
+        .upload-area {
+          padding: 40px;
+          background: linear-gradient(135deg, #f5f7fa 0%, #e3e7f1 100%);
+          border: 2px dashed #409EFF;
+          border-radius: 12px;
+          text-align: center;
+          cursor: pointer;
+          transition: all 0.3s;
+          
+          &:hover {
+            border-color: #667eea;
+            background: linear-gradient(135deg, #e3e7f1 0%, #d4daf0 100%);
+            transform: scale(1.02);
+          }
+          
+          .upload-icon {
+            margin-bottom: 16px;
+            animation: float 3s ease-in-out infinite;
+          }
+          
+          .upload-text {
+            margin-bottom: 24px;
+            
+            h3 {
+              margin: 0 0 8px 0;
+              font-size: 20px;
+              color: #303133;
+            }
+            
+            p {
+              margin: 0;
+              font-size: 14px;
+              color: #606266;
+            }
+          }
+          
+          .upload-btn {
+            font-size: 15px;
+            padding: 12px 32px;
+          }
+        }
+        
+        // 影像管理选择区域
+        .library-selection {
+          display: flex;
+          gap: 16px;
+          align-items: flex-start;
+          padding: 24px;
+          background: #f9fafb;
+          border-radius: 12px;
+          
+          .image-selector {
+            flex: 1;
+            
+            :deep(.el-input__wrapper) {
+              min-height: 44px;
+            }
+          }
+          
+          .classify-btn {
+            flex-shrink: 0;
+            min-width: 120px;
+          }
+          
+          .image-option {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            
+            .image-name {
+              font-size: 14px;
+              color: #303133;
+              font-weight: 500;
+            }
+            
+            .image-info {
+              font-size: 12px;
+              color: #909399;
+            }
+          }
+        }
+        
+        // 快速提示
+        .quick-tips {
+          margin-top: 20px;
+          padding: 12px 16px;
+          background: #ecf5ff;
+          border-left: 4px solid #409EFF;
+          border-radius: 4px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 13px;
+          color: #606266;
+        }
+      }
+      
+      // 右侧：批量识别进度面板
+      .progress-sidebar {
+        width: 320px;
+        flex-shrink: 0;
+        background: #fafbfc;
+        border-left: 2px solid #e4e7ed;
+        display: flex;
+        flex-direction: column;
+        
+        .progress-header {
+          padding: 16px;
+          border-bottom: 1px solid #e4e7ed;
+          
+          .progress-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #303133;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+          }
+        }
+        
+        .progress-content {
+          padding: 12px;
+          flex: 1;
+          overflow-y: auto;
+          max-height: 500px;
+          
+          .task-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            
+            .task-item {
+              padding: 12px;
+              background: white;
+              border: 1px solid #e4e7ed;
+              border-radius: 8px;
+              transition: all 0.3s;
+              
+              &.task-processing {
+                border-color: #409EFF;
+                background: #ecf5ff;
+                box-shadow: 0 2px 8px rgba(64, 158, 255, 0.1);
+              }
+              
+              &.task-completed {
+                border-color: #67C23A;
+                background: #f0f9ff;
+              }
+              
+              .task-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 10px;
+                gap: 8px;
+                
+                .task-name {
+                  display: flex;
+                  align-items: center;
+                  gap: 6px;
+                  font-size: 13px;
+                  font-weight: 600;
+                  color: #303133;
+                  flex: 1;
+                  min-width: 0;
+                  
+                  span {
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                  }
+                }
+              }
+              
+              .task-info {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-top: 6px;
+                font-size: 11px;
+                
+                .task-progress-text {
+                  color: #606266;
+                  overflow: hidden;
+                  text-overflow: ellipsis;
+                  white-space: nowrap;
+                  flex: 1;
+                }
+                
+                .task-time {
+                  color: #909399;
+                  font-family: 'Courier New', monospace;
+                  margin-left: 8px;
+                  flex-shrink: 0;
+                }
+              }
+            }
+          }
+          
+          .batch-summary {
+            margin-top: 12px;
+            
+            .compact-alert {
+              padding: 8px 12px;
+              
+              :deep(.el-alert__title) {
+                font-size: 13px;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // 变化检测与差异分析模块
+  .analysis-module {
+    border: 2px solid #67C23A;
+    
   .analysis-actions {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 20px;
     padding: 20px 0;
     
-    .action-button-card {
+      .action-card {
       cursor: pointer;
       transition: all 0.3s;
       border: 2px solid #ebeef5;
+        border-radius: 8px;
       
       &:hover {
-        border-color: #409EFF;
-        box-shadow: 0 4px 12px rgba(64, 158, 255, 0.2);
+          border-color: #67C23A;
+          box-shadow: 0 6px 16px rgba(103, 194, 58, 0.2);
         transform: translateY(-4px);
       }
       
@@ -1751,23 +1735,136 @@ const handleClearAllData = () => {
           .action-desc {
             font-size: 14px;
             color: #909399;
+              line-height: 1.5;
+            }
+          }
           }
         }
       }
     }
   }
   
-  // 任务执行状态卡片
-  .task-running-card {
-    margin-top: 20px;
-    
-    :deep(.el-result__title) {
-      font-size: 20px;
-      margin-top: 16px;
+// 分析进度对话框
+.analysis-progress-dialog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 0;
+  
+  .progress-text {
+    margin-top: 24px;
+    font-size: 15px;
+    color: #606266;
+    font-weight: 500;
+    text-align: center;
+  }
+  
+  .el-button {
+    margin-top: 24px;
+  }
+}
+
+// 浮动动画
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+// 旋转动画
+@keyframes rotating {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rotating {
+  animation: rotating 2s linear infinite;
+}
+
+// 响应式设计
+@media (max-width: 768px) {
+  .task-management-container {
+    .page-header {
+      padding: 16px;
+      
+      .page-title {
+        font-size: 22px;
+      }
+      
+      .page-description {
+        font-size: 14px;
+      }
     }
     
-    :deep(.el-result__subtitle) {
-      margin-top: 16px;
+    .guide-section {
+      .guide-content {
+        padding: 16px;
+        
+        .guide-step {
+          .step-number {
+            width: 28px;
+            height: 28px;
+            font-size: 14px;
+          }
+          
+          .step-content h4 {
+            font-size: 15px;
+          }
+        }
+      }
+    }
+    
+    .classification-module .classification-with-progress {
+      flex-direction: column;
+      
+      .classification-main {
+        padding: 16px;
+        
+        .image-source-selector {
+          :deep(.el-radio-button__inner) {
+            padding: 10px 20px;
+            font-size: 14px;
+          }
+        }
+        
+        .upload-area {
+          padding: 24px 16px;
+          
+          .upload-text h3 {
+            font-size: 18px;
+          }
+        }
+        
+        .library-selection {
+          flex-direction: column;
+          padding: 16px;
+          
+          .classify-btn {
+            width: 100%;
+          }
+        }
+      }
+      
+      .progress-sidebar {
+        width: 100%;
+        border-left: none;
+        border-top: 2px solid #e4e7ed;
+        
+        .progress-content {
+          max-height: 300px;
+        }
+      }
+    }
+    
+    .analysis-module .analysis-actions {
+      grid-template-columns: 1fr;
     }
   }
 }
