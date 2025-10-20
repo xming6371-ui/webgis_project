@@ -468,5 +468,103 @@ router.delete('/delete/:type/:filename', (req, res) => {
   }
 })
 
+// 读取GeoJSON文件内容
+router.get('/read-geojson/:filename', (req, res) => {
+  try {
+    // URL解码文件名（处理中文和特殊字符）
+    const filename = decodeURIComponent(req.params.filename)
+    console.log(`📖 收到读取请求，文件名: ${filename}`)
+    
+    const filePath = path.join(GEOJSON_DIR, filename)
+    console.log(`   完整路径: ${filePath}`)
+    
+    if (!fs.existsSync(filePath)) {
+      console.log(`   ❌ 文件不存在`)
+      // 列出目录中的文件以便调试
+      const files = fs.readdirSync(GEOJSON_DIR)
+      console.log(`   目录中的文件:`, files)
+      
+      return res.status(404).json({
+        code: 404,
+        message: `文件不存在: ${filename}`,
+        availableFiles: files
+      })
+    }
+    
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const geojsonData = JSON.parse(content)
+    
+    console.log(`   ✅ 读取成功，包含 ${geojsonData.features?.length || 0} 个要素`)
+    
+    res.json({
+      code: 200,
+      message: '读取成功',
+      data: geojsonData
+    })
+  } catch (error) {
+    console.error('❌ 读取GeoJSON失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '读取失败: ' + error.message
+    })
+  }
+})
+
+// 保存分析结果GeoJSON
+router.post('/save-result', (req, res) => {
+  try {
+    const { filename, geojsonData } = req.body
+    
+    console.log(`💾 收到保存请求，文件名: ${filename}`)
+    console.log(`   数据类型: ${typeof geojsonData}`)
+    console.log(`   要素数量: ${geojsonData?.features?.length || 0}`)
+    
+    if (!filename || !geojsonData) {
+      console.log('   ❌ 缺少必要参数')
+      return res.status(400).json({
+        code: 400,
+        message: '缺少必要参数: filename 和 geojsonData 都是必需的'
+      })
+    }
+    
+    // 确保目录存在
+    if (!fs.existsSync(GEOJSON_DIR)) {
+      console.log(`   ℹ️ 创建目录: ${GEOJSON_DIR}`)
+      fs.mkdirSync(GEOJSON_DIR, { recursive: true })
+    }
+    
+    const filePath = path.join(GEOJSON_DIR, filename)
+    console.log(`   保存路径: ${filePath}`)
+    
+    // 写入文件
+    const jsonString = JSON.stringify(geojsonData, null, 2)
+    console.log(`   JSON字符串长度: ${jsonString.length} 字符`)
+    
+    fs.writeFileSync(filePath, jsonString, 'utf-8')
+    
+    const stats = fs.statSync(filePath)
+    
+    console.log(`   ✅ 保存成功: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`)
+    
+    res.json({
+      code: 200,
+      message: '保存成功',
+      data: {
+        filename,
+        size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
+        path: filePath
+      }
+    })
+  } catch (error) {
+    console.error('❌ 保存分析结果失败:', error)
+    console.error('   错误堆栈:', error.stack)
+    res.status(500).json({
+      code: 500,
+      message: '保存失败: ' + error.message,
+      error: error.toString()
+    })
+  }
+})
+
 export default router
 
