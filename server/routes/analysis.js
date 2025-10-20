@@ -25,6 +25,10 @@ const DATA_DIR = path.join(__dirname, '../../public/data')
 const SHP_DIR = path.join(DATA_DIR, 'data_shp')
 const GEOJSON_DIR = path.join(DATA_DIR, 'data_geojson')
 const KMZ_DIR = path.join(DATA_DIR, 'data_kmz')
+const ANALYSIS_RESULTS_DIR = path.join(DATA_DIR, 'data_analysis_results')
+const TEMPORAL_DIR = path.join(ANALYSIS_RESULTS_DIR, 'temporal')
+const DIFFERENCE_DIR = path.join(ANALYSIS_RESULTS_DIR, 'difference')
+const REPORTS_DIR = path.join(ANALYSIS_RESULTS_DIR, 'reports')
 
 // 确保目录存在
 if (!fs.existsSync(SHP_DIR)) {
@@ -35,6 +39,15 @@ if (!fs.existsSync(GEOJSON_DIR)) {
 }
 if (!fs.existsSync(KMZ_DIR)) {
   fs.mkdirSync(KMZ_DIR, { recursive: true })
+}
+if (!fs.existsSync(TEMPORAL_DIR)) {
+  fs.mkdirSync(TEMPORAL_DIR, { recursive: true })
+}
+if (!fs.existsSync(DIFFERENCE_DIR)) {
+  fs.mkdirSync(DIFFERENCE_DIR, { recursive: true })
+}
+if (!fs.existsSync(REPORTS_DIR)) {
+  fs.mkdirSync(REPORTS_DIR, { recursive: true })
 }
 
 // 配置multer存储
@@ -562,6 +575,440 @@ router.post('/save-result', (req, res) => {
       code: 500,
       message: '保存失败: ' + error.message,
       error: error.toString()
+    })
+  }
+})
+
+// ========== 新增：分析结果持久化API ==========
+
+// 保存完整的分析结果（JSON格式）
+router.post('/save-analysis-result', (req, res) => {
+  try {
+    const { type, data } = req.body  // type: temporal/difference
+    
+    if (!type || !data) {
+      return res.status(400).json({
+        code: 400,
+        message: '缺少必要参数: type 和 data'
+      })
+    }
+    
+    // 生成文件名
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)
+    const filename = `${type}_${timestamp}.json`
+    
+    // 确定保存目录
+    let targetDir
+    if (type === 'temporal') {
+      targetDir = TEMPORAL_DIR
+    } else if (type === 'difference') {
+      targetDir = DIFFERENCE_DIR
+    } else {
+      return res.status(400).json({
+        code: 400,
+        message: '不支持的分析类型，只支持 temporal 或 difference'
+      })
+    }
+    
+    const filePath = path.join(targetDir, filename)
+    
+    // 写入文件
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+    
+    const stats = fs.statSync(filePath)
+    
+    console.log(`✅ 保存分析结果成功: ${filename} (${(stats.size / (1024 * 1024)).toFixed(2)} MB)`)
+    
+    res.json({
+      code: 200,
+      message: '分析结果保存成功',
+      data: {
+        filename,
+        path: `/data/data_analysis_results/${type}/${filename}`,
+        size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`
+      }
+    })
+  } catch (error) {
+    console.error('保存分析结果失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '保存失败',
+      error: error.message
+    })
+  }
+})
+
+// 保存报告文件（Excel/CSV格式）
+router.post('/save-report', (req, res) => {
+  try {
+    const { filename, content, type } = req.body  // type: 'excel' 或 'csv'
+    
+    if (!filename || !content) {
+      return res.status(400).json({
+        code: 400,
+        message: '缺少必要参数: filename 和 content'
+      })
+    }
+    
+    const filePath = path.join(REPORTS_DIR, filename)
+    
+    // 根据类型处理内容
+    if (type === 'csv') {
+      // CSV文件直接写入文本
+      fs.writeFileSync(filePath, content, 'utf-8')
+    } else {
+      // Excel文件（HTML格式）
+      fs.writeFileSync(filePath, content, 'utf-8')
+    }
+    
+    const stats = fs.statSync(filePath)
+    
+    console.log(`✅ 保存报告文件成功: ${filename} (${(stats.size / 1024).toFixed(2)} KB)`)
+    
+    res.json({
+      code: 200,
+      message: '报告文件保存成功',
+      data: {
+        filename,
+        path: `/data/data_analysis_results/reports/${filename}`,
+        size: `${(stats.size / 1024).toFixed(2)} KB`
+      }
+    })
+  } catch (error) {
+    console.error('保存报告文件失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '保存失败',
+      error: error.message
+    })
+  }
+})
+
+// 上传PDF报告文件
+const pdfUpload = multer({
+  storage: multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, REPORTS_DIR)
+    },
+    filename: function (req, file, cb) {
+      cb(null, file.originalname)
+    }
+  }),
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB
+  },
+  fileFilter: function (req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase()
+    if (ext === '.pdf') {
+      cb(null, true)
+    } else {
+      cb(new Error('只支持PDF文件'))
+    }
+  }
+})
+
+router.post('/upload-report', pdfUpload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        code: 400,
+        message: '没有上传文件'
+      })
+    }
+    
+    const uploadedFile = req.file
+    const stats = fs.statSync(uploadedFile.path)
+    
+    console.log(`✅ PDF报告上传成功: ${uploadedFile.originalname} (${(stats.size / (1024 * 1024)).toFixed(2)} MB)`)
+    
+    res.json({
+      code: 200,
+      message: 'PDF报告上传成功',
+      data: {
+        filename: uploadedFile.originalname,
+        format: 'PDF',
+        size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
+        path: `/data/data_analysis_results/reports/${uploadedFile.originalname}`
+      }
+    })
+  } catch (error) {
+    console.error('PDF报告上传失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: 'PDF报告上传失败',
+      error: error.message
+    })
+  }
+})
+
+// 获取保存的分析结果列表
+router.get('/saved-analysis-results', (req, res) => {
+  try {
+    const results = []
+    
+    // 扫描temporal目录
+    if (fs.existsSync(TEMPORAL_DIR)) {
+      const temporalFiles = fs.readdirSync(TEMPORAL_DIR).filter(f => f.endsWith('.json'))
+      temporalFiles.forEach((filename) => {
+        const filePath = path.join(TEMPORAL_DIR, filename)
+        const stats = fs.statSync(filePath)
+        
+        // 读取文件内容获取元数据（仅小文件，大文件跳过metadata读取以提升性能）
+        let metadata = {}
+        try {
+          // 如果文件小于10MB，读取metadata；否则跳过
+          if (stats.size < 10 * 1024 * 1024) {
+            const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+            metadata = content.metadata || {}
+          } else {
+            console.log(`⚠️ 文件较大(${(stats.size / (1024 * 1024)).toFixed(2)} MB)，跳过metadata读取: ${filename}`)
+            metadata = { title: '大文件分析结果', note: '文件较大，请加载后查看详情' }
+          }
+          
+          results.push({
+            id: `temporal_${filename}`,
+            filename,
+            type: 'temporal',
+            format: 'JSON',
+            canLoadToMap: true,  // 可以加载到地图
+            metadata,
+            size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
+            createTime: stats.mtime.toLocaleString('zh-CN'),
+            timestamp: stats.mtimeMs,
+            path: `/data/data_analysis_results/temporal/${filename}`
+          })
+        } catch (err) {
+          console.error(`读取文件失败: ${filename}`, err)
+          // 即使读取失败也添加基本信息
+          results.push({
+            id: `temporal_${filename}`,
+            filename,
+            type: 'temporal',
+            format: 'JSON',
+            canLoadToMap: true,
+            metadata: { title: '解析失败', error: err.message },
+            size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
+            createTime: stats.mtime.toLocaleString('zh-CN'),
+            timestamp: stats.mtimeMs,
+            path: `/data/data_analysis_results/temporal/${filename}`
+          })
+        }
+      })
+    }
+    
+    // 扫描difference目录
+    if (fs.existsSync(DIFFERENCE_DIR)) {
+      const differenceFiles = fs.readdirSync(DIFFERENCE_DIR).filter(f => f.endsWith('.json'))
+      differenceFiles.forEach((filename) => {
+        const filePath = path.join(DIFFERENCE_DIR, filename)
+        const stats = fs.statSync(filePath)
+        
+        // 读取文件内容获取元数据（仅小文件，大文件跳过metadata读取以提升性能）
+        let metadata = {}
+        try {
+          // 如果文件小于10MB，读取metadata；否则跳过
+          if (stats.size < 10 * 1024 * 1024) {
+            const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+            metadata = content.metadata || {}
+          } else {
+            console.log(`⚠️ 文件较大(${(stats.size / (1024 * 1024)).toFixed(2)} MB)，跳过metadata读取: ${filename}`)
+            metadata = { title: '大文件分析结果', note: '文件较大，请加载后查看详情' }
+          }
+          
+          results.push({
+            id: `difference_${filename}`,
+            filename,
+            type: 'difference',
+            format: 'JSON',
+            canLoadToMap: true,
+            metadata,
+            size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
+            createTime: stats.mtime.toLocaleString('zh-CN'),
+            timestamp: stats.mtimeMs,
+            path: `/data/data_analysis_results/difference/${filename}`
+          })
+        } catch (err) {
+          console.error(`读取文件失败: ${filename}`, err)
+          // 即使读取失败也添加基本信息
+          results.push({
+            id: `difference_${filename}`,
+            filename,
+            type: 'difference',
+            format: 'JSON',
+            canLoadToMap: true,
+            metadata: { title: '解析失败', error: err.message },
+            size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
+            createTime: stats.mtime.toLocaleString('zh-CN'),
+            timestamp: stats.mtimeMs,
+            path: `/data/data_analysis_results/difference/${filename}`
+          })
+        }
+      })
+    }
+    
+    // 扫描reports目录
+    if (fs.existsSync(REPORTS_DIR)) {
+      const reportFiles = fs.readdirSync(REPORTS_DIR)
+      reportFiles.forEach((filename) => {
+        const filePath = path.join(REPORTS_DIR, filename)
+        const stats = fs.statSync(filePath)
+        const ext = path.extname(filename).toLowerCase()
+        
+        let fileType = 'Excel'
+        if (ext === '.csv') {
+          fileType = 'CSV'
+        } else if (ext === '.xls' || ext === '.xlsx') {
+          fileType = 'Excel'
+        } else if (ext === '.pdf') {
+          fileType = 'PDF'
+        }
+        
+        // 从文件名推断分析类型
+        let analysisType = 'unknown'
+        if (filename.includes('时序') || filename.includes('temporal')) {
+          analysisType = 'temporal'
+        } else if (filename.includes('差异') || filename.includes('difference')) {
+          analysisType = 'difference'
+        }
+        
+        results.push({
+          id: `report_${filename}`,
+          filename,
+          type: 'report',
+          format: fileType,
+          analysisType,
+          canLoadToMap: false,  // 报告文件不能加载到地图
+          size: `${(stats.size / 1024).toFixed(2)} KB`,
+          createTime: stats.mtime.toLocaleString('zh-CN'),
+          timestamp: stats.mtimeMs,
+          path: `/data/data_analysis_results/reports/${filename}`
+        })
+      })
+    }
+    
+    // 按时间倒序排序
+    results.sort((a, b) => b.timestamp - a.timestamp)
+    
+    res.json({
+      code: 200,
+      message: '获取成功',
+      data: results
+    })
+  } catch (error) {
+    console.error('获取分析结果列表失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '获取失败',
+      error: error.message
+    })
+  }
+})
+
+// 加载单个分析结果
+router.get('/load-analysis-result/:type/:filename', (req, res) => {
+  try {
+    const { type, filename } = req.params
+    
+    let filePath
+    if (type === 'temporal') {
+      filePath = path.join(TEMPORAL_DIR, filename)
+    } else if (type === 'difference') {
+      filePath = path.join(DIFFERENCE_DIR, filename)
+    } else {
+      return res.status(400).json({
+        code: 400,
+        message: '不支持的分析类型'
+      })
+    }
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        code: 404,
+        message: '文件不存在'
+      })
+    }
+    
+    const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    
+    console.log(`✅ 加载分析结果成功: ${filename}`)
+    
+    res.json({
+      code: 200,
+      message: '加载成功',
+      data: content
+    })
+  } catch (error) {
+    console.error('加载分析结果失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '加载失败',
+      error: error.message
+    })
+  }
+})
+
+// 下载报告文件
+router.get('/download-report/:filename', (req, res) => {
+  try {
+    const { filename } = req.params
+    const filePath = path.join(REPORTS_DIR, filename)
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send('文件不存在')
+    }
+    
+    console.log(`📥 下载报告文件: ${filename}`)
+    
+    res.download(filePath, filename)
+  } catch (error) {
+    console.error('下载报告失败:', error)
+    if (!res.headersSent) {
+      res.status(500).send('下载失败: ' + error.message)
+    }
+  }
+})
+
+// 删除分析结果文件
+router.delete('/delete-analysis-result/:type/:filename', (req, res) => {
+  try {
+    const { type, filename } = req.params
+    
+    let filePath
+    if (type === 'temporal') {
+      filePath = path.join(TEMPORAL_DIR, filename)
+    } else if (type === 'difference') {
+      filePath = path.join(DIFFERENCE_DIR, filename)
+    } else if (type === 'report') {
+      filePath = path.join(REPORTS_DIR, filename)
+    } else {
+      return res.status(400).json({
+        code: 400,
+        message: '不支持的文件类型'
+      })
+    }
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        code: 404,
+        message: '文件不存在'
+      })
+    }
+    
+    // 删除文件
+    fs.unlinkSync(filePath)
+    
+    console.log(`🗑️ 已删除分析结果: ${type}/${filename}`)
+    
+    res.json({
+      code: 200,
+      message: '删除成功',
+      data: { type, filename }
+    })
+  } catch (error) {
+    console.error('删除分析结果失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '删除失败: ' + error.message
     })
   }
 })

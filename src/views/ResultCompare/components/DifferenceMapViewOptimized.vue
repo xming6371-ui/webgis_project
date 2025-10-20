@@ -194,8 +194,22 @@ const changeRate = computed(() => {
 const initMaps = async () => {
   await nextTick()
   
-  console.log('开始初始化地图...')
-  console.log('地块总数:', props.data.features.length)
+  console.log('🗺️ 开始初始化差异检测地图...')
+  console.log('📊 数据验证:', {
+    hasData: !!props.data,
+    hasFeatures: !!props.data?.features,
+    featuresCount: props.data?.features?.length,
+    hasStats: !!props.data?.stats,
+    hasBaseFile: !!props.data?.baseFile,
+    hasCompareFile: !!props.data?.compareFile
+  })
+  
+  // 数据验证
+  if (!props.data || !props.data.features || props.data.features.length === 0) {
+    ElMessage.error('无效的差异检测数据：缺少地块数据')
+    console.error('❌ 数据无效:', props.data)
+    return
+  }
   
   if (typeof L === 'undefined') {
     ElMessage.error('地图库加载失败，请刷新页面')
@@ -233,7 +247,10 @@ const initMaps = async () => {
     
     console.log(`✅ 将渲染所有 ${featuresToRender.length} 个地块`)
     
-    if (isLargeDataset.value) {
+    // 大数据集警告和性能提示
+    if (featuresToRender.length > 5000) {
+      ElMessage.warning(`数据量很大（${featuresToRender.length}个地块），地图加载可能需要较长时间，请耐心等待...`)
+    } else if (isLargeDataset.value) {
       console.warn(`⚠️ 数据量较大（${featuresToRender.length}个地块），渲染可能需要几秒钟`)
     }
     

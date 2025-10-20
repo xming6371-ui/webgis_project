@@ -1,53 +1,19 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 
 export const useAnalysisStore = defineStore('analysis', () => {
-  // 从localStorage恢复数据
-  const loadFromStorage = () => {
-    try {
-      const saved = localStorage.getItem('analysisResults')
-      if (saved) {
-        const data = JSON.parse(saved)
-        console.log('📦 从缓存恢复分析结果')
-        return data
-      }
-    } catch (error) {
-      console.error('恢复分析结果失败:', error)
-    }
-    return { currentAnalysisType: null, differenceResult: null, temporalResult: null }
-  }
-  
-  // 保存到localStorage
-  const saveToStorage = () => {
-    try {
-      const data = {
-        currentAnalysisType: currentAnalysisType.value,
-        differenceResult: differenceResult.value,
-        temporalResult: temporalResult.value
-      }
-      localStorage.setItem('analysisResults', JSON.stringify(data))
-      console.log('💾 分析结果已保存到缓存')
-    } catch (error) {
-      console.error('保存分析结果失败:', error)
-    }
-  }
-  
-  // 初始化数据
-  const initialData = loadFromStorage()
+  // 🚫 已禁用localStorage持久化
+  // 原因：分析结果数据量太大（可能>50MB），会超出localStorage配额限制（5-10MB）
+  // 改用服务器端JSON文件持久化，store仅保存内存中的临时数据
   
   // 当前分析类型：'difference' | 'temporal' | null
-  const currentAnalysisType = ref(initialData.currentAnalysisType)
+  const currentAnalysisType = ref(null)
   
-  // 差异检测结果
-  const differenceResult = ref(initialData.differenceResult)
+  // 差异检测结果（仅内存，不持久化）
+  const differenceResult = ref(null)
   
-  // 时序分析结果
-  const temporalResult = ref(initialData.temporalResult)
-  
-  // 监听数据变化，自动保存
-  watch([currentAnalysisType, differenceResult, temporalResult], () => {
-    saveToStorage()
-  }, { deep: true })
+  // 时序分析结果（仅内存，不持久化）
+  const temporalResult = ref(null)
   
   // 设置差异检测结果
   const setDifferenceResult = (data) => {
@@ -68,8 +34,7 @@ export const useAnalysisStore = defineStore('analysis', () => {
     differenceResult.value = null
     temporalResult.value = null
     currentAnalysisType.value = null
-    localStorage.removeItem('analysisResults')
-    console.log('🗑️ 已清空所有分析结果')
+    console.log('🗑️ 已清空所有分析结果（仅内存，服务器文件保留）')
   }
   
   // 获取当前结果

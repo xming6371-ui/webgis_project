@@ -67,3 +67,57 @@ export const exportTemporalCSV = (filename, data) => {
   })
 }
 
+// ========== 新增：分析结果持久化API ==========
+
+// 保存完整的分析结果（JSON格式）
+export const saveAnalysisResultToServer = (type, data) => {
+  return request.post('/analysis/save-analysis-result', {
+    type,
+    data
+  })
+}
+
+// 保存报告文件到服务器
+export const saveReportToServer = (filename, content, type) => {
+  return request.post('/analysis/save-report', {
+    filename,
+    content,
+    type
+  })
+}
+
+// 获取保存的分析结果列表
+export const getSavedAnalysisResults = () => {
+  return request.get('/analysis/saved-analysis-results')
+}
+
+// 加载单个分析结果
+export const loadAnalysisResult = (type, filename) => {
+  return request.get(`/analysis/load-analysis-result/${type}/${filename}`)
+}
+
+// 下载报告文件
+export const downloadReport = (filename) => {
+  return request.get(`/analysis/download-report/${filename}`, {
+    responseType: 'blob'
+  })
+}
+
+// 删除分析结果文件
+export const deleteAnalysisResult = (type, filename) => {
+  return request.delete(`/analysis/delete-analysis-result/${type}/${filename}`)
+}
+
+// 上传PDF报告到服务器
+export const uploadReportToServer = (file, type) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('type', type)
+  
+  return request.post('/analysis/upload-report', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
+}
+
