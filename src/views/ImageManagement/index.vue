@@ -411,46 +411,102 @@
           </template>
           
           <el-empty v-if="analysisResults.length === 0" description="暂无分析结果文件">
-            <el-text type="info">从任务管理中导出分析结果后，会自动出现在这里</el-text>
+            <el-text type="info">从任务管理中执行分析后，结果会自动保存在这里</el-text>
           </el-empty>
 
           <div v-else>
+            <!-- 筛选工具栏 -->
+            <div style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
+              <span style="color: #606266; font-size: 14px;">格式筛选：</span>
+              <el-select 
+                v-model="analysisFormatFilter" 
+                placeholder="全部格式" 
+                clearable 
+                size="small"
+                style="width: 150px;"
+              >
+                <el-option label="全部格式" value="" />
+                <el-option label="JSON (可视化)" value="JSON" />
+                <el-option label="Excel (报告)" value="Excel" />
+              </el-select>
+              
+              <el-divider direction="vertical" />
+              
+              <span style="color: #909399; font-size: 13px;">
+                共 {{ filteredAnalysisResults.length }} 条结果
+                <span v-if="analysisFormatFilter">（已筛选）</span>
+              </span>
+            </div>
             <el-table 
               :data="paginatedAnalysisResults" 
               style="width: 100%"
+              v-loading="analysisResultsLoading"
+              element-loading-text="正在加载分析结果..."
               @selection-change="handleResultSelectionChange"
             >
-              <el-table-column type="selection" width="55" />
-              <el-table-column prop="name" label="文件名称" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="type" label="格式" width="90" align="center">
+              <el-table-column type="selection" width="50" />
+              <el-table-column prop="filename" label="文件名称" min-width="220" show-overflow-tooltip />
+              <el-table-column prop="format" label="格式" width="90" align="center">
                 <template #default="scope">
                   <el-tag 
-                    :type="getFileTypeTagType(scope.row.type)" 
+                    :type="scope.row.canLoadToMap ? 'success' : 'info'" 
                     size="small"
                   >
-                    {{ scope.row.type }}
+                    {{ scope.row.format }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="taskName" label="来源任务" min-width="150" show-overflow-tooltip />
-              <el-table-column prop="analysisType" label="分析类型" width="110" align="center">
+              <el-table-column prop="type" label="分析类型" width="110" align="center">
                 <template #default="scope">
-                  <el-tag size="small">{{ getAnalysisTypeLabel(scope.row.analysisType) }}</el-tag>
+                  <el-tag size="small" :type="getAnalysisTypeTagType(scope.row.type)">
+                    {{ getAnalysisTypeText(scope.row.type) }}
+                  </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="recordCount" label="记录数" width="90" align="center" />
-              <el-table-column prop="size" label="文件大小" width="100" align="center" />
-              <el-table-column prop="createTime" label="创建时间" width="160" />
-              <el-table-column label="操作" width="200" fixed="right">
+              <el-table-column label="用途" width="100" align="center">
                 <template #default="scope">
-                  <el-button size="small" type="primary" @click="handleDownloadResult(scope.row)">
-                    <Download :size="14" style="margin-right: 4px" />
-                    下载
-                  </el-button>
-                  <el-button size="small" type="danger" @click="handleDeleteResult(scope.row, 'analysis')">
-                    <Trash2 :size="14" style="margin-right: 4px" />
-                    删除
-                  </el-button>
+                  <el-tag 
+                    size="small" 
+                    :type="scope.row.canLoadToMap ? 'success' : 'warning'"
+                  >
+                    {{ scope.row.canLoadToMap ? '可视化' : '仅查看' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="size" label="文件大小" width="120" align="center" />
+              <el-table-column prop="createTime" label="创建时间" width="180" align="center" />
+              <el-table-column label="操作" width="270" fixed="right" align="center">
+                <template #default="scope">
+                  <div style="display: flex; gap: 6px; justify-content: center; flex-wrap: nowrap;">
+                    <el-button 
+                      v-if="scope.row.canLoadToMap" 
+                      size="small" 
+                      type="success" 
+                      @click="handleVisualizeResult(scope.row)"
+                      style="padding: 5px 10px;"
+                    >
+                      <Eye :size="14" style="margin-right: 4px" />
+                      可视化
+                    </el-button>
+                    <el-button 
+                      size="small" 
+                      type="primary" 
+                      @click="handleDownloadAnalysisResult(scope.row)"
+                      style="padding: 5px 10px;"
+                    >
+                      <Download :size="14" style="margin-right: 4px" />
+                      下载
+                    </el-button>
+                    <el-button 
+                      size="small" 
+                      type="danger" 
+                      @click="handleDeleteAnalysisResult(scope.row)"
+                      style="padding: 5px 10px;"
+                    >
+                      <Trash2 :size="14" style="margin-right: 4px" />
+                      删除
+                    </el-button>
+                  </div>
                 </template>
               </el-table-column>
             </el-table>
@@ -932,11 +988,25 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings, FileArchive, RefreshCw } from 'lucide-vue-next'
+import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings, FileArchive, RefreshCw, Eye } from 'lucide-vue-next'
 import { Loading, Picture, DataAnalysis, SuccessFilled, InfoFilled } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
+import { useAnalysisStore } from '@/stores/analysis'
 import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage, getOptimizeProgress } from '@/api/image'
-import { getRecognitionResults, convertShpToGeojson, downloadAnalysisFile, deleteAnalysisFile } from '@/api/analysis'
+import { 
+  getRecognitionResults, 
+  convertShpToGeojson, 
+  downloadAnalysisFile, 
+  deleteAnalysisFile,
+  getSavedAnalysisResults,
+  loadAnalysisResult,
+  downloadReport,
+  deleteAnalysisResult
+} from '@/api/analysis'
 import * as GeoTIFF from 'geotiff'
+
+const router = useRouter()
+const analysisStore = useAnalysisStore()
 
 const searchKeyword = ref('')
 const viewMode = ref('table')
@@ -983,6 +1053,8 @@ const recognitionPageSize = ref(10)
 
 // 分析结果队列
 const analysisResults = ref([])
+const analysisFormatFilter = ref('') // 分析结果格式筛选
+const analysisResultsLoading = ref(false) // 分析结果加载状态
 
 // 搜索关键词
 const resultSearchKeyword = ref('')
@@ -1006,16 +1078,23 @@ const filteredRecognitionResults = computed(() => {
 
 // 过滤后的分析结果（computed，实时响应搜索）
 const filteredAnalysisResults = computed(() => {
-  if (!resultSearchKeyword.value) {
-    return analysisResults.value
+  let results = analysisResults.value
+  
+  // 格式筛选
+  if (analysisFormatFilter.value) {
+    results = results.filter(item => item.format === analysisFormatFilter.value)
   }
   
-  const keyword = resultSearchKeyword.value.toLowerCase().trim()
-  return analysisResults.value.filter(item => 
-    item.name.toLowerCase().includes(keyword) ||
-    (item.taskName && item.taskName.toLowerCase().includes(keyword)) ||
-    (item.type && item.type.toLowerCase().includes(keyword))
-  )
+  // 关键词搜索
+  if (resultSearchKeyword.value) {
+    const keyword = resultSearchKeyword.value.toLowerCase().trim()
+    results = results.filter(item => 
+      (item.filename && item.filename.toLowerCase().includes(keyword)) ||
+      (item.type && item.type.toLowerCase().includes(keyword))
+    )
+  }
+  
+  return results
 })
 
 // 结果文件上传相关
@@ -1045,6 +1124,8 @@ const paginatedAnalysisResults = computed(() => {
 
 // 加载所有结果队列
 const loadAllResults = async () => {
+  analysisResultsLoading.value = true
+  
   try {
     // 从后端API加载识别结果（扫描data_shp和data_geojson目录）
     try {
@@ -1058,20 +1139,23 @@ const loadAllResults = async () => {
       recognitionResults.value = []
     }
     
-    // 从localStorage加载分析结果（差异检测、时序分析等）
-    const QUEUE_KEY = 'analysis_result_queue'
-    const stored = localStorage.getItem(QUEUE_KEY)
-    if (stored) {
-      const allResults = JSON.parse(stored)
-      analysisResults.value = allResults.filter(r => r.analysisType !== 'recognition')
-      console.log('✅ 从localStorage加载分析结果:', analysisResults.value.length, '个')
-    } else {
+    // 从后端API加载分析结果（扫描data_analysis_results目录）
+    try {
+      const response = await getSavedAnalysisResults()
+      if (response.code === 200) {
+        analysisResults.value = response.data || []
+        console.log('✅ 从后端加载分析结果:', analysisResults.value.length, '个')
+      }
+    } catch (error) {
+      console.error('从后端加载分析结果失败:', error)
       analysisResults.value = []
     }
   } catch (error) {
     console.error('加载结果队列失败:', error)
     recognitionResults.value = []
     analysisResults.value = []
+  } finally {
+    analysisResultsLoading.value = false
   }
 }
 
@@ -2302,9 +2386,138 @@ watch(resultSearchKeyword, () => {
 })
 
 // 组件挂载时加载数据
+// ==================== 分析结果处理函数 ====================
+
+// 获取分析类型文本
+const getAnalysisTypeText = (type) => {
+  const map = {
+    'temporal': '时序分析',
+    'difference': '差异检测'
+  }
+  return map[type] || type
+}
+
+// 获取分析类型标签颜色
+const getAnalysisTypeTagType = (type) => {
+  const map = {
+    'temporal': 'warning',
+    'difference': 'success'
+  }
+  return map[type] || 'info'
+}
+
+// 可视化分析结果（加载到地图）
+const handleVisualizeResult = async (row) => {
+  if (!row.canLoadToMap) {
+    ElMessage.warning('此文件不支持可视化')
+    return
+  }
+
+  const loadingMsg = ElMessage({
+    message: '正在加载分析结果...',
+    type: 'info',
+    duration: 0
+  })
+
+  try {
+    const response = await loadAnalysisResult(row.type, row.filename)
+    
+    if (response.code === 200) {
+      // response.data 包含整个保存的JSON对象（包括version, id, type, metadata, data）
+      // 我们需要提取其中的data字段传递给store
+      const savedData = response.data
+      const analysisData = savedData.data || savedData // 提取实际分析数据
+      
+      if (row.type === 'temporal') {
+        analysisStore.setTemporalResult(analysisData)
+      } else if (row.type === 'difference') {
+        analysisStore.setDifferenceResult(analysisData)
+      }
+      
+      loadingMsg.close()
+      ElMessage.success('分析结果加载成功')
+      
+      // 跳转到结果查看页面
+      await router.push({ 
+        name: 'ResultCompare', 
+        query: { mode: row.type === 'temporal' ? 'temporal' : 'difference' } 
+      })
+    } else {
+      loadingMsg.close()
+      ElMessage.error('加载失败: ' + (response.message || '未知错误'))
+    }
+  } catch (error) {
+    loadingMsg.close()
+    console.error('加载分析结果失败:', error)
+    ElMessage.error('加载失败: ' + (error.message || '网络错误'))
+  }
+}
+
+// 下载分析结果
+const handleDownloadAnalysisResult = async (row) => {
+  try {
+    if (row.canLoadToMap) {
+      // JSON格式，从服务器加载并下载
+      const response = await loadAnalysisResult(row.type, row.filename)
+      if (response.code === 200) {
+        const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = row.filename
+        link.click()
+        URL.revokeObjectURL(url)
+        ElMessage.success('下载成功')
+      }
+    } else {
+      // Excel格式，直接下载
+      const response = await downloadReport(row.filename)
+      const blob = new Blob([response], { type: 'application/vnd.ms-excel' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = row.filename
+      link.click()
+      URL.revokeObjectURL(url)
+      ElMessage.success('下载成功')
+    }
+  } catch (error) {
+    console.error('下载失败:', error)
+    ElMessage.error('下载失败: ' + (error.message || '网络错误'))
+  }
+}
+
+// 删除分析结果
+const handleDeleteAnalysisResult = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除 ${row.filename} 吗？此操作将永久删除该文件！`,
+      '删除确认',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    const response = await deleteAnalysisResult(row.type, row.filename)
+    if (response.code === 200) {
+      ElMessage.success('删除成功')
+      await loadAllResults()
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('删除失败:', error)
+      ElMessage.error('删除失败: ' + (error.message || '网络错误'))
+    }
+  }
+}
+
+// ==================== 组件生命周期 ====================
+
 onMounted(() => {
   loadImageList() // 加载影像列表
-  loadAllResults() // 加载本地存储的分析结果
+  loadAllResults() // 加载所有分析结果
 })
 
 // 组件卸载时清理所有定时器

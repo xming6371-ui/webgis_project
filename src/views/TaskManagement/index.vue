@@ -524,9 +524,10 @@ import {
 import {
   Tickets, Loading, CircleCheck, CircleClose, List, DataAnalysis, Location, Right, ArrowLeft, ArrowRight
 } from '@element-plus/icons-vue'
-import { getRecognitionResults, readGeojsonContent } from '@/api/analysis'
+import { getRecognitionResults, readGeojsonContent, saveAnalysisResultToServer, saveReportToServer } from '@/api/analysis'
 import { useAnalysisStore } from '@/stores/analysis'
 import { exportDifferenceToExcel, exportTemporalToExcel, exportStatisticsToExcel, saveFileMetadata } from '@/utils/export'
+import { buildTemporalTrajectories, exportToCSV as exportTemporalToCSV } from '@/utils/temporalAnalysis'
 
 const router = useRouter()
 const analysisStore = useAnalysisStore()
@@ -1024,34 +1025,31 @@ const handleRunDifferenceDetection = async () => {
     analysisStore.setDifferenceResult(analysisResult)
 
     analysisProgress.value = 95
-    analysisStatusText.value = '正在导出Excel报告...'
+    analysisStatusText.value = '正在保存分析结果...'
     
-    // 导出Excel文件
-    const excelFileName = exportDifferenceToExcel(
-      analysisResult, 
-      baseFile.taskName, 
-      compareFile.taskName
-    )
-    
-    // 保存文件元数据到localStorage
-    const fileMetadata = {
-      id: `diff_${new Date().getTime()}`,
-      name: excelFileName,
-      type: 'EXCEL',
-      analysisType: 'difference',
-      taskName: `${baseFile.taskName} vs ${compareFile.taskName}`,
-      recordCount: diffResult.stats.changed,
-      size: `${((diffResult.stats.changed * 0.5) + 5).toFixed(2)} KB`,
-      createTime: new Date().toLocaleString('zh-CN'),
-      timestamp: new Date().getTime(),
-      description: `种植差异检测结果 - 共${diffResult.stats.changed}个变化地块`,
-      baseFileId: baseFile.id,
-      compareFileId: compareFile.id,
-      downloadUrl: `/data/exports/${excelFileName}`,
-      stats: diffResult.stats
+    // 保存完整的JSON格式分析结果到服务器
+    try {
+      const analysisData = {
+        version: '1.0',
+        id: `difference_${Date.now()}`,
+        type: 'difference',
+        metadata: {
+          title: `${baseFile.taskName} vs ${compareFile.taskName}`,
+          createTime: new Date().toLocaleString('zh-CN'),
+          baseFile: baseFile.taskName,
+          compareFile: compareFile.taskName,
+          totalPlots: diffResult.stats.total,
+          changedPlots: diffResult.stats.changed
+        },
+        data: analysisResult
+      }
+      
+      const saveResponse = await saveAnalysisResultToServer('difference', analysisData)
+      console.log('✅ 差异分析结果已保存为JSON:', saveResponse.data)
+    } catch (error) {
+      console.error('保存JSON失败:', error)
+      ElMessage.warning('分析结果保存失败，但可以继续查看')
     }
-    
-    saveFileMetadata(fileMetadata)
     
     analysisProgress.value = 100
     analysisStatusText.value = '分析完成！即将跳转...'
@@ -1062,7 +1060,7 @@ const handleRunDifferenceDetection = async () => {
     // 显示成功提示
     ElNotification({
       title: '✅ 差异检测完成',
-      message: `已检测到${diffResult.stats.changed}个变化地块，Excel报告已导出并保存，正在跳转到结果查看界面...`,
+      message: `已检测到${diffResult.stats.changed}个变化地块，分析结果已保存，正在跳转到结果查看界面...`,
       type: 'success',
       duration: 5000
     })
@@ -1318,10 +1316,17 @@ const handleRunTemporalAnalysis = async () => {
       timePoints: geojsonDataList.map(d => ({
         time: d.time,
         taskName: d.file.taskName,
+        createTime: d.file.createTime,
         geojson: d.geojson
       })),
       features: temporalResult.geojson.features,
       stats: temporalResult.stats,
+      filesCount: selectedFiles.length,
+      // 将metadata中的数据提取到根级别，方便访问
+      transitionMatrix: temporalResult.geojson.metadata.transitionMatrix || [],
+      cropDistribution: temporalResult.geojson.metadata.cropDistribution || [],
+      trajectories: temporalResult.analysisResult?.trajectories || [],
+      qualityReport: temporalResult.analysisResult?.qualityReport || { warnings: [], timePointCounts: [], matchRate: 100 },
       metadata: temporalResult.geojson.metadata,
       analysisTime: new Date().toLocaleString('zh-CN')
     }
@@ -1336,34 +1341,31 @@ const handleRunTemporalAnalysis = async () => {
     analysisStore.setTemporalResult(analysisResult)
 
     analysisProgress.value = 95
-    analysisStatusText.value = '正在导出Excel报告...'
+    analysisStatusText.value = '正在保存分析结果...'
     
-    // 导出Excel文件
-    const excelFileName = exportTemporalToExcel(analysisResult)
-    
-    // 保存文件元数据到localStorage
-    const fileMetadata = {
-      id: `temporal_${new Date().getTime()}`,
-      name: excelFileName,
-      type: 'EXCEL',
-      analysisType: 'temporal',
-      taskName: `${selectedFiles.length}期时序对比`,
-      recordCount: temporalResult.stats.changed,
-      size: `${((temporalResult.stats.changed * 0.8) + 10).toFixed(2)} KB`,
-      createTime: new Date().toLocaleString('zh-CN'),
-      timestamp: new Date().getTime(),
-      description: `时序变化分析结果 - ${selectedFiles.length}期对比，共${temporalResult.stats.changed}个变化地块`,
-      fileCount: selectedFiles.length,
-      downloadUrl: `/data/exports/${excelFileName}`,
-      stats: temporalResult.stats,
-      timePoints: selectedFiles.map(f => ({
-        id: f.id,
-        name: f.taskName,
-        time: f.createTime
-      }))
+    // 保存完整的JSON格式分析结果到服务器
+    try {
+      const analysisData = {
+        version: '1.0',
+        id: `temporal_${Date.now()}`,
+        type: 'temporal',
+        metadata: {
+          title: `${selectedFiles.length}期时序对比`,
+          createTime: new Date().toLocaleString('zh-CN'),
+          filesCount: selectedFiles.length,
+          timeRange: `${selectedFiles[0].taskName} ~ ${selectedFiles[selectedFiles.length-1].taskName}`,
+          totalPlots: temporalResult.stats.total,
+          changedPlots: temporalResult.stats.changed
+        },
+        data: analysisResult
+      }
+      
+      const saveResponse = await saveAnalysisResultToServer('temporal', analysisData)
+      console.log('✅ 时序分析结果已保存为JSON:', saveResponse.data)
+    } catch (error) {
+      console.error('保存JSON失败:', error)
+      ElMessage.warning('分析结果保存失败，但可以继续查看')
     }
-    
-    saveFileMetadata(fileMetadata)
     
     analysisProgress.value = 100
     analysisStatusText.value = '分析完成！即将跳转...'
@@ -1374,9 +1376,10 @@ const handleRunTemporalAnalysis = async () => {
     // 显示成功提示
     ElNotification({
       title: '✅ 时序分析完成',
-      message: `已完成${selectedFiles.length}期时序变化分析，Excel报告已导出并保存，正在跳转到结果查看界面...`,
+      message: `已完成${selectedFiles.length}期时序变化分析（共${temporalResult.stats.total}个地块，${temporalResult.stats.changed}个有变化）。\n\n分析结果已保存，正在跳转到"结果查看与比对"页面...`,
       type: 'success',
-      duration: 5000
+      duration: 6000,
+      dangerouslyUseHTMLString: false
     })
     
     // 等待800ms后跳转
@@ -1412,107 +1415,46 @@ const performTemporalAnalysis = (geojsonDataList) => {
     throw new Error('时序分析至少需要2个时间点的数据')
   }
   
-  // 以第一个时间点为基准，构建地块索引
-  const baseGeojson = geojsonDataList[0].geojson
-  const baseFeatures = baseGeojson.features || []
+  console.log('🔬 使用增强版时序分析算法')
   
-  const resultFeatures = []
-  let changedCount = 0
-  let unchangedCount = 0
+  // 准备数据格式
+  const timePointsData = geojsonDataList.map(item => ({
+    time: item.time,
+    taskName: item.file.taskName,
+    createTime: item.file.createTime,
+    geojsonData: item.geojson
+  }))
   
-  // 对每个地块追踪时序变化
-  baseFeatures.forEach((baseFeature, index) => {
-    const baseProps = baseFeature.properties || {}
-    const plotId = String(baseProps.FID || baseProps.id || baseProps.plotId || index)
-    const plotName = baseProps.name || baseProps.plotName || `地块${plotId}`
-    
-    // 构建时间轴数据
-    const timeline = []
-    let hasChange = false
-    let previousCrop = null
-    
-    geojsonDataList.forEach((dataItem) => {
-      const features = dataItem.geojson.features || []
-      // 在当前时间点查找对应地块
-      const feature = features.find(f => {
-        const fid = String(f.properties?.FID || f.properties?.id || f.properties?.plotId || '')
-        return fid === plotId
-      })
-      
-      if (feature) {
-        const props = feature.properties || {}
-        const crop = props.label || props.crop || props.class || props.作物类型 || '未知'
-        
-        timeline.push({
-          time: dataItem.time,
-          crop: crop,
-          file: dataItem.file.name
-        })
-        
-        // 检查是否有变化
-        if (previousCrop !== null && previousCrop !== crop) {
-          hasChange = true
-        }
-        previousCrop = crop
-      } else {
-        // 该时间点找不到对应地块
-        timeline.push({
-          time: dataItem.time,
-          crop: '未检测到',
-          file: dataItem.file.name
-        })
-        hasChange = true
-      }
-    })
-    
-    if (hasChange) {
-      changedCount++
-    } else {
-      unchangedCount++
-    }
-    
-    // 创建结果要素
-    resultFeatures.push({
-      type: 'Feature',
-      properties: {
-        ...baseProps,
-        plotId: plotId,
-        plotName: plotName,
-        timeline: timeline,
-        hasChange: hasChange,
-        changeCount: timeline.length > 1 ? timeline.filter((t, i) => i > 0 && t.crop !== timeline[i-1].crop).length : 0,
-        area: baseProps.area || baseProps.Area || baseProps.面积 || 0
-      },
-      geometry: baseFeature.geometry
-    })
+  // 使用新的核心算法进行分析
+  const analysisResult = buildTemporalTrajectories(timePointsData, {
+    idField: 'Id', // 根据你的GeoJSON数据的实际字段调整
+    cropField: 'gridcode', // 作物代码字段
+    areaField: 'area' // 面积字段
   })
   
-  // 构建结果GeoJSON
-  const resultGeojson = {
-    type: 'FeatureCollection',
-    metadata: {
-      analysisType: 'temporal',
-      timePoints: geojsonDataList.map(d => ({
-        time: d.time,
-        file: d.file.name,
-        taskName: d.file.taskName
-      })),
-      filesCount: geojsonDataList.length,
-      analysisTime: new Date().toLocaleString('zh-CN'),
-      totalFeatures: resultFeatures.length,
-      changed: changedCount,
-      unchanged: unchangedCount
-    },
-    features: resultFeatures
-  }
+  console.log('✅ 时序分析完成，统计信息:', analysisResult.stats)
+  console.log('📊 作物转换矩阵:', analysisResult.transitionMatrix)
+  console.log('📊 作物分布:', analysisResult.cropDistribution)
   
+  // 兼容原有的返回格式
   return {
-    geojson: resultGeojson,
-    stats: {
-      total: resultFeatures.length,
-      changed: changedCount,
-      unchanged: unchangedCount
-    }
+    geojson: {
+      type: 'FeatureCollection',
+      metadata: {
+        analysisType: 'temporal',
+        timePoints: analysisResult.timePoints,
+        filesCount: analysisResult.filesCount,
+        analysisTime: new Date().toLocaleString('zh-CN'),
+        totalFeatures: analysisResult.stats.total,
+        changed: analysisResult.stats.changed,
+        unchanged: analysisResult.stats.unchanged,
+        transitionMatrix: analysisResult.transitionMatrix,
+        cropDistribution: analysisResult.cropDistribution
+      },
+      features: analysisResult.features
+    },
+    stats: analysisResult.stats,
+    analysisResult: analysisResult // 保留完整的分析结果供后续使用
   }
 }
 
