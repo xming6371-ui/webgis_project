@@ -9,6 +9,15 @@ export const getImageList = (params) => {
   })
 }
 
+// 获取所有文件列表（包括TIF、SHP、GeoJSON等）
+export const getAllFiles = (params) => {
+  return request({
+    url: '/image/files',
+    method: 'get',
+    params
+  })
+}
+
 // 上传影像
 export const uploadImage = (data) => {
   return request({
@@ -56,10 +65,11 @@ export const downloadImage = (id) => {
 }
 
 // 优化TIF文件
-export const optimizeImage = (id) => {
+export const optimizeImage = (id, data) => {
   return request({
     url: `/image/optimize/${id}`,
-    method: 'post'
+    method: 'post',
+    data
   })
 }
 

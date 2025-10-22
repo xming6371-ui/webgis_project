@@ -81,12 +81,19 @@
               <el-option label="高分系列" value="gaofen" />
             </el-select>
           </el-form-item>
+          <el-form-item label="优化状态">
+            <el-select v-model="filterForm.optimizationStatus" placeholder="全部状态" style="width: 140px" clearable>
+              <el-option label="全部" value="" />
+              <el-option label="已优化" value="optimized" />
+              <el-option label="处理中" value="processing" />
+              <el-option label="未优化" value="unoptimized" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="云量">
             <el-slider v-model="filterForm.cloudCover" :max="100" style="width: 180px" />
             <span style="margin-left: 10px">≤ {{ filterForm.cloudCover }}%</span>
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="handleFilter">应用筛选</el-button>
             <el-button @click="resetFilter">重置</el-button>
           </el-form-item>
         </el-form>
@@ -101,7 +108,7 @@
         @selection-change="handleSelectionChange"
       >
         <el-table-column type="selection" width="55" />
-        <el-table-column prop="id" label="影像ID" width="100" />
+        <el-table-column prop="displayId" label="影像ID" width="100" />
         <el-table-column label="缩略图" width="100">
           <template #default="scope">
             <div class="thumbnail-wrapper" @click="handlePreview(scope.row)">
@@ -113,6 +120,11 @@
             </div>
           </template>
         </el-table-column>
+        <el-table-column prop="uploadTime" label="上传时间" width="160">
+          <template #default="scope">
+            {{ formatDate(scope.row.uploadTime) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="name" label="影像名称" min-width="200" />
         <el-table-column prop="year" label="年份" width="80" />
         <el-table-column prop="period" label="期次" width="80">
@@ -120,15 +132,10 @@
             第{{ scope.row.period }}期
           </template>
         </el-table-column>
-        <el-table-column prop="cropType" label="作物类型" width="100">
-          <template #default="scope">
-            <el-tag size="small">{{ getCropTypeLabel(scope.row.cropType) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="sensor" label="传感器" width="120" />
-        <el-table-column prop="date" label="采集日期" width="120" />
-        <el-table-column prop="region" label="区域" width="150" />
-        <el-table-column prop="cloudCover" label="云量" width="80">
+        <el-table-column prop="sensor" label="传感器" width="100" />
+        <el-table-column prop="date" label="采集日期" width="110" />
+        <el-table-column prop="region" label="区域" width="80" />
+        <el-table-column prop="cloudCover" label="云量" width="70">
           <template #default="scope">
             <el-tag 
               v-if="scope.row.cloudCover !== undefined && scope.row.cloudCover !== null"
@@ -140,59 +147,47 @@
           </template>
         </el-table-column>
         <el-table-column prop="size" label="文件大小" width="100" />
-        <el-table-column label="状态" width="220">
+      <el-table-column label="优化状态" width="120" align="center">
+        <template #default="scope">
+          <!-- 优化结果文件 -->
+          <el-tag v-if="scope.row.isOptimizedResult" type="success" size="small">
+            <el-icon style="margin-right: 4px"><Check /></el-icon>
+            优化结果
+          </el-tag>
+          <!-- 已优化（覆盖原文件的情况） -->
+          <el-tag v-else-if="scope.row.isOptimized" type="success" size="small">
+            <el-icon style="margin-right: 4px"><Check /></el-icon>
+            已优化
+          </el-tag>
+          <!-- 正在处理中（只有正在优化的文件） -->
+          <el-tag v-else-if="optimizingFileIds.has(scope.row.id)" type="warning" size="small">
+            <el-icon style="margin-right: 4px"><Clock /></el-icon>
+            处理中
+          </el-tag>
+          <!-- 未优化（等待优化） -->
+          <el-tag v-else type="info" size="small">
+            <el-icon style="margin-right: 4px"><Warning /></el-icon>
+            未优化
+          </el-tag>
+        </template>
+      </el-table-column>
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="scope">
-            <!-- 正在优化中 - 显示进度 -->
-            <div v-if="isOptimizing(scope.row.id)" style="width: 100%">
-              <div style="display: flex; align-items: center; margin-bottom: 4px">
-                <el-icon class="is-loading" style="margin-right: 4px"><Loading /></el-icon>
-                <span style="font-size: 12px; color: #E6A23C">{{ getProgress(scope.row.id).step }}</span>
-              </div>
-              <el-progress 
-                :percentage="getProgress(scope.row.id).progress" 
-                :status="getProgress(scope.row.id).progress === 100 ? 'success' : ''"
-                :stroke-width="8"
-                style="margin-top: 2px"
-              />
-              <div style="font-size: 11px; color: #909399; margin-top: 2px">
-                已用时: {{ getProgress(scope.row.id).elapsed || 0 }}秒
-              </div>
-            </div>
-            <!-- 正常状态 -->
-            <template v-else>
-              <el-tag :type="getStatusType(scope.row.status)" size="small">
-                {{ getStatusLabel(scope.row.status) }}
-              </el-tag>
-              <el-tag 
-                v-if="scope.row.isOptimized" 
-                type="success" 
-                size="small" 
-                style="margin-left: 5px"
-              >
-                已优化
-              </el-tag>
-            </template>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
-          <template #default="scope">
-            <!-- 优化按钮（仅未优化的文件显示） -->
+            <!-- 只有未优化的文件才显示优化按钮 -->
             <el-button 
-              v-if="!scope.row.isOptimized" 
+              v-if="!scope.row.isOptimized && !scope.row.isOptimizedResult"
               size="small" 
-              type="success" 
+              type="warning" 
               link 
-              :disabled="isOptimizing(scope.row.id)"
               @click="handleOptimize(scope.row)"
             >
-              <el-icon style="margin-right: 4px"><Settings /></el-icon>
+              <Zap :size="14" style="margin-right: 4px" />
               优化TIF
             </el-button>
             <el-button 
               size="small" 
               type="primary" 
               link 
-              :disabled="isOptimizing(scope.row.id)"
               @click="handleEdit(scope.row)"
             >
               <Edit :size="14" style="margin-right: 4px" />
@@ -202,7 +197,6 @@
               size="small" 
               type="danger" 
               link 
-              :disabled="isOptimizing(scope.row.id)"
               @click="handleDelete(scope.row)"
             >
               <Trash2 :size="14" style="margin-right: 4px" />
@@ -265,31 +259,25 @@
     <el-card shadow="never" class="result-queue-card" style="margin-top: 20px;">
       <template #header>
         <div class="card-header">
-          <span>
+          <span class="card-title">
             <FileArchive :size="16" style="margin-right: 8px" /> 
             结果队列
           </span>
-          <div style="display: flex; gap: 10px; align-items: center;">
-            <!-- 搜索框 -->
-            <el-input
-              v-model="resultSearchKeyword"
-              placeholder="搜索文件名称或任务名称..."
-              size="small"
-              clearable
-              style="width: 220px;"
+          
+          <!-- 操作按钮组 - 在右上角 -->
+          <div style="display: flex; align-items: center; gap: 10px">
+            <!-- 上传结果文件按钮 - 仅在识别结果选项卡显示 -->
+            <el-button 
+              v-if="activeQueueTab === 'recognition'" 
+              type="success" 
+              size="small" 
+              @click="showResultUploadDialog = true"
             >
-              <template #prefix>
-                <Search :size="14" />
-              </template>
-            </el-input>
-
-            <!-- 上传结果文件按钮 -->
-            <el-button type="success" size="small" @click="showResultUploadDialog = true">
               <Upload :size="14" style="margin-right: 4px" />
               上传文件
             </el-button>
 
-            <!-- 批量删除按钮 -->
+            <!-- 批量删除按钮 - 对当前选项卡的数据生效 -->
             <el-button 
               type="danger" 
               size="small"
@@ -300,7 +288,7 @@
               批量删除 ({{ selectedResultRows.length }})
             </el-button>
 
-            <!-- 刷新按钮 -->
+            <!-- 刷新按钮 - 刷新所有结果队列 -->
             <el-button 
               type="success" 
               size="small" 
@@ -330,13 +318,76 @@
           </el-empty>
 
           <div v-else>
+            <!-- 筛选条件 -->
+            <div class="filter-section" style="margin-bottom: 16px;">
+              <el-form :model="recognitionFilterForm" inline size="default">
+                <el-form-item label="格式">
+                  <el-select 
+                    v-model="recognitionFilterForm.format" 
+                    placeholder="全部格式" 
+                    style="width: 140px" 
+                    clearable
+                  >
+                    <el-option label="全部" value="" />
+                    <el-option label="GeoJSON" value="GEOJSON" />
+                    <el-option label="SHP" value="SHP" />
+                    <el-option label="KMZ" value="KMZ" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="区域">
+                  <el-select 
+                    v-model="recognitionFilterForm.region" 
+                    placeholder="全部区域" 
+                    style="width: 140px" 
+                    clearable
+                  >
+                    <el-option label="全部" value="" />
+                    <el-option label="包头湖" value="包头湖" />
+                    <el-option label="经济牧场" value="经济牧场" />
+                    <el-option label="库尔楚" value="库尔楚" />
+                    <el-option label="普惠牧场" value="普惠牧场" />
+                    <el-option label="普惠农场" value="普惠农场" />
+                    <el-option label="原种场" value="原种场" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="识别任务">
+                  <el-select 
+                    v-model="recognitionFilterForm.recognitionType" 
+                    placeholder="全部任务" 
+                    style="width: 160px" 
+                    clearable
+                  >
+                    <el-option label="全部" value="" />
+                    <el-option label="作物识别" value="crop_recognition" />
+                    <el-option label="种植情况识别" value="planting_situation" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="搜索">
+                  <el-input
+                    v-model="resultSearchKeyword"
+                    placeholder="搜索文件名、任务名"
+                    style="width: 200px"
+                    clearable
+                    :prefix-icon="Search"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button @click="resetRecognitionFilter">重置</el-button>
+                </el-form-item>
+                <el-form-item>
+                  <span style="color: #909399; font-size: 14px;">共 {{ filteredRecognitionResults.length }} 条结果</span>
+                </el-form-item>
+              </el-form>
+            </div>
+            
             <el-table 
               :data="paginatedRecognitionResults" 
               style="width: 100%"
               @selection-change="handleResultSelectionChange"
             >
               <el-table-column type="selection" width="55" />
-              <el-table-column prop="name" label="文件名称" min-width="180" show-overflow-tooltip />
+              <el-table-column type="index" label="序号" width="60" align="center" />
+              <el-table-column prop="name" label="文件名称" min-width="280" show-overflow-tooltip />
               <el-table-column prop="type" label="格式" width="80" align="center">
                 <template #default="scope">
                   <el-tag 
@@ -347,10 +398,34 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="taskName" label="来源任务" min-width="150" show-overflow-tooltip />
-              <el-table-column prop="size" label="文件大小" width="100" align="center" />
-              <el-table-column prop="createTime" label="创建时间" width="160" />
-              <el-table-column label="操作" width="300" fixed="right">
+              <el-table-column prop="year" label="年份" width="80" align="center">
+                <template #default="scope">
+                  <span v-if="scope.row.year">{{ scope.row.year }}</span>
+                  <span v-else style="color: #909399;">-</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="period" label="期次" width="85" align="center">
+                <template #default="scope">
+                  <span v-if="scope.row.period">第{{ scope.row.period }}期</span>
+                  <span v-else style="color: #909399;">-</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="regionName" label="区域" width="110" align="center">
+                <template #default="scope">
+                  <el-tag v-if="scope.row.regionName" type="primary" size="small">
+                    {{ scope.row.regionName }}
+                  </el-tag>
+                  <span v-else style="color: #909399;">-</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="来源任务" width="130" align="center">
+                <template #default="scope">
+                  {{ getRecognitionTypeLabel(scope.row.recognitionType) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="size" label="大小" width="100" align="center" />
+              <el-table-column prop="createTime" label="创建时间" width="180" align="center" />
+              <el-table-column label="操作" min-width="320" fixed="right">
                 <template #default="scope">
                   <div style="display: flex; gap: 5px; flex-wrap: wrap;">
                     <!-- SHP文件显示转换GeoJSON按钮 -->
@@ -365,10 +440,20 @@
                       转GeoJSON
                     </el-button>
                     
-                    <!-- 下载按钮 -->
+                    <!-- 编辑按钮 -->
                     <el-button 
                       size="small" 
                       type="primary" 
+                      @click="handleEditRecognitionResult(scope.row)"
+                    >
+                      <Edit :size="14" style="margin-right: 4px" />
+                      编辑
+                    </el-button>
+                    
+                    <!-- 下载按钮 -->
+                    <el-button 
+                      size="small" 
+                      type="success" 
                       @click="handleDownloadFile(scope.row)"
                     >
                       <Download :size="14" style="margin-right: 4px" />
@@ -415,27 +500,37 @@
           </el-empty>
 
           <div v-else>
-            <!-- 筛选工具栏 -->
-            <div style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
-              <span style="color: #606266; font-size: 14px;">格式筛选：</span>
-              <el-select 
-                v-model="analysisFormatFilter" 
-                placeholder="全部格式" 
-                clearable 
-                size="small"
-                style="width: 150px;"
-              >
-                <el-option label="全部格式" value="" />
-                <el-option label="JSON (可视化)" value="JSON" />
-                <el-option label="Excel (报告)" value="Excel" />
-              </el-select>
-              
-              <el-divider direction="vertical" />
-              
-              <span style="color: #909399; font-size: 13px;">
-                共 {{ filteredAnalysisResults.length }} 条结果
-                <span v-if="analysisFormatFilter">（已筛选）</span>
-              </span>
+            <!-- 筛选条件 -->
+            <div class="filter-section" style="margin-bottom: 16px;">
+              <el-form :model="analysisFilterForm" inline size="default">
+                <el-form-item label="格式">
+                  <el-select 
+                    v-model="analysisFilterForm.format" 
+                    placeholder="全部格式" 
+                    style="width: 140px" 
+                    clearable
+                  >
+                    <el-option label="全部" value="" />
+                    <el-option label="JSON" value="JSON" />
+                    <el-option label="PDF" value="PDF" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="搜索">
+                  <el-input
+                    v-model="analysisSearchKeyword"
+                    placeholder="搜索文件名、分析类型"
+                    style="width: 200px"
+                    clearable
+                    :prefix-icon="Search"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button @click="resetAnalysisFilter">重置</el-button>
+                </el-form-item>
+                <el-form-item>
+                  <span style="color: #909399; font-size: 14px;">共 {{ filteredAnalysisResults.length }} 条结果</span>
+                </el-form-item>
+              </el-form>
             </div>
             <el-table 
               :data="paginatedAnalysisResults" 
@@ -444,9 +539,9 @@
               element-loading-text="正在加载分析结果..."
               @selection-change="handleResultSelectionChange"
             >
-              <el-table-column type="selection" width="50" />
-              <el-table-column prop="filename" label="文件名称" min-width="220" show-overflow-tooltip />
-              <el-table-column prop="format" label="格式" width="90" align="center">
+              <el-table-column type="selection" width="55" />
+              <el-table-column prop="filename" label="文件名称" min-width="300" show-overflow-tooltip />
+              <el-table-column prop="format" label="格式" width="100" align="center">
                 <template #default="scope">
                   <el-tag 
                     :type="scope.row.canLoadToMap ? 'success' : 'info'" 
@@ -456,14 +551,14 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="type" label="分析类型" width="110" align="center">
+              <el-table-column prop="type" label="分析类型" width="130" align="center">
                 <template #default="scope">
                   <el-tag size="small" :type="getAnalysisTypeTagType(scope.row.type)">
                     {{ getAnalysisTypeText(scope.row.type) }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="用途" width="100" align="center">
+              <el-table-column label="用途" width="110" align="center">
                 <template #default="scope">
                   <el-tag 
                     size="small" 
@@ -473,9 +568,9 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="size" label="文件大小" width="120" align="center" />
-              <el-table-column prop="createTime" label="创建时间" width="180" align="center" />
-              <el-table-column label="操作" width="270" fixed="right" align="center">
+              <el-table-column prop="size" label="文件大小" width="130" align="center" />
+              <el-table-column prop="createTime" label="创建时间" width="190" align="center" />
+              <el-table-column label="操作" min-width="300" fixed="right" align="center">
                 <template #default="scope">
                   <div style="display: flex; gap: 6px; justify-content: center; flex-wrap: nowrap;">
                     <el-button 
@@ -586,6 +681,38 @@
             placeholder="填写影像描述信息（可选）" 
           />
         </el-form-item>
+        
+        <!-- 优化选项 -->
+        <el-divider content-position="left">优化设置</el-divider>
+        
+        <el-form-item label="是否优化" required>
+          <el-radio-group v-model="uploadForm.needOptimize">
+            <el-radio :label="true">是（推荐）- 投影转换、压缩、加金字塔</el-radio>
+            <el-radio :label="false">否 - 保留原始文件</el-radio>
+          </el-radio-group>
+          <div style="color: #999; font-size: 12px; margin-top: 5px">
+            💡 优化后文件更小、加载更快、坐标正确
+          </div>
+        </el-form-item>
+        
+        <el-form-item v-if="uploadForm.needOptimize" label="覆盖原文件" required>
+          <el-radio-group v-model="uploadForm.overwriteOriginal">
+            <el-radio :label="true">是 - 直接覆盖原文件</el-radio>
+            <el-radio :label="false">否 - 保存为新文件</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        
+        <el-form-item v-if="uploadForm.needOptimize && !uploadForm.overwriteOriginal" label="优化文件名">
+          <el-input 
+            v-model="uploadForm.optimizedFileName" 
+            placeholder="默认为原文件名 + _optimized"
+          >
+            <template #append>.tif</template>
+          </el-input>
+          <div style="color: #999; font-size: 12px; margin-top: 5px">
+            留空则自动在原文件名后添加 _optimized 后缀
+          </div>
+        </el-form-item>
       </el-form>
 
       <el-divider content-position="left">选择文件</el-divider>
@@ -678,19 +805,6 @@
                 (优化后: {{ currentPreview.optimizedSize }})
               </span>
             </el-descriptions-item>
-            <el-descriptions-item label="状态">
-              <el-tag :type="getStatusType(currentPreview.status)" size="small">
-                {{ getStatusLabel(currentPreview.status) }}
-              </el-tag>
-              <el-tag 
-                v-if="currentPreview.isOptimized" 
-                type="success" 
-                size="small" 
-                style="margin-left: 5px"
-              >
-                已优化
-              </el-tag>
-            </el-descriptions-item>
             <el-descriptions-item label="上传时间" :span="2">
               {{ formatDate(currentPreview.uploadTime) }}
             </el-descriptions-item>
@@ -702,6 +816,57 @@
       </div>
       <template #footer>
         <el-button @click="showPreviewDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 手动优化对话框 -->
+    <el-dialog
+      v-model="showOptimizeDialog"
+      title="优化TIF文件"
+      width="600px"
+      :close-on-click-modal="false"
+    >
+      <div v-if="currentOptimizeImage" style="margin-bottom: 20px">
+        <el-alert type="info" :closable="false">
+          <template #title>
+            <div style="font-size: 14px">
+              <strong>当前文件：</strong>{{ currentOptimizeImage.name }}<br/>
+              <strong>文件大小：</strong>{{ currentOptimizeImage.size }}<br/>
+              <strong>说明：</strong>优化将进行投影转换(EPSG:3857)、LZW压缩、添加金字塔，文件大小通常可减少80-95%
+            </div>
+          </template>
+        </el-alert>
+      </div>
+
+      <el-form :model="optimizeForm" label-width="120px">
+        <el-form-item label="是否覆盖原文件" required>
+          <el-radio-group v-model="optimizeForm.overwriteOriginal">
+            <el-radio :label="true">是 - 直接覆盖原文件</el-radio>
+            <el-radio :label="false">否 - 保存为新文件</el-radio>
+          </el-radio-group>
+          <div style="color: #999; font-size: 12px; margin-top: 5px">
+            ⚠️ 覆盖原文件后无法恢复
+          </div>
+        </el-form-item>
+
+        <el-form-item v-if="!optimizeForm.overwriteOriginal" label="优化文件名">
+          <el-input 
+            v-model="optimizeForm.customFileName" 
+            placeholder="默认为原文件名 + _optimized"
+          >
+            <template #append>.tif</template>
+          </el-input>
+          <div style="color: #999; font-size: 12px; margin-top: 5px">
+            留空则自动在原文件名后添加 _optimized 后缀
+          </div>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="showOptimizeDialog = false">取消</el-button>
+        <el-button type="primary" :loading="optimizing" @click="handleConfirmOptimize">
+          {{ optimizing ? '优化中...' : '开始优化' }}
+        </el-button>
       </template>
     </el-dialog>
 
@@ -919,6 +1084,86 @@
       </template>
     </el-dialog>
 
+    <!-- 编辑识别结果对话框 -->
+    <el-dialog
+      v-model="showEditRecognitionDialog"
+      title="编辑识别结果信息"
+      width="600px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="editRecognitionForm" label-width="120px">
+        <el-form-item label="文件名称">
+          <el-input v-model="editRecognitionForm.name" disabled />
+        </el-form-item>
+        
+        <el-form-item label="年份" required>
+          <el-select v-model="editRecognitionForm.year" placeholder="选择年份" style="width: 100%" clearable>
+            <el-option
+              v-for="year in [2020, 2021, 2022, 2023, 2024, 2025]"
+              :key="year"
+              :label="`${year}年`"
+              :value="year"
+            />
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="期次" required>
+          <el-select v-model="editRecognitionForm.period" placeholder="选择期次" style="width: 100%" clearable>
+            <el-option
+              v-for="period in [1, 2, 3, 4, 5, 6]"
+              :key="period"
+              :label="`第${period}期`"
+              :value="period"
+            />
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="区域" required>
+          <el-select v-model="editRecognitionForm.regionCode" placeholder="选择区域" style="width: 100%" clearable>
+            <el-option label="包头湖" value="BTH" />
+            <el-option label="经济牧场" value="JJMC" />
+            <el-option label="库尔楚" value="KEC" />
+            <el-option label="普惠牧场" value="PHMC" />
+            <el-option label="普惠农场" value="PHNC" />
+            <el-option label="原种场" value="YZC" />
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="来源任务" required>
+          <el-select v-model="editRecognitionForm.recognitionType" placeholder="选择来源任务" style="width: 100%" clearable>
+            <el-option label="作物识别" value="crop_recognition" />
+            <el-option label="种植情况识别" value="planting_situation" />
+          </el-select>
+        </el-form-item>
+        
+        <el-form-item label="任务名称">
+          <el-input v-model="editRecognitionForm.taskName" placeholder="输入任务名称" maxlength="100" />
+        </el-form-item>
+        
+        <el-alert
+          title="提示"
+          type="info"
+          :closable="false"
+          style="margin-top: 10px;"
+        >
+          <div style="font-size: 13px;">
+            修改后将自动生成或更新同名的JSON元数据文件，用于保存这些信息。
+          </div>
+        </el-alert>
+      </el-form>
+      
+      <template #footer>
+        <el-button @click="showEditRecognitionDialog = false">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="handleSaveRecognitionEdit"
+          :loading="savingRecognitionEdit"
+        >
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 上传结果文件对话框 -->
     <el-dialog
       v-model="showResultUploadDialog"
@@ -932,8 +1177,16 @@
         :closable="false"
         style="margin-bottom: 20px;"
       >
-        <div>支持上传：<el-tag size="small" style="margin: 0 5px;">SHP</el-tag><el-tag size="small" style="margin: 0 5px;">GeoJSON</el-tag><el-tag size="small" style="margin: 0 5px;">JSON</el-tag><el-tag size="small" style="margin: 0 5px;">KMZ</el-tag></div>
+        <div>支持上传：<el-tag size="small" style="margin: 0 5px;">SHP (ZIP压缩包)</el-tag><el-tag size="small" style="margin: 0 5px;">GeoJSON</el-tag><el-tag size="small" style="margin: 0 5px;">JSON</el-tag><el-tag size="small" style="margin: 0 5px;">KMZ</el-tag></div>
         <div style="margin-top: 5px;">文件大小限制：500MB</div>
+        <div style="margin-top: 8px; padding: 8px; background: #fff3cd; border-radius: 4px; border: 1px solid #ffc107;">
+          <strong style="color: #856404;">📦 重要提示：</strong>
+          <div style="color: #856404; font-size: 13px; margin-top: 4px;">
+            • SHP文件需要将整个文件夹（包含.shp, .shx, .dbf, .prj等所有文件）打包成<strong>ZIP压缩包</strong>后上传<br/>
+            • ZIP文件名将作为文件夹名称保存，建议使用有意义的名称（如：YZC_2024_1.zip）<br/>
+            • 其他格式文件可直接上传
+          </div>
+        </div>
       </el-alert>
 
       <el-upload
@@ -944,7 +1197,7 @@
         :file-list="resultFileList"
         drag
         multiple
-        accept=".shp,.geojson,.json,.kmz"
+        accept=".zip,.geojson,.json,.kmz"
       >
         <div class="upload-area">
           <UploadIcon :size="50" style="color: #409eff; margin-bottom: 10px;" />
@@ -960,7 +1213,7 @@
       <div v-if="resultFileList.length > 0" style="margin-top: 15px;">
         <el-alert
           :title="`已选择 ${resultFileList.length} 个文件`"
-          type="info"
+          type="success"
           :closable="false"
         >
           <div style="color: #666;">
@@ -968,6 +1221,85 @@
           </div>
         </el-alert>
       </div>
+        
+      <!-- 🆕 元数据填写表单 - 始终显示，不管是否选择文件 -->
+      <el-divider content-position="left" style="margin-top: 20px;">
+        <span style="font-size: 14px; color: #303133; font-weight: 600;">
+          📝 文件信息（可选，建议填写）
+        </span>
+      </el-divider>
+      
+      <el-form :model="uploadMetadataForm" label-width="90px" size="default">
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="年份">
+              <el-select v-model="uploadMetadataForm.year" placeholder="选择年份" clearable style="width: 100%">
+                <el-option
+                  v-for="year in [2020, 2021, 2022, 2023, 2024, 2025]"
+                  :key="year"
+                  :label="`${year}年`"
+                  :value="year"
+                />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="期次">
+              <el-select v-model="uploadMetadataForm.period" placeholder="选择期次" clearable style="width: 100%">
+                <el-option
+                  v-for="period in [1, 2, 3, 4, 5, 6]"
+                  :key="period"
+                  :label="`第${period}期`"
+                  :value="period"
+                />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="区域">
+              <el-select v-model="uploadMetadataForm.regionCode" placeholder="选择区域" clearable style="width: 100%">
+                <el-option label="包头湖" value="BTH" />
+                <el-option label="经济牧场" value="JJMC" />
+                <el-option label="库尔楚" value="KEC" />
+                <el-option label="普惠牧场" value="PHMC" />
+                <el-option label="普惠农场" value="PHNC" />
+                <el-option label="原种场" value="YZC" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="来源任务">
+              <el-select v-model="uploadMetadataForm.recognitionType" placeholder="选择任务" clearable style="width: 100%">
+                <el-option label="作物识别" value="crop_recognition" />
+                <el-option label="种植情况识别" value="planting_situation" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        
+        <el-form-item label="任务名称">
+          <el-input 
+            v-model="uploadMetadataForm.taskName" 
+            placeholder="输入任务名称（可选）" 
+            maxlength="100" 
+            clearable
+          />
+        </el-form-item>
+        
+        <el-alert
+          title="💡 提示"
+          type="info"
+          :closable="false"
+          style="margin-top: 10px;"
+        >
+          <div style="font-size: 12px; color: #666;">
+            以上信息为可选项，填写后会随文件一起保存，便于在监测主控台进行筛选和管理。如果不填写，系统会使用默认值。
+          </div>
+        </el-alert>
+      </el-form>
 
       <template #footer>
         <el-button @click="cancelUpload">取消</el-button>
@@ -988,11 +1320,11 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings, FileArchive, RefreshCw, Eye } from 'lucide-vue-next'
-import { Loading, Picture, DataAnalysis, SuccessFilled, InfoFilled } from '@element-plus/icons-vue'
+import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings, FileArchive, RefreshCw, Eye, Zap } from 'lucide-vue-next'
+import { Picture, DataAnalysis, SuccessFilled, InfoFilled, Check, Clock, Warning } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysis'
-import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage, getOptimizeProgress } from '@/api/image'
+import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage } from '@/api/image'
 import { 
   getRecognitionResults, 
   convertShpToGeojson, 
@@ -1001,7 +1333,8 @@ import {
   getSavedAnalysisResults,
   loadAnalysisResult,
   downloadReport,
-  deleteAnalysisResult
+  deleteAnalysisResult,
+  saveRecognitionMetadata
 } from '@/api/analysis'
 import * as GeoTIFF from 'geotiff'
 
@@ -1014,30 +1347,21 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const showUploadDialog = ref(false)
 const uploading = ref(false)
-
-// 正在优化的任务列表
-const optimizingTasks = ref(new Set())
-
-// 优化进度数据（id -> { progress, status, step, elapsed }）
-const optimizationProgress = ref(new Map())
-
-// 轮询定时器
-const progressPollingTimers = ref(new Map())
-
-// 检查是否正在优化
-const isOptimizing = (id) => {
-  return optimizingTasks.value.has(id)
-}
-
-// 获取优化进度
-const getProgress = (id) => {
-  return optimizationProgress.value.get(id) || { progress: 0, step: '准备中...' }
-}
-
 const uploadFiles = ref([])
 const selectedRows = ref([])
 const loading = ref(false)
 const showPreviewDialog = ref(false)
+const showOptimizeDialog = ref(false)  // 手动优化对话框
+
+// 自动刷新定时器（用于检测优化完成）
+const autoRefreshTimer = ref(null)
+const autoRefreshEnabled = ref(false)
+
+// 记录上次的优化状态，用于检测变化
+const lastOptimizationStatus = ref(new Map())
+
+// 记录正在优化的文件ID（只有这些文件才显示"处理中"）
+const optimizingFileIds = ref(new Set())
 const currentPreview = ref(null)
 const previewImageUrl = ref('')
 const loadingPreview = ref(false)
@@ -1053,48 +1377,85 @@ const recognitionPageSize = ref(10)
 
 // 分析结果队列
 const analysisResults = ref([])
-const analysisFormatFilter = ref('') // 分析结果格式筛选
 const analysisResultsLoading = ref(false) // 分析结果加载状态
 
 // 搜索关键词
 const resultSearchKeyword = ref('')
+const analysisSearchKeyword = ref('') // 分析结果搜索关键词
+
+// 分析结果筛选表单
+const analysisFilterForm = ref({
+  format: ''  // 格式筛选
+})
 
 // 结果队列选中的行
 const selectedResultRows = ref([])
 
-// 过滤后的识别结果（computed，实时响应搜索）
-const filteredRecognitionResults = computed(() => {
-  if (!resultSearchKeyword.value) {
-    return recognitionResults.value
-  }
-  
-  const keyword = resultSearchKeyword.value.toLowerCase().trim()
-  return recognitionResults.value.filter(item => 
-    item.name.toLowerCase().includes(keyword) ||
-    (item.taskName && item.taskName.toLowerCase().includes(keyword)) ||
-    (item.type && item.type.toLowerCase().includes(keyword))
-  )
+// 识别结果筛选表单
+const recognitionFilterForm = ref({
+  format: '',  // 格式筛选
+  region: '',  // 区域筛选
+  recognitionType: ''  // 识别任务类型筛选
 })
 
-// 过滤后的分析结果（computed，实时响应搜索）
-const filteredAnalysisResults = computed(() => {
-  let results = analysisResults.value
+// 过滤后的识别结果（computed，实时响应搜索和格式筛选）
+const filteredRecognitionResults = computed(() => {
+  let data = [...recognitionResults.value]
   
   // 格式筛选
-  if (analysisFormatFilter.value) {
-    results = results.filter(item => item.format === analysisFormatFilter.value)
+  if (recognitionFilterForm.value.format) {
+    data = data.filter(item => 
+      item.type && item.type.toUpperCase() === recognitionFilterForm.value.format
+    )
+  }
+  
+  // 区域筛选
+  if (recognitionFilterForm.value.region) {
+    data = data.filter(item => 
+      item.regionName && item.regionName === recognitionFilterForm.value.region
+    )
+  }
+  
+  // 识别任务类型筛选
+  if (recognitionFilterForm.value.recognitionType) {
+    data = data.filter(item => 
+      item.recognitionType && item.recognitionType === recognitionFilterForm.value.recognitionType
+    )
   }
   
   // 关键词搜索
   if (resultSearchKeyword.value) {
     const keyword = resultSearchKeyword.value.toLowerCase().trim()
-    results = results.filter(item => 
+    data = data.filter(item => 
+      item.name.toLowerCase().includes(keyword) ||
+      (item.taskName && item.taskName.toLowerCase().includes(keyword)) ||
+      (item.type && item.type.toLowerCase().includes(keyword)) ||
+      (item.regionName && item.regionName.toLowerCase().includes(keyword))
+    )
+  }
+  
+  return data
+})
+
+// 过滤后的分析结果（computed，实时响应搜索和格式筛选）
+const filteredAnalysisResults = computed(() => {
+  let data = [...analysisResults.value]
+  
+  // 格式筛选
+  if (analysisFilterForm.value.format) {
+    data = data.filter(item => item.format === analysisFilterForm.value.format)
+  }
+  
+  // 关键词搜索
+  if (analysisSearchKeyword.value) {
+    const keyword = analysisSearchKeyword.value.toLowerCase().trim()
+    data = data.filter(item => 
       (item.filename && item.filename.toLowerCase().includes(keyword)) ||
       (item.type && item.type.toLowerCase().includes(keyword))
     )
   }
   
-  return results
+  return data
 })
 
 // 结果文件上传相关
@@ -1106,6 +1467,29 @@ const resultFileList = ref([])
 const isUploading = ref(false)
 const analysisCurrentPage = ref(1)
 const analysisPageSize = ref(10)
+
+// 🆕 上传文件的元数据表单
+const uploadMetadataForm = ref({
+  year: null,
+  period: null,
+  regionCode: '',
+  recognitionType: '',
+  taskName: ''
+})
+
+// 编辑识别结果相关
+const showEditRecognitionDialog = ref(false)
+const savingRecognitionEdit = ref(false)
+const editRecognitionForm = ref({
+  id: '',
+  name: '',
+  year: '',
+  period: '',
+  regionCode: '',
+  recognitionType: '',
+  taskName: '',
+  relativePath: ''
+})
 
 // 分页后的识别结果（支持搜索过滤）
 const paginatedRecognitionResults = computed(() => {
@@ -1455,11 +1839,11 @@ const handleBatchDeleteResults = async () => {
 const handleResultFileChange = (file, fileList) => {
   // 验证文件
   const fileName = file.name.toLowerCase()
-  const validExtensions = ['.shp', '.geojson', '.json', '.kmz']
+  const validExtensions = ['.zip', '.geojson', '.json', '.kmz']
   const isValidType = validExtensions.some(ext => fileName.endsWith(ext))
   
   if (!isValidType) {
-    ElMessage.error(`不支持的文件格式: ${file.name}`)
+    ElMessage.error(`不支持的文件格式: ${file.name}，请上传 .zip（SHP文件夹压缩包）、.geojson、.json 或 .kmz 文件`)
     // 从列表中移除
     const index = fileList.findIndex(f => f.uid === file.uid)
     if (index > -1) {
@@ -1500,6 +1884,14 @@ const formatTotalSize = (fileList) => {
 const cancelUpload = () => {
   resultFileList.value = []
   showResultUploadDialog.value = false
+  // 🆕 重置元数据表单
+  uploadMetadataForm.value = {
+    year: null,
+    period: null,
+    regionCode: '',
+    recognitionType: '',
+    taskName: ''
+  }
 }
 
 // 开始上传
@@ -1517,6 +1909,37 @@ const startUpload = async () => {
       try {
         const formData = new FormData()
         formData.append('file', fileItem.raw)
+        
+        // 🆕 如果填写了元数据，一起发送给后端
+        const hasMetadata = uploadMetadataForm.value.year || 
+                          uploadMetadataForm.value.period || 
+                          uploadMetadataForm.value.regionCode || 
+                          uploadMetadataForm.value.recognitionType || 
+                          uploadMetadataForm.value.taskName
+        
+        if (hasMetadata) {
+          // 区域代码到名称的映射
+          const regionCodeToName = {
+            'BTH': '包头湖',
+            'JJMC': '经济牧场',
+            'KEC': '库尔楚',
+            'PHMC': '普惠牧场',
+            'PHNC': '普惠农场',
+            'YZC': '原种场'
+          }
+          
+          const metadata = {
+            year: uploadMetadataForm.value.year,
+            period: uploadMetadataForm.value.period,
+            regionCode: uploadMetadataForm.value.regionCode,
+            regionName: regionCodeToName[uploadMetadataForm.value.regionCode],
+            recognitionType: uploadMetadataForm.value.recognitionType,
+            taskName: uploadMetadataForm.value.taskName
+          }
+          
+          // 将元数据作为JSON字符串发送
+          formData.append('metadata', JSON.stringify(metadata))
+        }
         
         const response = await fetch(`${baseUrl}/analysis/upload`, {
           method: 'POST',
@@ -1558,9 +1981,16 @@ const startUpload = async () => {
     // 刷新列表
     await loadAllResults()
     
-    // 关闭对话框
+    // 关闭对话框并重置表单
     resultFileList.value = []
     showResultUploadDialog.value = false
+    uploadMetadataForm.value = {
+      year: null,
+      period: null,
+      regionCode: '',
+      recognitionType: '',
+      taskName: ''
+    }
     
   } catch (error) {
     console.error('上传过程出错:', error)
@@ -1655,10 +2085,19 @@ const editForm = ref({
   description: ''
 })
 
+// 手动优化相关状态
+const currentOptimizeImage = ref(null)
+const optimizeForm = ref({
+  overwriteOriginal: false,
+  customFileName: ''
+})
+const optimizing = ref(false)
+
 const filterForm = ref({
   dateRange: [],
   sensor: '',
-  cloudCover: 30
+  cloudCover: 30,
+  optimizationStatus: '' // 优化状态筛选：all/optimized/unoptimized/processing/result
 })
 
 // 上传表单数据
@@ -1669,7 +2108,10 @@ const uploadForm = ref({
   region: '',
   sensor: '',
   cloudCover: null, // 云量（可选）
-  description: ''
+  description: '',
+  needOptimize: false, // 是否优化（默认不优化，保留原始文件）
+  overwriteOriginal: false, // 是否覆盖原文件（默认不覆盖）
+  optimizedFileName: '' // 优化后的文件名（留空则自动添加_optimized）
 })
 
 // 原始数据
@@ -1709,6 +2151,37 @@ const filteredData = computed(() => {
     })
   }
   
+  // 优化状态过滤
+  if (filterForm.value.optimizationStatus) {
+    const status = filterForm.value.optimizationStatus
+    data = data.filter(item => {
+      if (status === 'optimized') {
+        // 已优化（包括优化结果）
+        return item.isOptimized === true || item.isOptimizedResult === true
+      } else if (status === 'processing') {
+        // 处理中
+        return optimizingFileIds.value.has(item.id)
+      } else if (status === 'unoptimized') {
+        // 未优化
+        return !item.isOptimized && !item.isOptimizedResult && !optimizingFileIds.value.has(item.id)
+      }
+      return true
+    })
+  }
+  
+  // 按上传时间排序（升序，最早的在前面）
+  data.sort((a, b) => {
+    const aTime = new Date(a.uploadTime || 0).getTime()
+    const bTime = new Date(b.uploadTime || 0).getTime()
+    return aTime - bTime  // 升序：最早的在前面
+  })
+  
+  // 动态生成ID（从IMG001开始）
+  data = data.map((item, index) => ({
+    ...item,
+    displayId: `IMG${String(index + 1).padStart(3, '0')}`
+  }))
+  
   return data
 })
 
@@ -1723,17 +2196,86 @@ const tableData = computed(() => {
 const total = computed(() => filteredData.value.length)
 
 // 加载影像列表
-const loadImageList = async () => {
+const loadImageList = async (silent = false) => {
   try {
-    loading.value = true
+    if (!silent) loading.value = true
     const res = await getImageList()
-    allData.value = res.data || []
+    const newData = res.data || []
+    
+    // 检测优化状态变化
+    if (autoRefreshEnabled.value) {
+      newData.forEach(image => {
+        const lastStatus = lastOptimizationStatus.value.get(image.id)
+        const currentStatus = image.isOptimized || image.isOptimizedResult
+        
+        // 检测优化结果文件的出现（isOptimizedResult为新生成的优化文件）
+        if (image.isOptimizedResult && image.sourceFileId && optimizingFileIds.value.has(image.sourceFileId)) {
+          ElNotification({
+            title: '✅ 优化完成',
+            message: `${image.description || image.name}\n原始: ${image.originalSize}\n优化后: ${image.optimizedSize}\n可以在监测主控台流畅使用了！`,
+            type: 'success',
+            duration: 10000,
+            position: 'bottom-right'
+          })
+          
+          // 从优化列表中移除原文件ID
+          optimizingFileIds.value.delete(image.sourceFileId)
+          console.log(`✅ 优化完成，移除源文件ID: ${image.sourceFileId}`)
+          console.log(`📄 生成优化文件: ${image.id} - ${image.name}`)
+        }
+        // 检测覆盖原文件的情况（直接优化）
+        else if (lastStatus === false && currentStatus === true && optimizingFileIds.value.has(image.id) && !image.isOptimizedResult) {
+          ElNotification({
+            title: '✅ 优化完成',
+            message: `${image.name}\n原始: ${image.originalSize || image.size}\n优化后: ${image.optimizedSize}\n已覆盖原文件！`,
+            type: 'success',
+            duration: 10000,
+            position: 'bottom-right'
+          })
+          
+          // 从优化列表中移除
+          optimizingFileIds.value.delete(image.id)
+          console.log(`✅ 优化完成（覆盖），移除ID: ${image.id}`)
+        }
+        
+        // 更新状态记录
+        lastOptimizationStatus.value.set(image.id, currentStatus)
+      })
+    }
+    
+    allData.value = newData
   } catch (error) {
     console.error('加载影像列表失败：', error)
-    ElMessage.error('加载影像列表失败')
+    if (!silent) ElMessage.error('加载影像列表失败')
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
+}
+
+// 开始自动刷新（用于监测优化完成）
+const startAutoRefresh = () => {
+  if (autoRefreshTimer.value) {
+    clearInterval(autoRefreshTimer.value)
+  }
+  
+  autoRefreshEnabled.value = true
+  
+  // 每30秒静默刷新一次（减少频率，降低后端负担）
+  autoRefreshTimer.value = setInterval(() => {
+    loadImageList(true) // silent = true，不显示加载状态
+  }, 30000)  // 从15秒改为30秒
+  
+  console.log('🔄 已启动自动刷新（每30秒检测优化状态）')
+}
+
+// 停止自动刷新
+const stopAutoRefresh = () => {
+  if (autoRefreshTimer.value) {
+    clearInterval(autoRefreshTimer.value)
+    autoRefreshTimer.value = null
+  }
+  autoRefreshEnabled.value = false
+  console.log('⏹️ 已停止自动刷新')
 }
 
 // 刷新列表
@@ -1751,18 +2293,133 @@ const handleSearch = () => {
   ElMessage.success('搜索完成')
 }
 
-const handleFilter = () => {
-  currentPage.value = 1
-  ElMessage.success('筛选条件已应用')
-}
-
 const resetFilter = () => {
   filterForm.value = {
     dateRange: [],
     sensor: '',
-    cloudCover: 30
+    cloudCover: 30,
+    optimizationStatus: ''
   }
   currentPage.value = 1
+  ElMessage.success('筛选条件已重置')
+}
+
+// 重置识别结果筛选条件
+const resetRecognitionFilter = () => {
+  recognitionFilterForm.value = {
+    format: '',
+    region: '',
+    recognitionType: ''
+  }
+  resultSearchKeyword.value = ''
+  recognitionCurrentPage.value = 1
+  ElMessage.success('筛选条件已重置')
+}
+
+// 获取识别任务类型标签
+const getRecognitionTypeLabel = (recognitionType) => {
+  if (!recognitionType) return '未知任务'
+  
+  const typeMap = {
+    'crop_recognition': '作物识别',
+    'planting_situation': '种植情况识别',
+    // 兼容旧版
+    'crop_info': '作物识别',
+    'planting_status': '种植情况识别'
+  }
+  
+  return typeMap[recognitionType] || '未知任务'
+}
+
+// 编辑识别结果
+const handleEditRecognitionResult = (row) => {
+  // 区域名称映射回区域代码
+  const regionNameToCode = {
+    '包头湖': 'BTH',
+    '经济牧场': 'JJMC',
+    '库尔楚': 'KEC',
+    '普惠牧场': 'PHMC',
+    '普惠农场': 'PHNC',
+    '原种场': 'YZC'
+  }
+  
+  editRecognitionForm.value = {
+    id: row.id,
+    name: row.name,
+    year: row.year || '',
+    period: row.period || '',
+    regionCode: row.regionCode || regionNameToCode[row.regionName] || '',
+    recognitionType: row.recognitionType || 'crop_recognition',
+    taskName: row.taskName || '',
+    relativePath: row.relativePath || ''
+  }
+  
+  showEditRecognitionDialog.value = true
+}
+
+// 保存识别结果编辑
+const handleSaveRecognitionEdit = async () => {
+  // 验证必填项
+  if (!editRecognitionForm.value.year || !editRecognitionForm.value.period || !editRecognitionForm.value.regionCode) {
+    ElMessage.warning('请填写年份、期次和区域')
+    return
+  }
+  
+  savingRecognitionEdit.value = true
+  
+  try {
+    // 准备元数据
+    const regionCodeToName = {
+      'BTH': '包头湖',
+      'JJMC': '经济牧场',
+      'KEC': '库尔楚',
+      'PHMC': '普惠牧场',
+      'PHNC': '普惠农场',
+      'YZC': '原种场'
+    }
+    
+    const metadata = {
+      year: editRecognitionForm.value.year,
+      period: editRecognitionForm.value.period,
+      regionCode: editRecognitionForm.value.regionCode,
+      regionName: regionCodeToName[editRecognitionForm.value.regionCode],
+      recognitionType: editRecognitionForm.value.recognitionType,
+      taskName: editRecognitionForm.value.taskName || `${editRecognitionForm.value.year}年第${editRecognitionForm.value.period}期${regionCodeToName[editRecognitionForm.value.regionCode]}`,
+      updatedAt: new Date().toISOString()
+    }
+    
+    // 调用后端API保存元数据
+    const response = await saveRecognitionMetadata(
+      editRecognitionForm.value.name,
+      editRecognitionForm.value.relativePath,
+      metadata
+    )
+    
+    if (response.code === 200) {
+      ElMessage.success('保存成功')
+      showEditRecognitionDialog.value = false
+      
+      // 刷新列表
+      await loadAllResults()
+    } else {
+      ElMessage.error('保存失败: ' + (response.message || '未知错误'))
+    }
+  } catch (error) {
+    console.error('保存失败:', error)
+    ElMessage.error('保存失败: ' + (error.message || '网络错误'))
+  } finally {
+    savingRecognitionEdit.value = false
+  }
+}
+
+// 重置分析结果筛选条件
+const resetAnalysisFilter = () => {
+  analysisFilterForm.value = {
+    format: ''
+  }
+  analysisSearchKeyword.value = ''
+  analysisCurrentPage.value = 1
+  ElMessage.success('筛选条件已重置')
 }
 
 const handleSelectionChange = (selection) => {
@@ -1816,28 +2473,6 @@ const getCropTypeLabel = (type) => {
   return labels[type] || type
 }
 
-// 状态类型转换
-const getStatusType = (status) => {
-  const types = {
-    'pending': 'info',
-    'processing': 'warning',
-    'processed': 'success',
-    'failed': 'danger'
-  }
-  return types[status] || 'info'
-}
-
-// 状态标签转换
-const getStatusLabel = (status) => {
-  const labels = {
-    'pending': '待处理',
-    'processing': '处理中',
-    'processed': '已完成',
-    'failed': '失败'
-  }
-  return labels[status] || status
-}
-
 const formatDate = (dateString) => {
   if (!dateString) return '-'
   const date = new Date(dateString)
@@ -1854,6 +2489,60 @@ const formatDate = (dateString) => {
 const editFormattedUploadTime = computed(() => {
   return formatDate(editForm.value.uploadTime)
 })
+
+// 打开优化对话框
+const handleOptimize = (row) => {
+  currentOptimizeImage.value = row
+  optimizeForm.value = {
+    overwriteOriginal: false,
+    customFileName: ''
+  }
+  showOptimizeDialog.value = true
+}
+
+// 确认优化
+const handleConfirmOptimize = async () => {
+  if (!currentOptimizeImage.value) return
+  
+  try {
+    optimizing.value = true
+    
+    // 调用优化API
+    const response = await optimizeImage(currentOptimizeImage.value.id, {
+      overwriteOriginal: optimizeForm.value.overwriteOriginal,
+      customFileName: optimizeForm.value.customFileName
+    })
+    
+    if (response.code === 200) {
+      ElNotification({
+        title: '✅ 优化已启动',
+        message: '系统正在后台优化文件，通常需要1-10分钟，完成后会自动通知您',
+        type: 'success',
+        duration: 8000,
+        position: 'bottom-right'
+      })
+      
+      // 添加到优化监测列表
+      optimizingFileIds.value.add(currentOptimizeImage.value.id)
+      lastOptimizationStatus.value.set(currentOptimizeImage.value.id, false)
+      
+      // 启动自动刷新，监测优化完成
+      startAutoRefresh()
+      
+      showOptimizeDialog.value = false
+      
+      // 刷新列表
+      await loadImageList()
+    } else {
+      ElMessage.error('优化失败: ' + (response.message || '未知错误'))
+    }
+  } catch (error) {
+    console.error('优化失败：', error)
+    ElMessage.error('优化失败：' + (error.message || '未知错误'))
+  } finally {
+    optimizing.value = false
+  }
+}
 
 // 打开编辑对话框
 const handleEdit = (row) => {
@@ -1872,159 +2561,6 @@ const handleEdit = (row) => {
     description: row.description || ''
   }
   showEditDialog.value = true
-}
-
-// 开始轮询优化进度
-const startProgressPolling = (id) => {
-  // 如果已有定时器，先清除
-  if (progressPollingTimers.value.has(id)) {
-    clearInterval(progressPollingTimers.value.get(id))
-  }
-  
-  // 立即获取一次进度
-  updateProgress(id)
-  
-  // 每2秒轮询一次
-  const timer = setInterval(() => {
-    updateProgress(id)
-  }, 2000)
-  
-  progressPollingTimers.value.set(id, timer)
-}
-
-// 停止轮询优化进度
-const stopProgressPolling = (id) => {
-  if (progressPollingTimers.value.has(id)) {
-    clearInterval(progressPollingTimers.value.get(id))
-    progressPollingTimers.value.delete(id)
-    optimizationProgress.value.delete(id)
-  }
-}
-
-// 更新单个文件的优化进度
-const updateProgress = async (id) => {
-  try {
-    const response = await getOptimizeProgress(id)
-    const data = response.data
-    
-    console.log(`📊 获取进度 [${id}]:`, data)  // 调试日志
-    
-    if (data.exists) {
-      // 更新进度数据
-      optimizationProgress.value.set(id, {
-        progress: data.progress,
-        status: data.status,
-        step: data.step,
-        elapsed: data.elapsed
-      })
-      
-      console.log(`✅ 进度已更新: ${data.progress}% - ${data.step}`)  // 调试日志
-      
-      // 如果完成或失败，停止轮询
-      if (data.status === 'completed' || data.status === 'failed') {
-        stopProgressPolling(id)
-      }
-    } else {
-      console.log(`⚠️ 后端没有进度记录 [${id}]`)  // 调试日志
-      // 后端没有进度记录，可能已完成或失败
-      stopProgressPolling(id)
-    }
-  } catch (error) {
-    console.error('获取进度失败:', error)
-  }
-}
-
-// 优化TIF文件（后台异步优化，不阻塞UI）
-const handleOptimize = async (row) => {
-  try {
-    // 确认对话框
-    await ElMessageBox.confirm(
-      `<div style="line-height: 1.8;">
-        <p><strong>准备优化文件：${row.name}</strong></p>
-        <p style="margin-top: 12px;">优化处理包括：</p>
-        <ul style="margin: 8px 0; padding-left: 20px;">
-          <li>投影转换（EPSG:32645 → EPSG:3857）</li>
-          <li>NoData值设置（255）</li>
-          <li>转换为COG格式（Cloud Optimized GeoTIFF）</li>
-          <li>LZW压缩</li>
-          <li>添加金字塔（加速显示）</li>
-        </ul>
-        <p style="margin-top: 12px; color: #409EFF;">💡 提示：</p>
-        <ul style="margin: 8px 0; padding-left: 20px; color: #409EFF;">
-          <li>优化将在后台执行，您可以继续操作其他功能</li>
-          <li>处理时间：约1-10分钟（取决于文件大小）</li>
-          <li>完成后会自动通知您</li>
-        </ul>
-        <p style="margin-top: 12px;">处理后文件大小通常会减小60-95%，地图显示速度会大幅提升。</p>
-      </div>`,
-      '确认优化',
-      {
-        confirmButtonText: '开始优化',
-        cancelButtonText: '取消',
-        type: 'info',
-        dangerouslyUseHTMLString: true,
-        customStyle: {
-          width: '550px'
-        }
-      }
-    )
-    
-    // 添加到优化任务列表
-    optimizingTasks.value.add(row.id)
-    
-    // 提示开始优化
-    ElMessage({
-      message: `🚀 开始优化 ${row.name}，请稍候...`,
-      type: 'info',
-      duration: 3000
-    })
-    
-    // 开始轮询进度
-    startProgressPolling(row.id)
-    
-    // 异步调用API（不阻塞UI）
-    optimizeImage(row.id)
-      .then(response => {
-        // 移除任务
-        optimizingTasks.value.delete(row.id)
-        
-        // 停止轮询进度
-        stopProgressPolling(row.id)
-        
-        // 显示成功通知
-        ElNotification({
-          title: '✅ 优化完成',
-          message: `${row.name}\n原始: ${response.data.originalSize} → 优化: ${response.data.optimizedSize}\n压缩率: ${response.data.compressionRatio}`,
-          type: 'success',
-          duration: 8000,
-          position: 'bottom-right'
-        })
-        
-        // 刷新列表
-        fetchData()
-      })
-      .catch(error => {
-        // 移除任务
-        optimizingTasks.value.delete(row.id)
-        
-        // 停止轮询进度
-        stopProgressPolling(row.id)
-        
-        const errorMsg = error.response?.data?.message || error.message || '优化失败'
-        
-        // 显示错误通知
-        ElNotification({
-          title: '❌ 优化失败',
-          message: `${row.name}\n${errorMsg}`,
-          type: 'error',
-          duration: 0,  // 不自动关闭
-          position: 'bottom-right'
-        })
-      })
-    
-  } catch (error) {
-    // 用户取消
-  }
 }
 
 // 保存编辑
@@ -2253,7 +2789,7 @@ const handleFileChange = (file) => {
   }
   
   uploadFiles.value.push(file.raw)
-  ElMessage.success(`✅ 已添加: ${file.name}`)
+  ElMessage.success(` 已添加: ${file.name}`)
 }
 
 const removeFile = (index) => {
@@ -2336,6 +2872,11 @@ const handleUpload = async () => {
     }
     formData.append('description', uploadForm.value.description || '')
     
+    // 添加优化选项
+    formData.append('needOptimize', uploadForm.value.needOptimize.toString())
+    formData.append('overwriteOriginal', uploadForm.value.overwriteOriginal.toString())
+    formData.append('optimizedFileName', uploadForm.value.optimizedFileName || '')
+    
     await uploadImage(formData)
     
     // ✅ 上传成功提示
@@ -2344,12 +2885,44 @@ const handleUpload = async () => {
       duration: 3000
     })
     
-    // ✅ 提醒用户需要优化
-    ElMessage.warning({
-      message: '⚠️ 提示：上传的TIF文件较大，建议使用"优化TIF"功能进行处理后再在地图中显示，以获得更流畅的体验',
-      duration: 8000,
-      showClose: true
-    })
+    // ✅ 根据是否优化显示不同的提示
+    if (uploadForm.value.needOptimize) {
+      ElNotification({
+        title: '🚀 自动优化中',
+        message: uploadForm.value.overwriteOriginal 
+          ? '影像文件已上传成功，系统正在后台自动优化并覆盖原文件（投影转换、压缩等）\n\n💡 优化通常需要1-10分钟，完成后会自动通知您'
+          : '影像文件已上传成功，系统正在后台自动优化（投影转换、压缩等）\n\n💡 优化通常需要1-10分钟，完成后会自动通知您',
+        type: 'info',
+        duration: 10000,
+        position: 'bottom-right'
+      })
+    } else {
+      ElNotification({
+        title: '✅ 上传完成',
+        message: '影像文件已上传成功，已保留原始文件',
+        type: 'success',
+        duration: 5000,
+        position: 'bottom-right'
+      })
+    }
+    
+    // 只有选择优化时才添加到优化列表
+    if (uploadForm.value.needOptimize) {
+      // 将新上传的文件添加到优化列表
+      const uploadedFileNames = uploadFiles.value.map(f => f.name)
+      const metadata = await getImageList()
+      metadata.data.forEach(image => {
+        if (uploadedFileNames.includes(image.name) && !image.isOptimized) {
+          optimizingFileIds.value.add(image.id)
+          lastOptimizationStatus.value.set(image.id, false)
+          console.log(`📝 添加到优化监测列表: ${image.id}`)
+        }
+      })
+      
+      // 启动自动刷新，监测优化完成
+      startAutoRefresh()
+    }
+    
     showUploadDialog.value = false
     uploadFiles.value = []
     
@@ -2361,7 +2934,10 @@ const handleUpload = async () => {
       region: '',
       sensor: '',
       cloudCover: null,
-      description: ''
+      description: '',
+      needOptimize: false,
+      overwriteOriginal: false,
+      optimizedFileName: ''
     }
     
     await loadImageList()
@@ -2520,15 +3096,9 @@ onMounted(() => {
   loadAllResults() // 加载所有分析结果
 })
 
-// 组件卸载时清理所有定时器
+// 组件卸载时清理定时器
 onUnmounted(() => {
-  // 清理所有轮询定时器
-  progressPollingTimers.value.forEach((timer, id) => {
-    clearInterval(timer)
-    console.log(`🧹 清理轮询定时器: ${id}`)
-  })
-  progressPollingTimers.value.clear()
-  optimizationProgress.value.clear()
+  stopAutoRefresh()
 })
 </script>
 
@@ -2806,25 +3376,16 @@ onUnmounted(() => {
   margin-top: 4px;
 }
 
-// 加载动画
-.is-loading {
-  animation: rotating 2s linear infinite;
-}
-
-@keyframes rotating {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 // 结果队列Tab样式
 .result-queue-card {
+  .card-title {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+    font-size: 15px;
+  }
+  
   .queue-tabs {
-    margin-top: 10px;
-    
     .tab-label {
       display: flex;
       align-items: center;

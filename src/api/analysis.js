@@ -121,3 +121,12 @@ export const uploadReportToServer = (file, type) => {
   })
 }
 
+// 保存识别结果元数据
+export const saveRecognitionMetadata = (filename, relativePath, metadata) => {
+  return request.post('/analysis/save-recognition-metadata', {
+    filename,
+    relativePath,
+    metadata
+  })
+}
+

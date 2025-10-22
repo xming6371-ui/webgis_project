@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>饼图诊断</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    #test-chart {
+      width: 100%;
+      height: 340px;
+      border: 2px solid red;
+    }
+  </style>
+</head>
+<body>
+  <h2>饼图测试</h2>
+  <div id="test-chart"></div>
+  
+  <script>
+    // 测试饼图
+    const chartDom = document.getElementById('test-chart')
+    const myChart = echarts.init(chartDom)
+    
+    const option = {
+      tooltip: {
+        trigger: 'item',
+        formatter: '{b}: {c}%'
+      },
+      legend: {
+        bottom: '0%',
+        left: 'center',
+        type: 'scroll'
+      },
+      series: [{
+        name: '作物类型',
+        type: 'pie',
+        radius: ['35%', '60%'],
+        center: ['50%', '42%'],
+        avoidLabelOverlap: false,
+        itemStyle: {
+          borderRadius: 10,
+          borderColor: '#fff',
+          borderWidth: 2
+        },
+        label: {
+          show: false
+        },
+        emphasis: {
+          label: {
+            show: true,
+            fontSize: 16,
+            fontWeight: 'bold'
+          }
+        },
+        data: [
+          { value: 20.38, name: '裸地' },
+          { value: 0.26, name: '棉花' },
+          { value: 7.66, name: '小麦' },
+          { value: 0.33, name: '玉米' },
+          { value: 0.01, name: '番茄' },
+          { value: 27.18, name: '打瓜' },
+          { value: 27.81, name: '甜菜' },
+          { value: 16.12, name: '籽用葫芦' },
+          { value: 0.26, name: '辣椒' }
+        ]
+      }]
+    }
+    
+    myChart.setOption(option)
+    console.log('测试饼图已设置')
+  </script>
+</body>
+</html>
+

@@ -139,6 +139,64 @@
             </div>
           </div>
         </el-card>
+
+        <!-- 作物转换关系筛选器 -->
+        <el-card shadow="hover" style="margin-top: 16px;">
+          <template #header>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span>
+                <el-icon><Filter /></el-icon>
+                作物转换关系筛选
+              </span>
+              <el-button 
+                v-if="selectedTransition" 
+                size="small" 
+                text 
+                @click="handleClearTransitionFilter"
+              >
+                清除筛选
+              </el-button>
+            </div>
+          </template>
+
+          <el-select
+            v-model="selectedTransition"
+            placeholder="选择转换类型查看对应地块"
+            clearable
+            filterable
+            style="width: 100%"
+            @change="handleTransitionChange"
+          >
+            <el-option
+              v-for="transition in transitionList"
+              :key="transition.value"
+              :label="transition.label"
+              :value="transition.value"
+            >
+              <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                <span>{{ transition.label }}</span>
+                <el-tag size="small" type="info">{{ transition.count }} 个</el-tag>
+              </div>
+            </el-option>
+          </el-select>
+
+          <div v-if="selectedTransition" style="margin-top: 12px; padding: 10px; background: #f0f9ff; border-radius: 4px; border-left: 3px solid #409eff;">
+            <div style="font-size: 13px; color: #606266; margin-bottom: 6px;">
+              <el-icon style="vertical-align: middle;"><InfoFilled /></el-icon>
+              当前筛选
+            </div>
+            <div style="font-size: 14px; font-weight: 600; color: #409eff;">
+              {{ selectedTransition }}
+            </div>
+            <div style="font-size: 12px; color: #909399; margin-top: 4px;">
+              共找到 <strong style="color: #f56c6c;">{{ filteredChangedFeatures.length }}</strong> 个符合条件的地块
+            </div>
+          </div>
+
+          <div v-else style="margin-top: 12px; padding: 10px; background: #f5f7fa; border-radius: 4px; text-align: center; color: #909399; font-size: 13px;">
+            选择转换类型后，右侧列表将显示对应地块
+          </div>
+        </el-card>
       </el-col>
 
       <!-- 右侧统计面板 -->
@@ -197,23 +255,50 @@
         <el-card shadow="hover">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center;">
-              <span>变化地块列表</span>
-              <el-tag type="warning">{{ changedFeatures.length }}</el-tag>
+              <span>
+                变化地块列表
+                <el-tooltip v-if="selectedTransition" content="当前显示筛选后的地块" placement="top">
+                  <el-icon style="color: #409eff; margin-left: 4px;"><Filter /></el-icon>
+                </el-tooltip>
+              </span>
+              <el-tag v-if="selectedTransition" type="danger">
+                {{ displayedFeatures.length }}
+              </el-tag>
             </div>
           </template>
           
           <el-scrollbar max-height="500px">
+            <!-- 未筛选时显示提示信息 -->
+            <div v-if="!selectedTransition" style="padding: 40px 20px; text-align: center;">
+              <el-icon style="font-size: 48px; color: #dcdfe6; margin-bottom: 16px;"><Filter /></el-icon>
+              <div style="font-size: 14px; color: #909399; line-height: 1.8;">
+                <p style="margin: 0 0 8px 0; font-weight: 600; color: #606266;">请先选择作物转换关系</p>
+                <p style="margin: 0; font-size: 13px;">
+                  👆 在左侧"作物转换关系筛选"中<br/>
+                  选择一种转换类型，<br/>
+                  即可查看对应的变化地块
+                </p>
+              </div>
+            </div>
+            
+            <!-- 筛选后显示地块列表 -->
             <div
-              v-for="(feature, index) in changedFeatures.slice(0, 20)"
-              :key="index"
+              v-for="(feature, index) in displayedFeatures"
+              :key="feature.properties.id || index"
               class="change-item"
-              @click="handleSelectFeature(feature)"
+              :class="{ 'active': selectedFeatureId === (feature.properties.id || feature.id) }"
+              @click="handleClickFeature(feature)"
             >
               <div class="change-item-header">
                 <span class="plot-id">{{ feature.properties.plotName || `地块 ${feature.properties.id || index + 1}` }}</span>
-                <el-tag size="small" :type="getChangeTypeTag(feature.properties.changeCount)">
-                  {{ feature.properties.changeCount }} 次
-                </el-tag>
+                <div style="display: flex; gap: 4px;">
+                  <el-tag size="small" :type="getChangeTypeTag(feature.properties.changeCount)">
+                    {{ feature.properties.changeCount }} 次
+                  </el-tag>
+                  <el-tooltip content="点击定位到地图" placement="top">
+                    <el-icon style="color: #409eff; cursor: pointer;"><Position /></el-icon>
+                  </el-tooltip>
+                </div>
               </div>
               <div class="change-item-body">
                 <div class="crop-transition">
@@ -222,15 +307,18 @@
                   <el-tag size="small" type="warning" effect="plain">{{ feature.properties.endCrop }}</el-tag>
                 </div>
                 <div class="crop-sequence" v-if="feature.properties.cropSequence">
-                  <span class="sequence-label">变化序列：</span>
+                  <span class="sequence-label">完整序列：</span>
                   <span class="sequence-value">{{ feature.properties.cropSequence }}</span>
                 </div>
               </div>
             </div>
-            <el-empty v-if="changedFeatures.length === 0" description="无变化地块" :image-size="60" />
-            <div v-if="changedFeatures.length > 20" style="text-align: center; padding: 12px; color: #909399; font-size: 13px;">
-              仅显示前20个地块，共 {{ changedFeatures.length }} 个
-            </div>
+            
+            <!-- 筛选后无结果提示 -->
+            <el-empty 
+              v-if="selectedTransition && displayedFeatures.length === 0" 
+              description="无符合条件的地块" 
+              :image-size="60" 
+            />
           </el-scrollbar>
         </el-card>
       </el-col>
@@ -241,7 +329,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Location, Position, ArrowLeft, ArrowRight, Close, InfoFilled, QuestionFilled, Right } from '@element-plus/icons-vue'
+import { Location, Position, ArrowLeft, ArrowRight, Close, InfoFilled, QuestionFilled, Right, Filter } from '@element-plus/icons-vue'
 
 // OpenLayers imports
 import Map from 'ol/Map'
@@ -334,9 +422,63 @@ const matchRateClass = computed(() => {
   return 'danger'
 })
 
+// 转换关系筛选
+const selectedTransition = ref(null)
+
 // 有变化的地块
 const changedFeatures = computed(() => {
   return (props.data.features || []).filter(f => (f.properties?.changeCount || 0) > 0)
+})
+
+// 提取所有转换类型（基于简单转换：startCrop → endCrop）
+const transitionList = computed(() => {
+  const transitionMap = {}
+  
+  changedFeatures.value.forEach(feature => {
+    const startCrop = feature.properties?.startCrop || '未知'
+    const endCrop = feature.properties?.endCrop || '未知'
+    const transition = `${startCrop} → ${endCrop}`
+    
+    if (!transitionMap[transition]) {
+      transitionMap[transition] = {
+        value: transition,
+        label: transition,
+        count: 0,
+        startCrop,
+        endCrop
+      }
+    }
+    transitionMap[transition].count++
+  })
+  
+  // 按数量降序排序
+  return Object.values(transitionMap).sort((a, b) => b.count - a.count)
+})
+
+// 根据选中的转换类型筛选地块
+const filteredChangedFeatures = computed(() => {
+  if (!selectedTransition.value) {
+    return changedFeatures.value
+  }
+  
+  // 提取起始和结束作物
+  const [startCrop, endCrop] = selectedTransition.value.split(' → ')
+  
+  return changedFeatures.value.filter(feature => {
+    const featureStart = feature.properties?.startCrop || ''
+    const featureEnd = feature.properties?.endCrop || ''
+    return featureStart === startCrop && featureEnd === endCrop
+  })
+})
+
+// 显示在列表中的地块（未筛选时不显示）
+const displayedFeatures = computed(() => {
+  // 如果没有选择转换类型，返回空数组（不显示地块）
+  if (!selectedTransition.value) {
+    return []
+  }
+  // 筛选后显示所有符合条件的地块（不限制数量）
+  return filteredChangedFeatures.value
 })
 
 // 变化程度图例
@@ -408,11 +550,12 @@ const initMap = async () => {
   try {
     mapLoading.value = true
 
-    // 创建底图图层
+    // 创建底图图层（添加 crossOrigin 支持以允许截图）
     baseMapLayers['amap-vector'] = new TileLayer({
       source: new XYZ({
         url: 'https://wprd0{1-4}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&style=7&x={x}&y={y}&z={z}',
-        wrapX: false
+        wrapX: false,
+        crossOrigin: 'anonymous'
       }),
       visible: currentBaseMap.value === 'amap-vector',
       zIndex: 0
@@ -421,7 +564,8 @@ const initMap = async () => {
     baseMapLayers['amap-satellite'] = new TileLayer({
       source: new XYZ({
         url: 'https://webst0{1-4}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
-        wrapX: false
+        wrapX: false,
+        crossOrigin: 'anonymous'
       }),
       visible: currentBaseMap.value === 'amap-satellite',
       zIndex: 0
@@ -430,7 +574,8 @@ const initMap = async () => {
     baseMapLayers['amap-annotation'] = new TileLayer({
       source: new XYZ({
         url: 'https://webst0{1-4}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}',
-        wrapX: false
+        wrapX: false,
+        crossOrigin: 'anonymous'
       }),
       visible: currentBaseMap.value === 'amap-satellite',
       zIndex: 1
@@ -624,7 +769,49 @@ const handleMapClick = (event) => {
   }
 }
 
-// 选择地块
+// 缩放到指定地块
+const zoomToFeature = (feature) => {
+  const featureId = feature.properties?.id || feature.properties?.Id || feature.id
+  
+  if (vectorLayer && map) {
+    const olFeature = vectorLayer.getSource().getFeatures().find(f => {
+      const fId = f.get('id') || f.get('Id')
+      return fId === featureId
+    })
+    
+    if (olFeature) {
+      const extent = olFeature.getGeometry().getExtent()
+      map.getView().fit(extent, {
+        duration: 500,
+        padding: [50, 50, 50, 50],
+        maxZoom: 16
+      })
+    }
+  }
+}
+
+// 点击地块（从列表）- 显示详情并定位
+const handleClickFeature = (feature) => {
+  const featureId = feature.properties?.id || feature.properties?.Id || feature.id
+  
+  // 设置选中状态
+  selectedFeature.value = feature
+  selectedFeatureId.value = featureId
+  
+  // 缩放到地块
+  zoomToFeature(feature)
+  
+  // 更新图层样式
+  vectorLayer?.changed()
+  
+  // 提示用户
+  ElMessage.success({
+    message: `已定位到地块: ${feature.properties.plotName || featureId}`,
+    duration: 2000
+  })
+}
+
+// 选择地块（从地图点击）
 const handleSelectFeature = (feature) => {
   const featureId = feature.properties?.id || feature.properties?.Id || feature.id
   
@@ -675,6 +862,47 @@ const handleZoomToExtent = () => {
       duration: 500
     })
   }
+}
+
+// 转换类型改变
+const handleTransitionChange = (value) => {
+  console.log('选中的转换类型:', value)
+  
+  // 取消当前选中的地块
+  selectedFeature.value = null
+  selectedFeatureId.value = null
+  vectorLayer?.changed()
+  
+  if (value) {
+    // 选择了转换类型
+    ElMessage.info({
+      message: `已筛选: ${value}，共 ${filteredChangedFeatures.value.length} 个地块`,
+      duration: 3000
+    })
+  } else {
+    // 清除了筛选（点击下拉框的×）
+    handleZoomToExtent()
+    ElMessage.info({
+      message: '已清除筛选',
+      duration: 2000
+    })
+  }
+}
+
+// 清除转换筛选
+const handleClearTransitionFilter = () => {
+  selectedTransition.value = null
+  selectedFeature.value = null
+  selectedFeatureId.value = null
+  vectorLayer?.changed()
+  
+  // 缩放至全局范围
+  handleZoomToExtent()
+  
+  ElMessage.info({
+    message: '已清除筛选',
+    duration: 2000
+  })
 }
 
 // 时间轴控制函数已删除
@@ -986,6 +1214,13 @@ onBeforeUnmount(() => {
       background: #ecf5ff;
       border-left: 3px solid #409eff;
       padding-left: 9px;
+    }
+
+    &.active {
+      background: #f0f9ff;
+      border-left: 3px solid #409eff;
+      padding-left: 9px;
+      box-shadow: 0 2px 8px rgba(64, 158, 255, 0.2);
     }
 
     &:last-child {
