@@ -425,21 +425,9 @@
               </el-table-column>
               <el-table-column prop="size" label="大小" width="100" align="center" />
               <el-table-column prop="createTime" label="创建时间" width="180" align="center" />
-              <el-table-column label="操作" min-width="320" fixed="right">
+              <el-table-column label="操作" min-width="320" fixed="right" align="center">
                 <template #default="scope">
-                  <div style="display: flex; gap: 5px; flex-wrap: wrap;">
-                    <!-- SHP文件显示转换GeoJSON按钮 -->
-                    <el-button 
-                      v-if="scope.row.type === 'SHP'" 
-                      size="small" 
-                      type="warning" 
-                      @click="handleConvertToGeojson(scope.row)"
-                      :loading="convertingFiles.has(scope.row.name)"
-                    >
-                      <RefreshCw :size="14" style="margin-right: 4px" />
-                      转GeoJSON
-                    </el-button>
-                    
+                  <div style="display: flex; gap: 5px; flex-wrap: wrap; justify-content: center;">
                     <!-- 编辑按钮 -->
                     <el-button 
                       size="small" 
@@ -468,6 +456,18 @@
                     >
                       <Trash2 :size="14" style="margin-right: 4px" />
                       删除
+                    </el-button>
+                    
+                    <!-- SHP文件显示转换GeoJSON按钮 -->
+                    <el-button 
+                      v-if="scope.row.type === 'SHP'" 
+                      size="small" 
+                      type="warning" 
+                      @click="handleConvertToGeojson(scope.row)"
+                      :loading="convertingFiles.has(scope.row.name)"
+                    >
+                      <RefreshCw :size="14" style="margin-right: 4px" />
+                      转GeoJSON
                     </el-button>
                   </div>
                 </template>

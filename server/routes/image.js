@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import config from '../config.js'
+import { fromFile } from 'geotiff'
 
 const execAsync = promisify(exec)
 
@@ -161,6 +162,23 @@ async function syncMetadata() {
         Object.assign(existingImage, info)
       }
       
+      // 📊 补充分析：如果元数据中没有统计数据，则自动分析（只分析一次）
+      if (!existingImage.statistics) {
+        try {
+          console.log(`📊 [补充分析] 检测到旧文件缺少统计数据: ${filename}`)
+          const statistics = await analyzeTifFile(filePath)
+          if (statistics) {
+            existingImage.statistics = statistics
+            console.log(`✅ [补充分析] 旧文件统计数据已保存`)
+          }
+        } catch (err) {
+          console.warn(`⚠️ [补充分析] 旧文件分析失败: ${filename}`, err.message)
+          // 分析失败不影响主流程
+        }
+      } else {
+        console.log(`⏭️ [补充分析] 跳过已有统计数据的文件: ${filename}`)
+      }
+      
       console.log(`✅ 更新文件信息: ${filename} (${fileSize})`)
     } else {
       // ✅ 添加新文件（自动读取真实信息）
@@ -211,6 +229,19 @@ async function syncMetadata() {
         newImage.lastOptimizationCheck = new Date().toISOString()
         newImage.lastModifiedTime = stats.mtime.getTime()
         console.warn(`⚠️ 新文件自动检测失败: ${filename}`)
+      }
+      
+      // 📊 自动分析TIF文件并保存统计数据（新增功能）
+      try {
+        console.log(`📊 正在分析新文件: ${filename}`)
+        const statistics = await analyzeTifFile(filePath)
+        if (statistics) {
+          newImage.statistics = statistics
+          console.log(`✅ 统计数据已保存到元数据`)
+        }
+      } catch (err) {
+        console.warn(`⚠️ TIF分析失败: ${filename}`, err.message)
+        // 分析失败不影响主流程
       }
       
       metadata.images.push(newImage)
@@ -710,6 +741,168 @@ async function checkGDAL() {
   }
 }
 
+// 作物类型映射（与前端cropLegend保持一致）
+const CROP_TYPE_MAP = {
+  1: '裸地',
+  2: '棉花',
+  3: '小麦',
+  4: '玉米',
+  5: '番茄',
+  6: '甜菜',
+  7: '打瓜',
+  8: '辣椒',
+  9: '籽用葫芦',
+  10: '其它耕地'
+}
+
+// 智能检测TIF文件类型（判断是否为作物分类图）
+function detectTifType(values) {
+  const uniqueValues = new Set()
+  let minVal = Infinity
+  let maxVal = -Infinity
+  let positiveCount = 0
+  
+  // 采样检测（检查前10000个像元，提高速度）
+  const sampleSize = Math.min(10000, values.length)
+  for (let i = 0; i < sampleSize; i++) {
+    const val = values[i]
+    if (!isNaN(val) && isFinite(val)) {
+      uniqueValues.add(val)
+      if (val > 0) {
+        positiveCount++
+        if (val < minVal) minVal = val
+        if (val > maxVal) maxVal = val
+      }
+    }
+  }
+  
+  // 判断逻辑：
+  // 1. 唯一值数量少（分类图通常只有几个类别）
+  // 2. 最大值不超过20（作物类别通常10个以内）
+  // 3. 最小值大于等于0（分类代码从0或1开始）
+  // 4. 值都是整数（检查前100个正值）
+  let allIntegers = true
+  let checkedCount = 0
+  for (let i = 0; i < values.length && checkedCount < 100; i++) {
+    if (values[i] > 0) {
+      if (values[i] !== Math.floor(values[i])) {
+        allIntegers = false
+        break
+      }
+      checkedCount++
+    }
+  }
+  
+  const isClassification = 
+    uniqueValues.size <= 30 && 
+    maxVal <= 20 && 
+    minVal >= 0 && 
+    allIntegers &&
+    positiveCount > 0
+  
+  return {
+    isClassification,
+    uniqueCount: uniqueValues.size,
+    minValue: minVal === Infinity ? 0 : minVal,
+    maxValue: maxVal === -Infinity ? 0 : maxVal,
+    allIntegers,
+    positiveCount
+  }
+}
+
+// 分析TIF文件并生成统计数据（后端版本，与前端analyzeTifFile保持一致）
+async function analyzeTifFile(filePath) {
+  try {
+    console.log('📊 [后端] 开始分析TIF文件:', path.basename(filePath))
+    
+    // 读取TIF文件
+    const tiff = await fromFile(filePath)
+    const image = await tiff.getImage()
+    
+    // 获取像元数据
+    const data = await image.readRasters()
+    const values = data[0] // 第一个波段
+    
+    console.log(`   读取了 ${values.length} 个像元`)
+    
+    // ✅ 智能检测TIF类型
+    const detection = detectTifType(values)
+    console.log(`   类型检测: 唯一值=${detection.uniqueCount}, 范围=[${detection.minValue}, ${detection.maxValue}], 整数=${detection.allIntegers}`)
+    
+    // ⚠️ 如果不是作物分类图，跳过分析
+    if (!detection.isClassification) {
+      console.log(`⏭️ [后端] 跳过非作物分类图（可能是NDVI、DEM或原始遥感影像）`)
+      console.log(`   建议：该TIF文件不适合作物统计分析`)
+      return null // 返回null，不报错，不阻塞流程
+    }
+    
+    console.log(`✅ [后端] 检测为作物分类图，开始统计分析`)
+    
+    // 获取地理变换参数（用于计算面积）
+    const pixelSize = image.getResolution() // [宽度, 高度]
+    const pixelAreaM2 = Math.abs(pixelSize[0] * pixelSize[1]) // 平方米
+    const pixelAreaMu = pixelAreaM2 / 666.67 // 转换为亩
+    
+    console.log(`   像元大小: ${pixelSize[0]}m × ${pixelSize[1]}m = ${pixelAreaM2.toFixed(2)}平方米 = ${pixelAreaMu.toFixed(4)}亩`)
+    
+    // 统计每个像元值的数量
+    const counts = {}
+    let totalPixels = 0
+    
+    for (let i = 0; i < values.length; i++) {
+      const val = values[i]
+      
+      // 跳过NoData值（通常是0或负数）
+      if (val > 0 && val <= 10) {
+        counts[val] = (counts[val] || 0) + 1
+        totalPixels++
+      }
+    }
+    
+    // ⚠️ 二次验证：如果没有统计到有效像元，说明不是预期的作物分类图
+    if (totalPixels === 0) {
+      console.log(`⏭️ [后端] 未检测到有效作物数据（像元值不在1-10范围内）`)
+      return null
+    }
+    
+    console.log('   像元值分布:', counts)
+    
+    // 映射到作物类型并计算百分比
+    const cropDistribution = {}
+    let totalArea = 0
+    
+    Object.entries(counts).forEach(([value, count]) => {
+      const valueInt = parseInt(value)
+      const cropName = CROP_TYPE_MAP[valueInt] || `未知类型(${valueInt})`
+      const percentage = (count / totalPixels) * 100
+      const area = count * pixelAreaMu
+      
+      cropDistribution[cropName] = percentage.toFixed(2)
+      totalArea += area
+    })
+    
+    console.log('✅ [后端] 作物分布统计:', cropDistribution)
+    console.log(`   总面积: ${totalArea.toFixed(0)} 亩, 有效像元: ${totalPixels}`)
+    
+    const statistics = {
+      totalArea: totalArea.toFixed(0),
+      plotCount: totalPixels.toString(),
+      pixelCount: totalPixels,
+      matchRate: '0',
+      diffCount: '0',
+      cropDistribution: cropDistribution,
+      pixelAreaMu: pixelAreaMu,
+      counts: counts,
+      analyzedAt: new Date().toISOString()
+    }
+    
+    return statistics
+  } catch (error) {
+    console.error('❌ [后端] TIF分析失败:', error.message)
+    return null // 失败时返回null，不阻塞流程
+  }
+}
+
 // 检测TIF文件是否已优化（通过GDAL读取元数据）
 async function detectOptimizationStatus(filePath) {
   try {
@@ -970,6 +1163,18 @@ async function optimizeTifFile(id, options = {}) {
       currentImage.optimizedPath = `/data/${image.name}`
       currentImage.originalPath = `/data/${image.name}`
       currentImage.name = image.name
+      
+      // 📊 分析优化后的TIF文件
+      try {
+        console.log(`📊 正在分析优化后的文件: ${image.name}`)
+        const statistics = await analyzeTifFile(optimizedPath)
+        if (statistics) {
+          currentImage.statistics = statistics
+          console.log(`✅ 统计数据已更新`)
+        }
+      } catch (err) {
+        console.warn(`⚠️ 优化后TIF分析失败: ${image.name}`, err.message)
+      }
     } else {
       // 不覆盖原文件：创建新记录，原记录保持不变
       // 1. 原记录保持不变（继续指向原文件）
@@ -1011,6 +1216,18 @@ async function optimizeTifFile(id, options = {}) {
         sourceFileId: id,  // 记录源文件ID
         uploadTime: new Date().toISOString(),
         description: `优化自 ${image.name}（压缩率${compressionRatio}%，节省${savedSpaceMB}MB）`
+      }
+      
+      // 📊 分析优化后的TIF文件
+      try {
+        console.log(`📊 正在分析优化后的新文件: ${finalFileName}`)
+        const statistics = await analyzeTifFile(optimizedPath)
+        if (statistics) {
+          newImage.statistics = statistics
+          console.log(`✅ 统计数据已保存到新记录`)
+        }
+      } catch (err) {
+        console.warn(`⚠️ 优化后TIF分析失败: ${finalFileName}`, err.message)
       }
       
       currentMetadata.images.push(newImage)

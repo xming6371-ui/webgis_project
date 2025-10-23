@@ -633,7 +633,7 @@ const currentBaseMap = ref('amap-vector') // 当前底图类型（默认路网�
 // 注意：像素值已经整体+1，0表示NoData（透明）
 const cropLegend = [
   { value: 1, label: '裸地', color: '#D2B48C' },      // 原0
-  { value: 2, label: '棉花', color: '#FFFFFF' },      // 原1
+  { value: 2, label: '棉花', color: '#E0F8FF' },      // 原1 - 浅天蓝色，便于识别
   { value: 3, label: '小麦', color: '#FFD700' },      // 原2
   { value: 4, label: '玉米', color: '#FFA500' },      // 原3
   { value: 5, label: '番茄', color: '#FF6347' },      // 原4
@@ -1353,13 +1353,45 @@ const updateGeoJsonStatistics = (fileData, features) => {
   // 统计作物类型或种植情况分布
   const typeCounts = {}
   
-  features.forEach((feature) => {
+  features.forEach((feature, idx) => {
     const props = feature.getProperties()
     
-    // 尝试从多个可能的字段中获取分类信息
-    const type = props.cropType || props.crop_type || props.type || 
-                 props.plantingStatus || props.planting_status || 
-                 props.status || props.category || '未知'
+    // 打印前3个要素的属性作为示例
+    if (idx < 3) {
+      console.log(`要素 ${idx + 1} 属性:`, Object.keys(props).reduce((obj, key) => {
+        if (key !== 'geometry') obj[key] = props[key]
+        return obj
+      }, {}))
+    }
+    
+    let type = '未知'
+    
+    // ✅ 优先检查class字段（SHP文件常用字段）
+    if (props.class !== undefined && props.class !== null) {
+      // class字段：1=已种植，0=未种植
+      type = props.class === 1 || props.class === '1' ? '已种植' : '未种植'
+    }
+    // 检查planted字段（0/1或字符串）
+    else if (props.planted !== undefined && props.planted !== null) {
+      type = props.planted === 1 || props.planted === '1' ? '已种植' : '未种植'
+    }
+    // 检查status字段（字符串形式）
+    else if (props.status) {
+      type = props.status
+    }
+    // 检查planting_status或plantingStatus字段
+    else if (props.planting_status || props.plantingStatus) {
+      const status = props.planting_status || props.plantingStatus
+      type = status === 'planted' || status === 1 || status === '1' ? '已种植' : '未种植'
+    }
+    // 检查作物类型相关字段
+    else if (props.cropType || props.crop_type || props.type) {
+      type = props.cropType || props.crop_type || props.type
+    }
+    // 检查category字段
+    else if (props.category) {
+      type = props.category
+    }
     
     typeCounts[type] = (typeCounts[type] || 0) + 1
   })
@@ -1381,17 +1413,64 @@ const updateGeoJsonStatistics = (fileData, features) => {
       value: value
     }))
     
-    const chartTitle = fileData.recognitionType === 'planting_situation' ? '种植情况' : '作物类型'
+    console.log('📊 准备更新饼图，数据:', chartData)
     
-    cropChart.setOption({
+    const chartTitle = fileData.recognitionType === 'planting_situation' ? '种植情况分布' : '作物类型分布'
+    
+    // ✅ 使用完整的配置，确保饼图正确显示
+    const option = {
+      title: {
+        text: chartTitle,
+        left: 'center',
+        top: 10,
+        textStyle: {
+          fontSize: 16,
+          fontWeight: 600
+        }
+      },
+      tooltip: {
+        trigger: 'item',
+        formatter: '{b}: {c}个 ({d}%)'
+      },
+      legend: {
+        orient: 'vertical',
+        left: 'left',
+        top: 'middle',
+        textStyle: {
+          fontSize: 12
+        }
+      },
       series: [{
         name: chartTitle,
+        type: 'pie',
+        radius: ['40%', '70%'],
+        center: ['60%', '50%'],
+        avoidLabelOverlap: true,
+        itemStyle: {
+          borderRadius: 8,
+          borderColor: '#fff',
+          borderWidth: 2
+        },
+        label: {
+          show: true,
+          formatter: '{b}: {d}%'
+        },
+        emphasis: {
+          label: {
+            show: true,
+            fontSize: 14,
+            fontWeight: 'bold'
+          }
+        },
         data: chartData
-        // 不设置minAngle，让所有数据都能显示
       }]
-    }, true)  // 使用notMerge确保完全替换
+    }
     
-    console.log('✅ 饼图已更新')
+    cropChart.setOption(option, true)  // 完全替换配置
+    
+    console.log('✅ 饼图已更新，数据项数:', chartData.length)
+  } else {
+    console.warn('⚠️ cropChart未初始化')
   }
 }
 
@@ -1560,14 +1639,32 @@ const toggleKmzLayerVisibility = (fileName, visible) => {
   }
 }
 
-// 切换显示不同的KMZ文件统计
+// ⚡ 防抖定时器（避免重复点击）
+let switchKmzFileTimer = null
+let lastSwitchIndex = -1
+
+// 切换显示不同的KMZ文件统计（优化版：快速响应，异步更新，带防抖）
 const switchKmzFile = async (index) => {
   if (index < 0 || index >= loadedKmzFiles.value.length) {
     return
   }
   
+  // ⚡ 优化1：立即更新UI（视觉响应优先，无延迟）
   currentKmzIndex.value = index
   currentRecognitionData.value = loadedKmzFiles.value[index]
+  
+  // ⚡ 优化4：防抖优化 - 如果是同一个索引，取消之前的操作
+  if (lastSwitchIndex === index && switchKmzFileTimer) {
+    console.log('⏭️ 跳过重复点击')
+    return
+  }
+  
+  lastSwitchIndex = index
+  
+  // 取消之前的延迟操作
+  if (switchKmzFileTimer) {
+    clearTimeout(switchKmzFileTimer)
+  }
   
   // 查找对应的图层索引（因为kmzLayers和loadedKmzFiles可能不一一对应）
   const file = loadedKmzFiles.value[index]
@@ -1575,38 +1672,43 @@ const switchKmzFile = async (index) => {
   
   if (layerIndex === -1) {
     console.warn(`⚠️ 未找到文件 ${file.name} 对应的图层，图层尚未加载`)
-    // 🔧 修复：如果图层未加载，仅更新预览信息，不报错
     updateRecognitionStatisticsPreview(file)
     ElMessage.info(`${file.name} 图层未加载，请勾选"种植情况"开关以加载图层`)
     return
   }
   
-  // 🔧 修复：根据文件类型更新统计信息
+  // ⚡ 优化2：先执行缩放（快速动画）
   const layer = kmzLayers[layerIndex]
-  const fileType = layer.get('fileType') || file.type
-  
-  if (fileType === 'SHP' || fileType === 'GeoJSON') {
-    // SHP和GeoJSON文件使用通用统计函数
-    const source = layer.getSource()
-    const features = source.getFeatures()
-    updateGeoJsonStatistics(file, features)
-  } else {
-    // KMZ文件使用专用统计函数
-    updateKmzStatistics(file, layerIndex)
-  }
-  
-  // 缩放到该文件的范围
-  const source = kmzLayers[layerIndex].getSource()
+  const source = layer.getSource()
   const extent = source.getExtent()
+  
+  // 立即缩放到该文件的范围（减少动画时间：500ms → 200ms）
   if (extent && extent.every(coord => isFinite(coord))) {
     map.getView().fit(extent, {
       padding: [80, 80, 80, 80],
-      duration: 500,
+      duration: 200,  // ⚡ 从500ms减少到200ms，更快响应
       maxZoom: 15
     })
   }
   
-  console.log(`✅ 已切换到: ${file.name} (类型: ${fileType})`)
+  console.log(`✅ 已切换到: ${file.name}`)
+  
+  // ⚡ 优化3：延迟更新统计信息（避免阻塞UI，使用requestAnimationFrame）
+  switchKmzFileTimer = setTimeout(() => {
+    requestAnimationFrame(() => {
+      const fileType = layer.get('fileType') || file.type
+      
+      if (fileType === 'SHP' || fileType === 'GeoJSON') {
+        const features = source.getFeatures()
+        updateGeoJsonStatistics(file, features)
+      } else {
+        updateKmzStatistics(file, layerIndex)
+      }
+      
+      console.log(`📊 统计信息已更新 (类型: ${fileType})`)
+      switchKmzFileTimer = null
+    })
+  }, 50)  // 延迟50ms更新统计，优先保证视觉响应
 }
 
 // 加载单个KMZ图层到地图（保留用于单独加载场景）
@@ -2089,15 +2191,21 @@ const updateStatistics = async (imageData) => {
   
   console.log('影像数据:', imageData)
   
-  // 直接使用前端方案分析TIF（不再判断statistics字段）
   let stats = null
   
-  // 检查是否已缓存
+  // 优先使用元数据中的统计数据（后端已预分析）
   if (imageData.statistics) {
     stats = imageData.statistics
-    console.log('✅ 使用缓存的统计数据')
+    console.log('✅ 使用元数据中的统计数据（后端已预分析）')
+    console.log('   分析时间:', stats.analyzedAt || '未知')
+    // 显示快速加载提示
+    ElMessage.success({
+      message: '✅ 已加载预分析数据（快速模式）',
+      duration: 2000
+    })
   } else {
-    // 显示加载提示
+    // 元数据中没有统计数据，使用前端实时分析（较慢）
+    console.log('⚠️ 元数据中无统计数据，开始实时分析（较慢）')
     const loadingMsg = ElMessage.info({
       message: '正在分析影像数据，请稍候...',
       duration: 0
@@ -2114,6 +2222,11 @@ const updateStatistics = async (imageData) => {
       
       // 缓存statistics到imageData（下次不用重新分析）
       imageData.statistics = stats
+      
+      ElMessage.success({
+        message: '✅ 影像分析完成',
+        duration: 2000
+      })
       
     } catch (error) {
       loadingMsg.close()
@@ -2714,8 +2827,8 @@ const toggleTiffLayerOld = async () => {
               ['==', ['band', 1], 0], [0, 0, 0, 0],
               // 1 - 裸地（原0）
               ['==', ['band', 1], 1], [210, 180, 140, 1],
-              // 2 - 棉花（原1）
-              ['==', ['band', 1], 2], [255, 255, 255, 1],
+              // 2 - 棉花（原1）- 浅天蓝色，便于识别
+              ['==', ['band', 1], 2], [224, 248, 255, 1],
               // 3 - 小麦（原2）
               ['==', ['band', 1], 3], [255, 215, 0, 1],
               // 4 - 玉米（原3）
