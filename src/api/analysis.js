@@ -6,9 +6,10 @@ export const getRecognitionResults = () => {
 }
 
 // SHP转换为GeoJSON
-export const convertShpToGeojson = (shpFilename) => {
+export const convertShpToGeojson = (shpFilename, relativePath = null) => {
   return request.post('/analysis/convert-to-geojson', {
-    shpFilename
+    shpFilename,
+    relativePath
   })
 }
 

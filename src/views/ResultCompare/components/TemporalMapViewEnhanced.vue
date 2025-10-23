@@ -128,7 +128,7 @@ const handleExportReport = async () => {
     }
     
     loadingMsg.close()
-    ElMessage.success('PDF报告导出成功！已保存到下载文件夹和影像数据管理中')
+    ElMessage.success('PDF报告导出成功！已保存到下载文件夹和数据管理中')
   } catch (error) {
     console.error('报告导出失败:', error)
     loadingMsg.close()
@@ -144,8 +144,8 @@ onMounted(() => {
 <style scoped lang="scss">
 .temporal-map-view-enhanced {
   .toolbar {
-    margin-bottom: 20px;
-    padding: 16px;
+    margin-bottom: 12px;
+    padding: 10px 16px;
     background: white;
     border-radius: 8px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);

@@ -939,17 +939,17 @@ onMounted(async () => {
     ElMessage.warning(`数据量较大（${featureCount}个地块），地图加载可能需要较长时间，请耐心等待...`)
   }
   
-  // 计算详情面板的初始位置（地图容器右侧附近）
+  // 计算详情面板的初始位置（使用fixed定位，相对于视口）
   await nextTick()
   
   setTimeout(() => {
     const mapElement = document.getElementById('temporal-map')
     if (mapElement) {
       const rect = mapElement.getBoundingClientRect()
-      // 将面板放在地图容器的右侧边缘内侧
+      // 将面板放在地图容器的右侧（使用视口坐标）
       panelPosition.value = {
-        x: rect.width - 380, // 距离右边缘20px
-        y: 80 // 距离顶部80px
+        x: rect.right - 380, // 距离地图右边缘30px
+        y: rect.top + 80 // 距离地图顶部80px
       }
     }
     
@@ -972,7 +972,7 @@ onBeforeUnmount(() => {
 .temporal-change-map {
   .map-container {
     width: 100%;
-    height: 600px;
+    height: 620px;
     background: #f5f7fa;
     border-radius: 8px;
     position: relative;
@@ -980,7 +980,7 @@ onBeforeUnmount(() => {
   }
 
   .detail-panel {
-    position: absolute;
+    position: fixed;
     width: 350px;
     max-height: 600px;
     background: white;

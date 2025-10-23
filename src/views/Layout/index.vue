@@ -50,7 +50,7 @@
           </el-menu-item>
           <el-menu-item index="/image-management">
             <el-icon><Picture /></el-icon>
-            <template #title>影像数据管理</template>
+            <template #title>数据管理</template>
           </el-menu-item>
           <el-menu-item index="/task-management">
             <el-icon><Setting /></el-icon>

@@ -3104,13 +3104,15 @@ onBeforeUnmount(() => {
       }
     }
     
-    .map-container {
-      height: 720px;
-      width: 100%;
-      background: #f5f7fa;
-      border-radius: 4px;
-      position: relative;
-      overflow: hidden;
+      .map-container {
+        height: calc(100vh - 280px);
+        min-height: 500px;
+        max-height: 720px;
+        width: 100%;
+        background: #f5f7fa;
+        border-radius: 4px;
+        position: relative;
+        overflow: hidden;
       
       // OpenLayers 地图样式调整
       :deep(.ol-viewport) {

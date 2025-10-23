@@ -6,45 +6,6 @@
       <p class="page-description">智能识别作物类型，分析种植变化趋势</p>
     </div>
 
-    <!-- 使用教程 -->
-    <el-collapse v-model="activeGuide" class="guide-section">
-      <el-collapse-item name="1">
-        <template #title>
-          <div class="guide-title">
-            <el-icon><QuestionFilled /></el-icon>
-            <span>快速上手指南</span>
-          </div>
-        </template>
-        <div class="guide-content">
-          <div class="guide-step">
-            <div class="step-number">1</div>
-            <div class="step-content">
-              <h4>选择影像来源</h4>
-              <p>支持<strong>本地上传</strong>（可批量选择多个TIF/IMG文件）或从<strong>影像管理</strong>中选择已有影像（支持多选）</p>
-            </div>
-          </div>
-          <div class="guide-step">
-            <div class="step-number">2</div>
-            <div class="step-content">
-              <h4>开始识别</h4>
-              <p>选择好影像后，点击"开始识别"按钮，系统会自动进行批量处理，右侧会显示每个影像的识别进度</p>
-            </div>
-          </div>
-          <div class="guide-step">
-            <div class="step-number">3</div>
-            <div class="step-content">
-              <h4>变化分析</h4>
-              <p>识别完成后，可使用<strong>种植差异检测</strong>（对比2期）或<strong>时序变化分析</strong>（对比多期）查看作物种植变化</p>
-            </div>
-          </div>
-          <div class="guide-tips">
-            <el-icon color="#E6A23C"><WarnTriangleFilled /></el-icon>
-            <span><strong>提示：</strong>单个影像识别通常需要2-5分钟，批量识别会按顺序依次处理</span>
-          </div>
-        </div>
-      </el-collapse-item>
-    </el-collapse>
-
     <!-- 作物识别模块 -->
     <el-card shadow="hover" class="module-card classification-module">
       <template #header>
@@ -62,73 +23,236 @@
       <div class="classification-with-progress">
         <!-- 左侧：识别操作区 -->
         <div class="classification-main">
+          <!-- 快速上手指南 -->
+          <el-collapse v-model="classificationGuide" class="guide-section">
+            <el-collapse-item name="1">
+              <template #title>
+                <div class="guide-title">
+                  <el-icon><QuestionFilled /></el-icon>
+                  <span>快速上手指南</span>
+                </div>
+              </template>
+              <div class="guide-content">
+                <div class="guide-step">
+                  <div class="step-number">1</div>
+                  <div class="step-content">
+                    <h4>选择数据来源</h4>
+                    <p>支持<strong>本地上传</strong>（批量上传影像+SHP）或<strong>从数据管理上传</strong>（选择已有影像和SHP文件，支持批量配对）</p>
+                  </div>
+                </div>
+                <div class="guide-step">
+                  <div class="step-number">2</div>
+                  <div class="step-content">
+                    <h4>文件配对（本地上传模式）</h4>
+                    <p>左侧上传<strong>遥感影像</strong>，右侧上传<strong>SHP文件</strong>（ZIP压缩包），影像和SHP需一一对应</p>
+                  </div>
+                </div>
+                <div class="guide-step">
+                  <div class="step-number">3</div>
+                  <div class="step-content">
+                    <h4>开始识别</h4>
+                    <p>点击"开始识别"后，系统调用深度学习模型进行作物分类，右侧会显示每个任务的识别进度</p>
+                  </div>
+                </div>
+                <div class="guide-tips">
+                  <el-icon color="#E6A23C"><WarnTriangleFilled /></el-icon>
+                  <span><strong>提示：</strong>本地上传模式需确保影像和SHP数量相同且顺序对应。单个任务识别通常需要2-5分钟</span>
+                </div>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+
           <!-- 数据来源选择 -->
           <el-radio-group v-model="imageSource" class="image-source-selector">
             <el-radio-button label="local">
               <Upload :size="16" style="margin-right: 6px;" />
-              本地上传（支持批量）
+              本地上传（批量配对）
             </el-radio-button>
             <el-radio-button label="library">
               <el-icon><Folder /></el-icon>
-              影像管理（支持多选）
+              从数据管理上传（批量配对）
             </el-radio-button>
           </el-radio-group>
 
-          <!-- 本地上传模式 -->
-          <div v-if="imageSource === 'local'" class="upload-area" @click="handleBatchImageUpload">
-            <div class="upload-icon">
-              <Upload :size="48" color="#409EFF" />
+          <!-- 本地上传模式：双上传区域 -->
+          <div v-if="imageSource === 'local'" class="local-upload-mode">
+            <div class="dual-upload-container">
+              <!-- 左侧：遥感影像上传 -->
+              <div class="upload-section">
+                <div class="upload-area" @click="handleImageUpload">
+                  <div class="upload-icon">
+                    <Upload :size="40" color="#409EFF" />
+                  </div>
+                  <div class="upload-text">
+                    <h3>批量上传遥感影像</h3>
+                    <p>支持 TIF、IMG 格式</p>
+                  </div>
+                  <el-button type="primary" size="default" class="upload-btn">
+                    <Upload :size="16" style="margin-right: 6px;" />
+                    选择影像文件（可多选）
+                  </el-button>
+                </div>
+                <div v-if="uploadedImages.length > 0" class="file-list">
+                  <div class="list-header">
+                    <span>已选择 {{ uploadedImages.length }} 个影像</span>
+                    <el-button type="danger" size="small" text @click="clearImages">清空</el-button>
+                  </div>
+                  <div class="file-items">
+                    <div v-for="(file, index) in uploadedImages" :key="index" class="file-item">
+                      <el-icon><Picture /></el-icon>
+                      <span class="file-name">{{ file.name }}</span>
+                      <el-tag size="small" type="info">{{ formatFileSize(file.size) }}</el-tag>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 右侧：SHP文件上传 -->
+              <div class="upload-section">
+                <div class="upload-area" @click="handleShpUpload">
+                  <div class="upload-icon">
+                    <Upload :size="40" color="#67C23A" />
+                  </div>
+                  <div class="upload-text">
+                    <h3>批量上传SHP文件</h3>
+                    <p>仅支持 ZIP 压缩包格式</p>
+                  </div>
+                  <el-button type="success" size="default" class="upload-btn">
+                    <Upload :size="16" style="margin-right: 6px;" />
+                    选择压缩包（可多选）
+                  </el-button>
+                </div>
+                <div v-if="uploadedShps.length > 0" class="file-list">
+                  <div class="list-header">
+                    <span>已选择 {{ uploadedShps.length }} 个SHP</span>
+                    <el-button type="danger" size="small" text @click="clearShps">清空</el-button>
+                  </div>
+                  <div class="file-items">
+                    <div v-for="(file, index) in uploadedShps" :key="index" class="file-item">
+                      <el-icon><FolderOpened /></el-icon>
+                      <span class="file-name">{{ file.name }}</span>
+                      <el-tag size="small" type="success">{{ formatFileSize(file.size) }}</el-tag>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="upload-text">
-              <h3>批量上传遥感影像</h3>
-              <p>支持同时选择多个 TIF、IMG 文件，系统将自动进行批量识别</p>
+
+            <!-- 配对状态提示 -->
+            <div class="pairing-status">
+              <div v-if="uploadedImages.length === 0 && uploadedShps.length === 0" class="status-empty">
+                <el-icon><InfoFilled /></el-icon>
+                <span>请先上传遥感影像和SHP文件</span>
+              </div>
+              <div v-else-if="uploadedImages.length !== uploadedShps.length" class="status-warning">
+                <el-icon color="#E6A23C"><WarnTriangleFilled /></el-icon>
+                <span>影像数量（{{ uploadedImages.length }}）和SHP数量（{{ uploadedShps.length }}）不匹配，请确保数量相同</span>
+              </div>
+              <div v-else class="status-success">
+                <el-icon color="#67C23A"><CircleCheck /></el-icon>
+                <span>已配对 {{ uploadedImages.length }} 个任务，可以开始识别</span>
+                <el-button 
+                  type="primary" 
+                  size="default" 
+                  @click="handleOpenTaskInfoDialog"
+                  style="margin-left: 12px;"
+                >
+                  <el-icon style="margin-right: 6px;"><DataAnalysis /></el-icon>
+                  开始识别
+                </el-button>
+              </div>
             </div>
-            <el-button type="primary" size="large" class="upload-btn">
-              <Upload :size="18" style="margin-right: 8px;" />
-              选择影像文件（可多选）
-            </el-button>
           </div>
 
           <!-- 影像管理模式 -->
-          <div v-else class="library-selection">
-            <el-select 
-              v-model="selectedImageIds" 
-              placeholder="从data文件夹选择影像（可多选）" 
-              size="large"
-              multiple
-              filterable
-              collapse-tags
-              collapse-tags-tooltip
-              class="image-selector"
-            >
-              <el-option
-                v-for="img in imageLibrary"
-                :key="img.id"
-                :label="img.name"
-                :value="img.id"
-              >
-                <div class="image-option">
-                  <span class="image-name">{{ img.name }}</span>
-                  <span class="image-info">{{ img.type }} | {{ img.size }}</span>
+          <div v-else class="library-mode">
+            <div class="library-dual-select">
+              <!-- 左侧：选择影像 -->
+              <div class="library-select-section">
+                <div class="select-label">
+                  <el-icon><Picture /></el-icon>
+                  <span>选择遥感影像</span>
                 </div>
-              </el-option>
-            </el-select>
-            <el-button 
-              type="primary" 
-              size="large" 
-              :disabled="selectedImageIds.length === 0"
-              @click="handleLibraryBatchClassify"
-              class="classify-btn"
-            >
-              <el-icon style="margin-right: 8px;"><DataAnalysis /></el-icon>
-              开始批量识别 ({{ selectedImageIds.length }})
-            </el-button>
-          </div>
+                <el-select 
+                  v-model="selectedLibraryImageIds" 
+                  placeholder="从data文件夹选择影像" 
+                  size="large"
+                  multiple
+                  filterable
+                  collapse-tags
+                  collapse-tags-tooltip
+                  class="library-selector"
+                >
+                  <el-option
+                    v-for="img in imageLibrary"
+                    :key="img.id"
+                    :label="img.name"
+                    :value="img.id"
+                  >
+                    <div class="image-option">
+                      <span class="image-name">{{ img.name }}</span>
+                      <span class="image-info">{{ img.type }} | {{ img.size }}</span>
+                    </div>
+                  </el-option>
+                </el-select>
+                <div class="select-count">已选择 {{ selectedLibraryImageIds.length }} 个影像</div>
+              </div>
 
-          <!-- 快速提示 -->
-          <div class="quick-tips">
-            <el-icon><InfoFilled /></el-icon>
-            <span>支持批量上传和识别，系统将按顺序处理每个影像，右侧会显示详细进度</span>
+              <!-- 右侧：选择SHP -->
+              <div class="library-select-section">
+                <div class="select-label">
+                  <el-icon><FolderOpened /></el-icon>
+                  <span>选择SHP文件</span>
+                </div>
+                <el-select 
+                  v-model="selectedLibraryShpIds" 
+                  placeholder="从data_shp文件夹选择SHP" 
+                  size="large"
+                  multiple
+                  filterable
+                  collapse-tags
+                  collapse-tags-tooltip
+                  class="library-selector"
+                >
+                  <el-option
+                    v-for="shp in shpLibrary"
+                    :key="shp.id"
+                    :label="shp.name"
+                    :value="shp.id"
+                  >
+                    <div class="image-option">
+                      <span class="image-name">{{ shp.name }}</span>
+                      <span class="image-info">{{ shp.regionName || 'SHP' }} | {{ shp.size }}</span>
+                    </div>
+                  </el-option>
+                </el-select>
+                <div class="select-count">已选择 {{ selectedLibraryShpIds.length }} 个SHP</div>
+              </div>
+            </div>
+
+            <!-- 配对状态 -->
+            <div class="library-pairing-status">
+              <div v-if="selectedLibraryImageIds.length === 0 && selectedLibraryShpIds.length === 0" class="status-empty">
+                <el-icon><InfoFilled /></el-icon>
+                <span>请从data文件夹中选择影像和SHP文件</span>
+              </div>
+              <div v-else-if="selectedLibraryImageIds.length !== selectedLibraryShpIds.length" class="status-warning">
+                <el-icon color="#E6A23C"><WarnTriangleFilled /></el-icon>
+                <span>影像数量（{{ selectedLibraryImageIds.length }}）和SHP数量（{{ selectedLibraryShpIds.length }}）不匹配</span>
+              </div>
+              <div v-else class="status-success">
+                <el-icon color="#67C23A"><CircleCheck /></el-icon>
+                <span>已配对 {{ selectedLibraryImageIds.length }} 个任务，可以开始识别</span>
+                <el-button 
+                  type="primary" 
+                  size="default"
+                  @click="handleOpenLibraryTaskInfoDialog"
+                >
+                  <el-icon style="margin-right: 8px;"><DataAnalysis /></el-icon>
+                  开始识别
+                </el-button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -160,11 +284,23 @@
                     <el-icon v-if="task.status === 'completed'" color="#67C23A" :size="16"><CircleCheck /></el-icon>
                     <el-icon v-else-if="task.status === 'processing'" class="rotating" color="#409EFF" :size="16"><Loading /></el-icon>
                     <el-icon v-else color="#909399" :size="16"><Clock /></el-icon>
-                    <span>{{ task.name }}</span>
+                    <span>任务 {{ task.taskNumber }}</span>
                   </div>
                   <el-tag :type="getTaskStatusType(task.status)" size="small">
                     {{ getTaskStatusText(task.status) }}
                   </el-tag>
+                </div>
+                
+                <!-- 文件配对信息 -->
+                <div class="task-files">
+                  <div class="file-pair">
+                    <el-icon color="#409EFF"><Picture /></el-icon>
+                    <span class="file-pair-name">{{ task.imageName }}</span>
+                  </div>
+                  <div class="file-pair">
+                    <el-icon color="#67C23A"><FolderOpened /></el-icon>
+                    <span class="file-pair-name">{{ task.shpName }}</span>
+                  </div>
                 </div>
                 
                 <el-progress 
@@ -208,21 +344,52 @@
     <el-card shadow="never" class="module-card analysis-module">
       <template #header>
         <div class="module-header">
-            <span class="module-title">
+          <span class="module-title">
             <GitCompare :size="18" style="margin-right: 8px;" />
-              变化检测与差异分析
-            </span>
-          <el-button 
-            v-if="hasAnalysisData" 
-            type="danger" 
-            size="small" 
-            @click="handleClearAllData"
-          >
-            <Trash2 :size="14" style="margin-right: 6px;" />
-            清空数据
-          </el-button>
+            变化检测与差异分析
+          </span>
         </div>
       </template>
+
+      <!-- 快速上手指南 -->
+      <el-collapse v-model="analysisGuide" class="guide-section" style="margin-bottom: 20px;">
+        <el-collapse-item name="1">
+          <template #title>
+            <div class="guide-title">
+              <el-icon><QuestionFilled /></el-icon>
+              <span>快速上手指南</span>
+            </div>
+          </template>
+          <div class="guide-content">
+            <div class="guide-step">
+              <div class="step-number">1</div>
+              <div class="step-content">
+                <h4>完成作物识别</h4>
+                <p>在上方"作物智能识别"模块中，完成影像识别任务，系统会自动保存识别结果到分析队列</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <div class="step-number">2</div>
+              <div class="step-content">
+                <h4>选择分析类型</h4>
+                <p><strong>种植差异检测：</strong>对比2期识别结果，查看作物类型变化<br/>
+                <strong>时序变化分析：</strong>对比多期（2期以上）识别结果，追踪作物种植轨迹</p>
+              </div>
+            </div>
+            <div class="guide-step">
+              <div class="step-number">3</div>
+              <div class="step-content">
+                <h4>查看分析结果</h4>
+                <p>分析完成后，系统会自动跳转到"结果对比"页面，展示差异地图、统计图表和变化轨迹</p>
+              </div>
+            </div>
+            <div class="guide-tips">
+              <el-icon color="#E6A23C"><WarnTriangleFilled /></el-icon>
+              <span><strong>提示：</strong>进行差异分析前，请确保已有至少2个识别结果。时序分析需要至少2期数据</span>
+            </div>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
 
       <!-- 功能按钮区 -->
       <div class="analysis-actions">
@@ -252,7 +419,7 @@
     <el-dialog
       v-model="showDifferenceDialog"
       title="种植差异检测配置"
-      width="650px"
+      width="700px"
       :close-on-click-modal="false"
     >
       <el-alert
@@ -261,7 +428,7 @@
         :closable="false"
         style="margin-bottom: 20px;"
       >
-        从识别结果队列中选择两个识别结果文件进行对比，时间早的作为原始图，时间晚的作为对比图
+        从识别结果队列中选择两个<strong>相同格式</strong>的识别结果文件进行对比（SHP vs SHP 或 GeoJSON vs GeoJSON），时间早的作为原始图，时间晚的作为对比图
       </el-alert>
       
       <el-form :model="differenceConfig" label-width="100px">
@@ -271,6 +438,7 @@
             placeholder="选择时间较早的识别结果" 
             style="width: 100%"
             filterable
+            @change="handleBaseFileChange"
           >
             <el-option 
               v-for="file in recognitionFiles" 
@@ -279,9 +447,12 @@
               :value="file.id"
               :disabled="file.id === differenceConfig.compareFileId"
             >
-              <div style="display: flex; justify-content: space-between;">
-                <span>{{ file.taskName }}</span>
-                <span style="color: #8492a6; font-size: 13px;">{{ file.createTime }}</span>
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="flex: 1;">{{ file.taskName }}</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <el-tag :type="file.type === 'SHP' ? 'warning' : 'success'" size="small">{{ file.type }}</el-tag>
+                  <span style="color: #8492a6; font-size: 12px;">{{ file.createTime }}</span>
+                </div>
               </div>
             </el-option>
           </el-select>
@@ -295,17 +466,49 @@
             filterable
           >
             <el-option 
-              v-for="file in recognitionFiles.filter(f => f.id !== differenceConfig.baseFileId)" 
+              v-for="file in getCompatibleFiles(differenceConfig.baseFileId)" 
               :key="file.id"
               :label="`${file.taskName} (${file.createTime})`" 
               :value="file.id"
             >
-              <div style="display: flex; justify-content: space-between;">
-                <span>{{ file.taskName }}</span>
-                <span style="color: #8492a6; font-size: 13px;">{{ file.createTime }}</span>
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="flex: 1;">{{ file.taskName }}</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <el-tag :type="file.type === 'SHP' ? 'warning' : 'success'" size="small">{{ file.type }}</el-tag>
+                  <span style="color: #8492a6; font-size: 12px;">{{ file.createTime }}</span>
+                </div>
               </div>
             </el-option>
           </el-select>
+        </el-form-item>
+        
+        <el-alert
+          v-if="differenceConfig.baseFileId && getSelectedFileType(differenceConfig.baseFileId)"
+          :title="`已选择${getSelectedFileType(differenceConfig.baseFileId)}格式，对比图将自动过滤为相同格式`"
+          type="warning"
+          :closable="false"
+          style="margin-top: 12px;"
+        />
+
+        <el-divider />
+
+        <el-form-item label="分析名称">
+          <el-input 
+            v-model="differenceConfig.analysisName" 
+            placeholder="选填：系统将自动生成默认名称"
+            clearable
+          />
+        </el-form-item>
+
+        <el-form-item label="备注">
+          <el-input 
+            v-model="differenceConfig.notes" 
+            type="textarea"
+            :rows="2"
+            placeholder="选填：可以添加分析相关说明"
+            maxlength="200"
+            show-word-limit
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -334,10 +537,17 @@
         :closable="false"
         style="margin-bottom: 20px;"
       >
-        从分析结果队列中选择多个识别结果文件进行时序变化分析，系统将按时间顺序自动排列
+        从分析结果队列中选择多个<strong>相同格式</strong>的识别结果文件进行时序变化分析（至少2个），系统将按时间顺序自动排列
       </el-alert>
       
       <el-form :model="temporalConfig" label-width="120px">
+        <el-form-item label="文件格式">
+          <el-radio-group v-model="temporalConfig.selectedFormat" @change="handleTemporalFormatChange">
+            <el-radio-button label="SHP">SHP格式</el-radio-button>
+            <el-radio-button label="GeoJSON">GeoJSON格式</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        
         <el-form-item label="选择文件">
           <el-select 
             v-model="temporalConfig.selectedFileIds" 
@@ -349,20 +559,44 @@
             collapse-tags-tooltip
           >
             <el-option 
-              v-for="file in recognitionFiles" 
+              v-for="file in getTemporalCompatibleFiles()" 
               :key="file.id"
               :label="`${file.taskName} (${file.createTime})`" 
               :value="file.id"
             >
-              <div style="display: flex; justify-content: space-between;">
-                <span>{{ file.taskName }}</span>
-                <span style="color: #8492a6; font-size: 13px;">{{ file.createTime }}</span>
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="flex: 1;">{{ file.taskName }}</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <el-tag :type="file.type === 'SHP' ? 'warning' : 'success'" size="small">{{ file.type }}</el-tag>
+                  <span style="color: #8492a6; font-size: 12px;">{{ file.createTime }}</span>
+                </div>
               </div>
             </el-option>
           </el-select>
           <div style="margin-top: 8px; font-size: 12px; color: #909399;">
-            已选择 {{ temporalConfig.selectedFileIds.length }} 个文件
+            已选择 {{ temporalConfig.selectedFileIds.length }} 个{{ temporalConfig.selectedFormat }}文件
           </div>
+        </el-form-item>
+
+        <el-divider />
+
+        <el-form-item label="分析名称">
+          <el-input 
+            v-model="temporalConfig.analysisName" 
+            placeholder="选填：系统将自动生成默认名称"
+            clearable
+          />
+        </el-form-item>
+
+        <el-form-item label="备注">
+          <el-input 
+            v-model="temporalConfig.notes" 
+            type="textarea"
+            :rows="2"
+            placeholder="选填：可以添加分析相关说明"
+            maxlength="200"
+            show-word-limit
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -374,6 +608,104 @@
           :disabled="temporalConfig.selectedFileIds.length < 2"
         >
           开始分析
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 任务信息填写对话框 -->
+    <el-dialog
+      v-model="showTaskInfoDialog"
+      :title="getTaskInfoDialogTitle()"
+      width="600px"
+      :close-on-click-modal="false"
+      @close="handleTaskInfoDialogClose"
+    >
+      <el-alert
+        v-if="(uploadedImages.length > 1 && imageSource === 'local') || (selectedLibraryImageIds.length > 1 && imageSource === 'library')"
+        :title="`当前为第 ${currentBatchIndex + 1} 个任务填写信息`"
+        type="info"
+        :closable="false"
+        style="margin-bottom: 20px;"
+      >
+        <template #default>
+          <div style="font-size: 13px; margin-top: 8px;">
+            <div v-if="imageSource === 'local'" style="margin-bottom: 6px;">
+              <strong>影像文件：</strong>{{ uploadedImages[currentBatchIndex]?.name }}
+            </div>
+            <div v-else-if="imageSource === 'library'" style="margin-bottom: 6px;">
+              <strong>影像文件：</strong>{{ getLibraryImageName(currentBatchIndex) }}
+            </div>
+            <div v-if="imageSource === 'local'">
+              <strong>SHP文件：</strong>{{ uploadedShps[currentBatchIndex]?.name }}
+            </div>
+            <div v-else-if="imageSource === 'library'">
+              <strong>SHP文件：</strong>{{ getLibraryShpName(currentBatchIndex) }}
+            </div>
+          </div>
+        </template>
+      </el-alert>
+
+      <el-form :model="taskInfoForm" label-width="80px" size="default">
+        <el-form-item label="任务名称" required>
+          <el-input 
+            v-model="taskInfoForm.taskName" 
+            placeholder="请输入任务名称"
+            clearable
+          />
+        </el-form-item>
+        
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="年份" required>
+              <el-input-number 
+                v-model="taskInfoForm.year" 
+                :min="2000" 
+                :max="2100"
+                controls-position="right"
+                style="width: 100%;"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="期次" required>
+              <el-input-number 
+                v-model="taskInfoForm.period" 
+                :min="1" 
+                :max="12"
+                controls-position="right"
+                style="width: 100%;"
+              />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-form-item label="备注">
+          <el-input 
+            v-model="taskInfoForm.notes" 
+            type="textarea"
+            :rows="3"
+            placeholder="选填：可以添加任务相关说明"
+            maxlength="200"
+            show-word-limit
+          />
+        </el-form-item>
+
+        <!-- 批量任务时显示"应用到所有"选项 -->
+        <el-form-item v-if="getTotalTaskCount() > 1 && currentBatchIndex === 0">
+          <el-checkbox v-model="applyToAll">
+            应用相同信息到所有 {{ getTotalTaskCount() }} 个任务（仅任务名称会自动编号）
+          </el-checkbox>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="handleCancelTaskInfo">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="handleConfirmTaskInfo"
+          :disabled="!taskInfoForm.taskName"
+        >
+          {{ currentBatchIndex < getTotalTaskCount() - 1 ? '下一个' : '确定并开始识别' }}
         </el-button>
       </template>
     </el-dialog>
@@ -407,15 +739,16 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
-  Plus, Trash2, Upload, GitCompare
+  Upload, GitCompare
 } from 'lucide-vue-next'
 import {
   Tickets, DataAnalysis, Location, InfoFilled, Folder, QuestionFilled,
-  WarnTriangleFilled, Histogram, CircleCheck, Loading, Clock, SuccessFilled
+  WarnTriangleFilled, Histogram, CircleCheck, Loading, Clock, SuccessFilled,
+  Picture, FolderOpened
 } from '@element-plus/icons-vue'
 import { getRecognitionResults, readGeojsonContent, saveAnalysisResultToServer } from '@/api/analysis'
 import { useAnalysisStore } from '@/stores/analysis'
@@ -425,7 +758,8 @@ const router = useRouter()
 const analysisStore = useAnalysisStore()
 
 // 使用教程折叠状态
-const activeGuide = ref([])
+const classificationGuide = ref([])
+const analysisGuide = ref([])
 
 // 对话框显示状态
 const showDifferenceDialog = ref(false)
@@ -441,31 +775,58 @@ const recognitionFiles = ref([])
 
 // 影像来源选择
 const imageSource = ref('local') // local: 本地上传, library: 影像管理
-const selectedImageIds = ref([]) // 改为数组，支持多选
 const imageLibrary = ref([]) // 影像管理中的影像列表
+const shpLibrary = ref([]) // 影像管理中的SHP列表
+
+// 本地上传模式的文件列表
+const uploadedImages = ref([]) // 遥感影像文件列表
+const uploadedShps = ref([]) // SHP文件列表（zip格式）
+
+// 影像管理模式的选择
+const selectedLibraryImageIds = ref([]) // 选择的影像ID
+const selectedLibraryShpIds = ref([]) // 选择的SHP ID
 
 // 批量识别任务列表
 const batchTasks = ref([])
 let taskIdCounter = 0
 
+// 任务信息对话框
+const showTaskInfoDialog = ref(false)
+const currentBatchIndex = ref(0) // 当前填写的批次索引
+const batchTaskInfos = ref([]) // 批量任务信息列表
+const applyToAll = ref(false) // 是否应用到所有任务
+
+// 当前任务信息表单
+const taskInfoForm = ref({
+  taskName: '',
+  year: new Date().getFullYear(),
+  period: 1,
+  notes: ''
+})
+
 // 差异检测配置
 const differenceLoading = ref(false)
 const differenceConfig = ref({
   baseFileId: '',
-  compareFileId: ''
+  compareFileId: '',
+  analysisName: '',
+  notes: ''
 })
 
 // 时序变化分析配置
 const temporalLoading = ref(false)
 const temporalConfig = ref({
-  selectedFileIds: []
+  selectedFileIds: [],
+  selectedFormat: 'SHP', // 默认选择SHP格式
+  analysisName: '',
+  notes: ''
 })
 
 // 计算属性：判断是否有分析数据（通过 store 判断）
-const hasAnalysisData = computed(() => {
-  return analysisStore.differenceResult !== null || 
-         analysisStore.temporalResult !== null
-})
+// const hasAnalysisData = computed(() => {
+//   return analysisStore.differenceResult !== null || 
+//          analysisStore.temporalResult !== null
+// })
 
 // 批量任务相关计算属性
 const completedTasksCount = computed(() => {
@@ -498,7 +859,7 @@ const getTaskStatusType = (status) => {
   return typeMap[status] || 'info'
 }
 
-// 加载识别结果文件列表（从后端API读取GeoJSON文件）
+// 加载识别结果文件列表（从后端API读取SHP和GeoJSON文件）
 const loadRecognitionFiles = async () => {
   try {
     // 从后端API加载识别结果
@@ -506,14 +867,16 @@ const loadRecognitionFiles = async () => {
     if (response.code === 200) {
       const allResults = response.data || []
       
-      // 只加载 GeoJSON 类型的识别结果文件
+      // 🔧 修复：同时加载 SHP 和 GeoJSON 类型的识别结果文件
       recognitionFiles.value = allResults.filter(r => {
-        // 检查文件类型是否为 GeoJSON 或 GEOJSON（不区分大小写）
-        const isGeoJSON = r.type && r.type.toUpperCase() === 'GEOJSON'
-        return isGeoJSON
+        // 检查文件类型是否为 SHP、GeoJSON 或 GEOJSON（不区分大小写）
+        const type = r.type && r.type.toUpperCase()
+        return type === 'SHP' || type === 'GEOJSON'
       })
       
-      console.log('✅ 已从后端加载GeoJSON识别结果文件:', recognitionFiles.value.length, '个')
+      console.log('✅ 已从后端加载识别结果文件:', recognitionFiles.value.length, '个')
+      console.log('  - SHP文件:', recognitionFiles.value.filter(r => r.type === 'SHP').length, '个')
+      console.log('  - GeoJSON文件:', recognitionFiles.value.filter(r => r.type === 'GeoJSON').length, '个')
       console.log('识别结果文件列表:', recognitionFiles.value)
     } else {
       recognitionFiles.value = []
@@ -561,10 +924,56 @@ const loadImageLibrary = async () => {
   }
 }
 
+// 加载SHP库（从data_shp文件夹）
+const loadShpLibrary = async () => {
+  try {
+    // 从后端API加载识别结果（包含SHP文件）
+    const response = await getRecognitionResults()
+    if (response.code === 200) {
+      const allResults = response.data || []
+      
+      // 只加载SHP类型的文件
+      shpLibrary.value = allResults
+        .filter(r => r.type === 'SHP')
+        .map(shp => ({
+          id: shp.id,
+          name: shp.name,
+          type: 'SHP',
+          size: shp.size,
+          relativePath: shp.relativePath,
+          regionCode: shp.regionCode,
+          regionName: shp.regionName,
+          taskName: shp.taskName
+        }))
+      
+      console.log('✅ 已从data_shp文件夹加载SHP列表:', shpLibrary.value.length, '个')
+      console.log('SHP列表:', shpLibrary.value)
+    } else {
+      shpLibrary.value = []
+      console.log('⚠️ data_shp文件夹中暂无SHP文件')
+    }
+  } catch (error) {
+    console.error('❌ 加载data_shp文件夹SHP列表失败:', error)
+    shpLibrary.value = []
+    ElMessage.warning('无法加载SHP列表，请检查后端服务')
+  }
+}
+
 // 组件挂载时加载数据
 onMounted(() => {
   loadRecognitionFiles()
   loadImageLibrary()
+  loadShpLibrary()
+})
+
+// 组件卸载时清空已填写的任务信息
+onBeforeUnmount(() => {
+  // 清空上传的文件和任务信息
+  uploadedImages.value = []
+  uploadedShps.value = []
+  batchTaskInfos.value = []
+  currentBatchIndex.value = 0
+  applyToAll.value = false
 })
 
 // 前往数据管理查看分析结果
@@ -572,78 +981,397 @@ const handleViewAnalysisQueue = () => {
   router.push('/image-management')
 }
 
-// 批量上传影像文件
-const handleBatchImageUpload = () => {
+// 获取兼容的文件列表（差异检测用）
+const getCompatibleFiles = (baseFileId) => {
+  if (!baseFileId) {
+    return recognitionFiles.value
+  }
+  
+  const baseFile = recognitionFiles.value.find(f => f.id === baseFileId)
+  if (!baseFile) {
+    return recognitionFiles.value
+  }
+  
+  // 只返回相同类型且不是原始图的文件
+  return recognitionFiles.value.filter(f => 
+    f.id !== baseFileId && f.type === baseFile.type
+  )
+}
+
+// 获取选中文件的类型
+const getSelectedFileType = (fileId) => {
+  const file = recognitionFiles.value.find(f => f.id === fileId)
+  return file ? file.type : null
+}
+
+// 原始图选择变化时，清空对比图选择
+const handleBaseFileChange = () => {
+  differenceConfig.value.compareFileId = ''
+}
+
+// 获取时序分析兼容的文件列表
+const getTemporalCompatibleFiles = () => {
+  return recognitionFiles.value.filter(f => f.type === temporalConfig.value.selectedFormat)
+}
+
+// 时序分析格式变化时，清空已选文件
+const handleTemporalFormatChange = () => {
+  temporalConfig.value.selectedFileIds = []
+}
+
+// 格式化文件大小
+const formatFileSize = (bytes) => {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+// 上传遥感影像
+const handleImageUpload = () => {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = '.tif,.tiff,.img'
-  input.multiple = true // 支持多选
+  input.multiple = true
   
   input.onchange = (e) => {
     const files = Array.from(e.target.files)
     if (files.length > 0) {
-      handleBatchImageFiles(files)
+      // 验证文件格式
+      const invalidFiles = files.filter(file => {
+        const ext = file.name.toLowerCase()
+        return !ext.endsWith('.tif') && !ext.endsWith('.tiff') && !ext.endsWith('.img')
+      })
+      
+      if (invalidFiles.length > 0) {
+        ElMessage.warning(`以下文件格式不支持：${invalidFiles.map(f => f.name).join(', ')}`)
+        return
+      }
+      
+      uploadedImages.value.push(...files)
+      ElMessage.success(`已添加 ${files.length} 个遥感影像`)
+      console.log('已上传影像文件:', uploadedImages.value)
     }
   }
   
   input.click()
 }
 
-// 处理批量上传的影像文件
-const handleBatchImageFiles = (files) => {
-  console.log(`批量上传 ${files.length} 个文件:`, files)
+// 上传SHP文件
+const handleShpUpload = () => {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.zip'
+  input.multiple = true
   
-  // 为每个文件创建任务
-  const newTasks = files.map(file => ({
-    id: `task_${++taskIdCounter}`,
-    name: file.name,
-    file: file,
-    status: 'waiting',
-    progress: 0,
-    statusText: '等待处理',
-    elapsedTime: '00:00',
-    startTime: null
-  }))
+  input.onchange = (e) => {
+    const files = Array.from(e.target.files)
+    if (files.length > 0) {
+      // 验证文件格式
+      const invalidFiles = files.filter(file => !file.name.toLowerCase().endsWith('.zip'))
+      
+      if (invalidFiles.length > 0) {
+        ElMessage.warning(`SHP文件必须打包为ZIP压缩包格式，以下文件格式不支持：${invalidFiles.map(f => f.name).join(', ')}`)
+        return
+      }
+      
+      // TODO: 这里可以添加验证zip包内是否只有一个shp文件的逻辑
+      // 由于前端无法直接解压zip，这个验证可能需要在后端完成
+      
+      uploadedShps.value.push(...files)
+      ElMessage.success(`已添加 ${files.length} 个SHP压缩包`)
+      
+      ElNotification({
+        title: '提示',
+        message: '请确保每个ZIP压缩包仅包含一个SHP文件及其相关文件（.shx, .dbf, .prj等）',
+        type: 'info',
+        duration: 6000
+      })
+      
+      console.log('已上传SHP文件:', uploadedShps.value)
+    }
+  }
+  
+  input.click()
+}
+
+// 清空影像列表
+const clearImages = () => {
+  uploadedImages.value = []
+  ElMessage.info('已清空影像列表')
+}
+
+// 清空SHP列表
+const clearShps = () => {
+  uploadedShps.value = []
+  ElMessage.info('已清空SHP列表')
+}
+
+// 获取总任务数
+const getTotalTaskCount = () => {
+  if (imageSource.value === 'local') {
+    return uploadedImages.value.length
+  } else {
+    return selectedLibraryImageIds.value.length
+  }
+}
+
+// 获取任务信息对话框标题
+const getTaskInfoDialogTitle = () => {
+  const totalCount = getTotalTaskCount()
+  if (totalCount > 1) {
+    return `填写任务信息 (${currentBatchIndex.value + 1}/${totalCount})`
+  }
+  return '填写任务信息'
+}
+
+// 获取库中影像名称
+const getLibraryImageName = (index) => {
+  if (index >= selectedLibraryImageIds.value.length) return ''
+  const imageId = selectedLibraryImageIds.value[index]
+  const image = imageLibrary.value.find(img => img.id === imageId)
+  return image ? image.name : ''
+}
+
+// 获取库中SHP名称
+const getLibraryShpName = (index) => {
+  if (index >= selectedLibraryShpIds.value.length) return ''
+  const shpId = selectedLibraryShpIds.value[index]
+  const shp = shpLibrary.value.find(s => s.id === shpId)
+  return shp ? shp.name : ''
+}
+
+// 打开任务信息对话框（本地上传模式）
+const handleOpenTaskInfoDialog = () => {
+  if (uploadedImages.value.length === 0 || uploadedShps.value.length === 0) {
+    ElMessage.warning('请先上传遥感影像和SHP文件')
+    return
+  }
+  
+  if (uploadedImages.value.length !== uploadedShps.value.length) {
+    ElMessage.warning('影像和SHP文件数量必须相同，请检查后重试')
+    return
+  }
+  
+  // 重置状态
+  currentBatchIndex.value = 0
+  batchTaskInfos.value = []
+  applyToAll.value = false
+  
+  // 重置表单
+  taskInfoForm.value = {
+    taskName: '',
+    year: new Date().getFullYear(),
+    period: 1,
+    notes: ''
+  }
+  
+  showTaskInfoDialog.value = true
+}
+
+// 打开任务信息对话框（库模式）
+const handleOpenLibraryTaskInfoDialog = () => {
+  if (selectedLibraryImageIds.value.length === 0 || selectedLibraryShpIds.value.length === 0) {
+    ElMessage.warning('请选择影像和SHP文件')
+    return
+  }
+  
+  if (selectedLibraryImageIds.value.length !== selectedLibraryShpIds.value.length) {
+    ElMessage.warning('影像和SHP文件数量必须相同')
+    return
+  }
+  
+  // 重置状态
+  currentBatchIndex.value = 0
+  batchTaskInfos.value = []
+  applyToAll.value = false
+  
+  // 重置表单
+  taskInfoForm.value = {
+    taskName: '',
+    year: new Date().getFullYear(),
+    period: 1,
+    notes: ''
+  }
+  
+  showTaskInfoDialog.value = true
+}
+
+// 确认任务信息
+const handleConfirmTaskInfo = () => {
+  if (!taskInfoForm.value.taskName) {
+    ElMessage.warning('请填写任务名称')
+    return
+  }
+  
+  // 保存当前任务信息
+  const taskInfo = {
+    taskName: taskInfoForm.value.taskName,
+    year: taskInfoForm.value.year,
+    period: taskInfoForm.value.period,
+    notes: taskInfoForm.value.notes
+  }
+  
+  batchTaskInfos.value[currentBatchIndex.value] = taskInfo
+  
+  const totalTaskCount = getTotalTaskCount()
+  
+  // 如果选择了"应用到所有"
+  if (applyToAll.value && currentBatchIndex.value === 0) {
+    // 为所有任务应用相同信息，但任务名称自动编号
+    for (let i = 0; i < totalTaskCount; i++) {
+      batchTaskInfos.value[i] = {
+        ...taskInfo,
+        taskName: totalTaskCount > 1 ? `${taskInfo.taskName}_${i + 1}` : taskInfo.taskName
+      }
+    }
+    
+    // 直接开始识别
+    showTaskInfoDialog.value = false
+    if (imageSource.value === 'local') {
+      handleStartClassification()
+    } else {
+      handleLibraryBatchClassify()
+    }
+    return
+  }
+  
+  // 检查是否还有未填写的任务
+  if (currentBatchIndex.value < totalTaskCount - 1) {
+    // 继续下一个任务
+    currentBatchIndex.value++
+    
+    // 重置表单（保留年份期次）
+    taskInfoForm.value = {
+      taskName: '',
+      year: taskInfoForm.value.year,
+      period: taskInfoForm.value.period,
+      notes: ''
+    }
+  } else {
+    // 所有任务信息填写完毕，开始识别
+    showTaskInfoDialog.value = false
+    if (imageSource.value === 'local') {
+      handleStartClassification()
+    } else {
+      handleLibraryBatchClassify()
+    }
+  }
+}
+
+// 取消任务信息填写（直接关闭，保留已填写信息）
+const handleCancelTaskInfo = () => {
+  showTaskInfoDialog.value = false
+}
+
+// 对话框关闭事件（点击右上角×或按ESC）
+const handleTaskInfoDialogClose = () => {
+  // 关闭时保留已填写的信息，不做清空操作
+}
+
+// 开始识别（使用已填写的任务信息）
+const handleStartClassification = () => {
+  // 创建配对任务，包含任务信息
+  const newTasks = []
+  for (let i = 0; i < uploadedImages.value.length; i++) {
+    const taskInfo = batchTaskInfos.value[i] || {
+      taskName: `任务_${i + 1}`,
+      year: new Date().getFullYear(),
+      period: 1,
+      notes: ''
+    }
+    
+    newTasks.push({
+      id: `task_${++taskIdCounter}`,
+      taskNumber: i + 1,
+      imageName: uploadedImages.value[i].name,
+      shpName: uploadedShps.value[i].name,
+      imageFile: uploadedImages.value[i],
+      shpFile: uploadedShps.value[i],
+      status: 'waiting',
+      progress: 0,
+      statusText: '等待处理',
+      elapsedTime: '00:00',
+      startTime: null,
+      // 任务元信息
+      taskInfo: taskInfo
+    })
+  }
   
   batchTasks.value.push(...newTasks)
   
-  ElMessage.success(`已添加 ${files.length} 个识别任务，开始批量处理`)
+  ElMessage.success(`已创建 ${newTasks.length} 个识别任务，开始批量处理`)
+  console.log('📝 批量任务信息:', batchTaskInfos.value)
+  
+  // 清空上传列表和任务信息
+  uploadedImages.value = []
+  uploadedShps.value = []
+  batchTaskInfos.value = []
   
   // 开始处理批量任务
   processBatchTasks()
 }
 
-// 从影像管理批量识别
+// 从影像管理批量识别（支持影像+SHP配对）
 const handleLibraryBatchClassify = () => {
-  if (selectedImageIds.value.length === 0) {
-    ElMessage.warning('请选择要识别的影像')
+  if (selectedLibraryImageIds.value.length === 0 || selectedLibraryShpIds.value.length === 0) {
+    ElMessage.warning('请选择影像和SHP文件')
+    return
+  }
+  
+  if (selectedLibraryImageIds.value.length !== selectedLibraryShpIds.value.length) {
+    ElMessage.warning('影像和SHP文件数量必须相同')
     return
   }
   
   const selectedImages = imageLibrary.value.filter(img => 
-    selectedImageIds.value.includes(img.id)
+    selectedLibraryImageIds.value.includes(img.id)
   )
   
-  console.log(`从影像管理选择 ${selectedImages.length} 个影像:`, selectedImages)
+  const selectedShps = shpLibrary.value.filter(shp => 
+    selectedLibraryShpIds.value.includes(shp.id)
+  )
   
-  // 为每个影像创建任务
-  const newTasks = selectedImages.map(img => ({
-    id: `task_${++taskIdCounter}`,
-    name: img.name,
-    imageId: img.id,
-    status: 'waiting',
-    progress: 0,
-    statusText: '等待处理',
-    elapsedTime: '00:00',
-    startTime: null
-  }))
+  console.log(`从数据管理选择 ${selectedImages.length} 个影像和 ${selectedShps.length} 个SHP`)
+  
+  // 创建配对任务，包含任务信息
+  const newTasks = []
+  for (let i = 0; i < selectedImages.length; i++) {
+    const taskInfo = batchTaskInfos.value[i] || {
+      taskName: `任务_${i + 1}`,
+      year: new Date().getFullYear(),
+      period: 1,
+      notes: ''
+    }
+    
+    newTasks.push({
+      id: `task_${++taskIdCounter}`,
+      taskNumber: batchTasks.value.length + i + 1,
+      imageName: selectedImages[i].name,
+      shpName: selectedShps[i].name,
+      imageId: selectedImages[i].id,
+      shpId: selectedShps[i].id,
+      shpRelativePath: selectedShps[i].relativePath,
+      status: 'waiting',
+      progress: 0,
+      statusText: '等待处理',
+      elapsedTime: '00:00',
+      startTime: null,
+      // 任务元信息
+      taskInfo: taskInfo
+    })
+  }
   
   batchTasks.value.push(...newTasks)
   
-  ElMessage.success(`已添加 ${selectedImages.length} 个识别任务，开始批量处理`)
+  ElMessage.success(`已添加 ${newTasks.length} 个识别任务，开始批量处理`)
+  console.log('📝 批量任务信息:', batchTaskInfos.value)
   
-  // 清空选择
-  selectedImageIds.value = []
+  // 清空选择和任务信息
+  selectedLibraryImageIds.value = []
+  selectedLibraryShpIds.value = []
+  batchTaskInfos.value = []
   
   // 开始处理批量任务
   processBatchTasks()
@@ -769,23 +1497,75 @@ const handleRunDifferenceDetection = async () => {
     console.log('原始图文件:', baseFile)
     console.log('对比图文件:', compareFile)
 
-    // 1. 读取两个GeoJSON文件
+    // 1. 读取两个文件（支持SHP和GeoJSON）
     analysisProgress.value = 20
     analysisStatusText.value = '正在读取原始图数据...'
-    console.log(`正在读取原始图: ${baseFile.name}`)
-    const baseResponse = await readGeojsonContent(baseFile.name)
-    console.log('原始图响应:', baseResponse)
+    console.log(`正在读取原始图: ${baseFile.name}, 类型: ${baseFile.type}`)
+    
+    // 🔧 辅助函数：读取文件并转换为GeoJSON格式
+    const readFileAsGeojson = async (file) => {
+      if (file.type === 'SHP') {
+        // SHP文件：先尝试转换为GeoJSON，如果已存在则直接读取
+        console.log(`  SHP文件，需要转换: ${file.name}, 相对路径: ${file.relativePath || '根目录'}`)
+        const { convertShpToGeojson } = await import('@/api/analysis')
+        
+        try {
+          // 🔧 修复：传递relativePath参数，支持子文件夹
+          const convertResponse = await convertShpToGeojson(file.name, file.relativePath)
+          
+          if (convertResponse.code === 200) {
+            // 转换成功，返回数据
+            console.log(`  ✅ SHP转换成功`)
+            return convertResponse.data
+          } else if (convertResponse.code === 400 && convertResponse.message?.includes('已经转换过了')) {
+            // 文件已存在，直接读取对应的GeoJSON文件
+            console.log(`  ℹ️ SHP已转换过，直接读取GeoJSON文件`)
+            const geojsonFilename = file.name.replace(/\.shp$/i, '.geojson')
+            const geojsonResponse = await readGeojsonContent(geojsonFilename)
+            
+            if (geojsonResponse.code === 200) {
+              console.log(`  ✅ 读取已转换的GeoJSON成功`)
+              return geojsonResponse.data
+            } else {
+              throw new Error(`读取已转换的GeoJSON失败: ${geojsonResponse.message}`)
+            }
+          } else {
+            throw new Error(`SHP转换失败: ${convertResponse.message}`)
+          }
+        } catch (error) {
+          // 如果转换失败，尝试直接读取GeoJSON（可能已经转换过）
+          console.log(`  ⚠️ 转换出错，尝试读取已存在的GeoJSON`)
+          const geojsonFilename = file.name.replace(/\.shp$/i, '.geojson')
+          try {
+            const geojsonResponse = await readGeojsonContent(geojsonFilename)
+            if (geojsonResponse.code === 200) {
+              console.log(`  ✅ 读取已存在的GeoJSON成功`)
+              return geojsonResponse.data
+            }
+          } catch (e) {
+            console.error(`  ❌ 读取GeoJSON也失败:`, e)
+          }
+          throw error
+        }
+      } else {
+        // GeoJSON文件：直接读取
+        console.log(`  GeoJSON文件，直接读取: ${file.name}`)
+        const response = await readGeojsonContent(file.name)
+        if (response.code === 200) {
+          return response.data
+        } else {
+          throw new Error(`读取GeoJSON失败: ${response.message}`)
+        }
+      }
+    }
+    
+    const baseGeojson = await readFileAsGeojson(baseFile)
+    console.log('原始图读取成功，要素数:', baseGeojson.features?.length || 0)
     
     analysisProgress.value = 35
     analysisStatusText.value = '正在读取对比图数据...'
-    const compareResponse = await readGeojsonContent(compareFile.name)
-    
-    if (baseResponse.code !== 200 || compareResponse.code !== 200) {
-      throw new Error('读取GeoJSON文件失败')
-    }
-    
-    const baseGeojson = baseResponse.data
-    const compareGeojson = compareResponse.data
+    const compareGeojson = await readFileAsGeojson(compareFile)
+    console.log('对比图读取成功，要素数:', compareGeojson.features?.length || 0)
     
     console.log(`原始图包含 ${baseGeojson.features?.length || 0} 个要素`)
     console.log(`对比图包含 ${compareGeojson.features?.length || 0} 个要素`)
@@ -835,20 +1615,27 @@ const handleRunDifferenceDetection = async () => {
     
     // 保存完整的JSON格式分析结果到服务器
     try {
+      const analysisName = differenceConfig.value.analysisName || `${baseFile.taskName} vs ${compareFile.taskName}`
       const analysisData = {
         version: '1.0',
         id: `difference_${Date.now()}`,
         type: 'difference',
         metadata: {
-          title: `${baseFile.taskName} vs ${compareFile.taskName}`,
+          title: analysisName,
           createTime: new Date().toLocaleString('zh-CN'),
           baseFile: baseFile.taskName,
           compareFile: compareFile.taskName,
           totalPlots: diffResult.stats.total,
-          changedPlots: diffResult.stats.changed
+          changedPlots: diffResult.stats.changed,
+          notes: differenceConfig.value.notes || ''
         },
         data: analysisResult
       }
+      
+      console.log('📝 差异检测分析信息:', {
+        name: analysisName,
+        notes: differenceConfig.value.notes
+      })
       
       const saveResponse = await saveAnalysisResultToServer('difference', analysisData)
       console.log('✅ 差异分析结果已保存为JSON:', saveResponse.data)
@@ -1080,23 +1867,83 @@ const handleRunTemporalAnalysis = async () => {
     console.log(`开始时序变化分析: ${selectedFiles.length}个时间点`)
     console.log('选择的文件:', selectedFiles)
 
-    // 1. 读取所有GeoJSON文件
+    // 1. 读取所有文件（支持SHP和GeoJSON）
     const geojsonDataList = []
+    
+    // 🔧 辅助函数：读取文件并转换为GeoJSON格式
+    const readFileAsGeojson = async (file) => {
+      if (file.type === 'SHP') {
+        // SHP文件：先尝试转换为GeoJSON，如果已存在则直接读取
+        console.log(`  SHP文件，需要转换: ${file.name}, 相对路径: ${file.relativePath || '根目录'}`)
+        const { convertShpToGeojson } = await import('@/api/analysis')
+        
+        try {
+          // 🔧 修复：传递relativePath参数，支持子文件夹
+          const convertResponse = await convertShpToGeojson(file.name, file.relativePath)
+          
+          if (convertResponse.code === 200) {
+            // 转换成功，返回数据
+            console.log(`  ✅ SHP转换成功`)
+            return convertResponse.data
+          } else if (convertResponse.code === 400 && convertResponse.message?.includes('已经转换过了')) {
+            // 文件已存在，直接读取对应的GeoJSON文件
+            console.log(`  ℹ️ SHP已转换过，直接读取GeoJSON文件`)
+            const geojsonFilename = file.name.replace(/\.shp$/i, '.geojson')
+            const geojsonResponse = await readGeojsonContent(geojsonFilename)
+            
+            if (geojsonResponse.code === 200) {
+              console.log(`  ✅ 读取已转换的GeoJSON成功`)
+              return geojsonResponse.data
+            } else {
+              throw new Error(`读取已转换的GeoJSON失败: ${geojsonResponse.message}`)
+            }
+          } else {
+            throw new Error(`SHP转换失败: ${convertResponse.message}`)
+          }
+        } catch (error) {
+          // 如果转换失败，尝试直接读取GeoJSON（可能已经转换过）
+          console.log(`  ⚠️ 转换出错，尝试读取已存在的GeoJSON`)
+          const geojsonFilename = file.name.replace(/\.shp$/i, '.geojson')
+          try {
+            const geojsonResponse = await readGeojsonContent(geojsonFilename)
+            if (geojsonResponse.code === 200) {
+              console.log(`  ✅ 读取已存在的GeoJSON成功`)
+              return geojsonResponse.data
+            }
+          } catch (e) {
+            console.error(`  ❌ 读取GeoJSON也失败:`, e)
+          }
+          throw error
+        }
+      } else {
+        // GeoJSON文件：直接读取
+        console.log(`  GeoJSON文件，直接读取: ${file.name}`)
+        const response = await readGeojsonContent(file.name)
+        if (response.code === 200) {
+          return response.data
+        } else {
+          throw new Error(`读取GeoJSON失败: ${response.message}`)
+        }
+      }
+    }
+    
     for (let i = 0; i < selectedFiles.length; i++) {
       const file = selectedFiles[i]
       analysisProgress.value = 10 + (i / selectedFiles.length) * 30
       analysisStatusText.value = `正在读取第${i + 1}/${selectedFiles.length}个文件...`
       
-      console.log(`读取文件 ${i + 1}/${selectedFiles.length}: ${file.name}`)
-      const response = await readGeojsonContent(file.name)
-      console.log(`文件 ${i + 1} 响应:`, response)
-      if (response.code === 200) {
+      console.log(`读取文件 ${i + 1}/${selectedFiles.length}: ${file.name}, 类型: ${file.type}`)
+      try {
+        const geojsonData = await readFileAsGeojson(file)
         geojsonDataList.push({
           file: file,
-          geojson: response.data,
+          geojson: geojsonData,
           time: file.createTime
         })
-        console.log(`读取 ${file.name}: ${response.data.features?.length || 0} 个要素`)
+        console.log(`读取 ${file.name}: ${geojsonData.features?.length || 0} 个要素`)
+      } catch (error) {
+        console.error(`读取文件失败: ${file.name}`, error)
+        throw error
       }
     }
 
@@ -1151,20 +1998,27 @@ const handleRunTemporalAnalysis = async () => {
     
     // 保存完整的JSON格式分析结果到服务器
     try {
+      const analysisName = temporalConfig.value.analysisName || `${selectedFiles.length}期时序对比`
       const analysisData = {
         version: '1.0',
         id: `temporal_${Date.now()}`,
         type: 'temporal',
         metadata: {
-          title: `${selectedFiles.length}期时序对比`,
+          title: analysisName,
           createTime: new Date().toLocaleString('zh-CN'),
           filesCount: selectedFiles.length,
           timeRange: `${selectedFiles[0].taskName} ~ ${selectedFiles[selectedFiles.length-1].taskName}`,
           totalPlots: temporalResult.stats.total,
-          changedPlots: temporalResult.stats.changed
+          changedPlots: temporalResult.stats.changed,
+          notes: temporalConfig.value.notes || ''
         },
         data: analysisResult
       }
+      
+      console.log('📝 时序分析信息:', {
+        name: analysisName,
+        notes: temporalConfig.value.notes
+      })
       
       const saveResponse = await saveAnalysisResultToServer('temporal', analysisData)
       console.log('✅ 时序分析结果已保存为JSON:', saveResponse.data)
@@ -1263,39 +2117,10 @@ const performTemporalAnalysis = (geojsonDataList) => {
   }
 }
 
-// 一键清空所有分析数据
-const handleClearAllData = () => {
-  ElMessageBox.confirm(
-    '清空后将删除所有分析数据（包括差异检测结果、时序分析结果），此操作不可恢复，是否继续？',
-    '确认清空',
-    {
-      confirmButtonText: '确定清空',
-      cancelButtonText: '取消',
-      type: 'warning',
-      confirmButtonClass: 'el-button--danger'
-    }
-  ).then(() => {
-    // 清空store中的分析结果
-    analysisStore.clearDifferenceResult()
-    analysisStore.clearTemporalResult()
-    
-    // 重置配置
-    differenceConfig.value = {
-      baseFileId: '',
-      compareFileId: ''
-    }
-    temporalConfig.value = {
-      selectedFileIds: []
-    }
-    
-    ElMessage.success({
-      message: '所有分析数据已清空',
-      duration: 3000
-    })
-  }).catch(() => {
-    // 用户取消操作
-  })
-}
+// 一键清空所有分析数据 - 已移除此功能
+// const handleClearAllData = () => {
+//   ...
+// }
 </script>
 
 <style scoped lang="scss">
@@ -1370,14 +2195,14 @@ const handleClearAllData = () => {
           border-radius: 50%;
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           color: white;
-    display: flex;
+          display: flex;
           align-items: center;
-    justify-content: center;
+          justify-content: center;
           font-weight: 700;
           font-size: 16px;
-  }
-  
-  .step-content {
+        }
+        
+        .step-content {
           flex: 1;
           
           h4 {
@@ -1404,11 +2229,11 @@ const handleClearAllData = () => {
         padding: 12px 16px;
         background: #fff7e6;
         border-left: 4px solid #E6A23C;
-    border-radius: 4px;
+        border-radius: 4px;
         display: flex;
         align-items: center;
         gap: 8px;
-    font-size: 13px;
+        font-size: 13px;
         color: #606266;
         
         strong {
@@ -1473,101 +2298,269 @@ const handleClearAllData = () => {
           }
         }
         
-        // 本地上传区域
-        .upload-area {
-          padding: 40px;
-          background: linear-gradient(135deg, #f5f7fa 0%, #e3e7f1 100%);
-          border: 2px dashed #409EFF;
-          border-radius: 12px;
-          text-align: center;
-          cursor: pointer;
-          transition: all 0.3s;
+        // 双上传容器
+        .dual-upload-container {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 20px;
+          margin-bottom: 20px;
           
-          &:hover {
-            border-color: #667eea;
-            background: linear-gradient(135deg, #e3e7f1 0%, #d4daf0 100%);
-            transform: scale(1.02);
-          }
-          
-          .upload-icon {
-            margin-bottom: 16px;
-            animation: float 3s ease-in-out infinite;
-          }
-          
-          .upload-text {
-            margin-bottom: 24px;
+          .upload-section {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
             
-            h3 {
-              margin: 0 0 8px 0;
-              font-size: 20px;
-              color: #303133;
+            .upload-area {
+              padding: 32px 20px;
+              background: linear-gradient(135deg, #f5f7fa 0%, #e3e7f1 100%);
+              border: 2px dashed #409EFF;
+              border-radius: 12px;
+              text-align: center;
+              cursor: pointer;
+              transition: all 0.3s;
+              
+              &:hover {
+                border-color: #667eea;
+                background: linear-gradient(135deg, #e3e7f1 0%, #d4daf0 100%);
+                transform: scale(1.02);
+              }
+              
+              .upload-icon {
+                margin-bottom: 12px;
+                animation: float 3s ease-in-out infinite;
+              }
+              
+              .upload-text {
+                margin-bottom: 16px;
+                
+                h3 {
+                  margin: 0 0 6px 0;
+                  font-size: 17px;
+                  color: #303133;
+                  font-weight: 600;
+                }
+                
+                p {
+                  margin: 0;
+                  font-size: 13px;
+                  color: #606266;
+                }
+              }
+              
+              .upload-btn {
+                font-size: 14px;
+              }
             }
             
-            p {
-              margin: 0;
-              font-size: 14px;
-              color: #606266;
+            // 文件列表
+            .file-list {
+              padding: 12px;
+              background: #f9fafb;
+              border: 1px solid #e4e7ed;
+              border-radius: 8px;
+              max-height: 200px;
+              overflow-y: auto;
+              
+              .list-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 10px;
+                padding-bottom: 8px;
+                border-bottom: 1px solid #e4e7ed;
+                font-size: 13px;
+                font-weight: 600;
+                color: #606266;
+              }
+              
+              .file-items {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                
+                .file-item {
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  padding: 6px 10px;
+                  background: white;
+                  border: 1px solid #e4e7ed;
+                  border-radius: 6px;
+                  font-size: 12px;
+                  transition: all 0.2s;
+                  
+                  &:hover {
+                    border-color: #409EFF;
+                    background: #ecf5ff;
+                  }
+                  
+                  .file-name {
+                    flex: 1;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                    color: #303133;
+                  }
+                }
+              }
             }
-          }
-          
-          .upload-btn {
-            font-size: 15px;
-            padding: 12px 32px;
           }
         }
         
-        // 影像管理选择区域
-        .library-selection {
-          display: flex;
-          gap: 16px;
-          align-items: flex-start;
-          padding: 24px;
+        // 配对状态提示
+        .pairing-status {
+          padding: 16px;
+          border-radius: 8px;
+          
+          .status-empty {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #909399;
+            font-size: 14px;
+          }
+          
+          .status-warning {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px;
+            background: #fff7e6;
+            border-left: 4px solid #E6A23C;
+            border-radius: 4px;
+            color: #606266;
+            font-size: 14px;
+          }
+          
+          .status-success {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px;
+            background: #f0f9ff;
+            border-left: 4px solid #67C23A;
+            border-radius: 4px;
+            color: #606266;
+            font-size: 14px;
+            font-weight: 500;
+          }
+        }
+        
+        // 影像管理模式
+        .library-mode {
+          padding: 20px;
           background: #f9fafb;
           border-radius: 12px;
           
-          .image-selector {
-            flex: 1;
+          .library-dual-select {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
             
-            :deep(.el-input__wrapper) {
-              min-height: 44px;
+            .library-select-section {
+              .select-label {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                margin-bottom: 10px;
+                font-size: 14px;
+                font-weight: 600;
+                color: #303133;
+              }
+              
+              .library-selector {
+                width: 100%;
+                
+                :deep(.el-input__wrapper) {
+                  min-height: 44px;
+                }
+              }
+              
+              .select-count {
+                margin-top: 8px;
+                font-size: 12px;
+                color: #909399;
+                text-align: right;
+              }
+              
+              .image-option {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                
+                .image-name {
+                  font-size: 14px;
+                  color: #303133;
+                  font-weight: 500;
+                }
+                
+                .image-info {
+                  font-size: 12px;
+                  color: #909399;
+                }
+              }
             }
           }
           
-          .classify-btn {
-            flex-shrink: 0;
-            min-width: 120px;
-          }
-          
-          .image-option {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
+          .library-pairing-status {
+            padding: 16px;
+            border-radius: 8px;
             
-            .image-name {
+            .status-empty {
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              color: #909399;
               font-size: 14px;
-              color: #303133;
+            }
+            
+            .status-warning {
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              padding: 12px;
+              background: #fff7e6;
+              border-left: 4px solid #E6A23C;
+              border-radius: 4px;
+              color: #606266;
+              font-size: 14px;
+            }
+            
+            .status-success {
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              padding: 12px;
+              background: #f0f9ff;
+              border-left: 4px solid #67C23A;
+              border-radius: 4px;
+              color: #606266;
+              font-size: 14px;
               font-weight: 500;
             }
-            
-            .image-info {
-              font-size: 12px;
-              color: #909399;
+          }
+
+          // 任务信息表单
+          .task-info-form {
+            margin-top: 24px;
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #e8edf5 100%);
+            border-radius: 12px;
+            border: 2px solid #409EFF;
+
+            .form-title {
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              font-size: 15px;
+              font-weight: 600;
+              color: #303133;
+              margin-bottom: 16px;
+              padding-bottom: 12px;
+              border-bottom: 2px solid #e4e7ed;
             }
           }
-        }
-        
-        // 快速提示
-        .quick-tips {
-          margin-top: 20px;
-          padding: 12px 16px;
-          background: #ecf5ff;
-          border-left: 4px solid #409EFF;
-          border-radius: 4px;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          font-size: 13px;
-          color: #606266;
         }
       }
       
@@ -1641,6 +2634,34 @@ const handleClearAllData = () => {
                   min-width: 0;
                   
                   span {
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                  }
+                }
+              }
+              
+              // 文件配对信息
+              .task-files {
+                margin-bottom: 10px;
+                padding: 8px;
+                background: #f9fafb;
+                border-radius: 6px;
+                
+                .file-pair {
+                  display: flex;
+                  align-items: center;
+                  gap: 6px;
+                  font-size: 11px;
+                  color: #606266;
+                  margin-bottom: 4px;
+                  
+                  &:last-child {
+                    margin-bottom: 0;
+                  }
+                  
+                  .file-pair-name {
+                    flex: 1;
                     overflow: hidden;
                     text-overflow: ellipsis;
                     white-space: nowrap;
@@ -1827,27 +2848,23 @@ const handleClearAllData = () => {
       .classification-main {
         padding: 16px;
         
-        .image-source-selector {
-          :deep(.el-radio-button__inner) {
-            padding: 10px 20px;
-            font-size: 14px;
+        .dual-upload-container {
+          grid-template-columns: 1fr;
+          
+          .upload-section {
+            .upload-area {
+              padding: 24px 16px;
+              
+              .upload-text h3 {
+                font-size: 16px;
+              }
+            }
           }
         }
         
-        .upload-area {
-          padding: 24px 16px;
-          
-          .upload-text h3 {
-            font-size: 18px;
-          }
-        }
-        
-        .library-selection {
-          flex-direction: column;
-          padding: 16px;
-          
-          .classify-btn {
-            width: 100%;
+        .library-mode {
+          .library-dual-select {
+            grid-template-columns: 1fr;
           }
         }
       }
