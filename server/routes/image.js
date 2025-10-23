@@ -1055,63 +1055,38 @@ async function optimizeTifFile(id, options = {}) {
     startTime: Date.now()
   })
   
-  // 5. 直接执行投影转换和COG转换
-  console.log('⏳ 投影转换 + COG格式转换...')
+  // 5. 直接执行投影转换和COG转换（COG格式自带金字塔，无需手动添加）
+  console.log('⏳ 投影转换 + COG格式转换（包含自动生成金字塔）...')
   
   optimizationProgress.set(id, {
     progress: 30,
     status: 'reprojecting',
-    step: '投影转换 + COG转换（最耗时）...'
+    step: '投影转换 + COG转换 + 金字塔生成（最耗时）...'
   })
   
-  const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co TILED=YES -r near "${inputPath}" "${tempOutput}"`
+  // ✅ 修复：COG格式在转换时自动生成内部金字塔，无需再用gdaladdo添加外部金字塔
+  // 添加 -co OVERVIEW_RESAMPLING=NEAREST 参数指定金字塔重采样方法
+  // 添加 -co NUM_THREADS=ALL_CPUS 参数启用多线程加速
+  const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co TILED=YES -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -r near "${inputPath}" "${tempOutput}"`
   const gdalCommand = buildGDALCommand(gdalwarpCmd)
   
   let startTime = Date.now()
   try {
     await execAsync(gdalCommand)
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
-    console.log(`✅ 投影转换完成 (耗时: ${elapsed}秒)`)
+    console.log(`✅ 投影转换 + COG转换 + 金字塔生成完成 (耗时: ${elapsed}秒)`)
+    console.log(`   COG格式已包含内部金字塔，无需额外添加`)
     
     optimizationProgress.set(id, {
       ...optimizationProgress.get(id),
-      progress: 70,
-      status: 'reprojected',
-      step: '投影转换完成'
+      progress: 90,
+      status: 'completed',
+      step: '优化完成（COG格式 + 内部金字塔）'
     })
   } catch (error) {
     if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput)
     optimizationProgress.delete(id)
     throw new Error('GDAL转换失败: ' + error.message)
-  }
-  
-  // 更新进度：添加金字塔
-  optimizationProgress.set(id, {
-    ...optimizationProgress.get(id),
-    progress: 75,
-    status: 'adding_overviews',
-    step: '添加金字塔（加快显示速度）...'
-  })
-  
-  // 6. 添加金字塔
-  console.log('⏳ 添加金字塔...')
-  const gdaladdoCmd = `gdaladdo -r nearest "${tempOutput}" 2 4 8 16`
-  const addoCommand = buildGDALCommand(gdaladdoCmd)
-  
-  try {
-    await execAsync(addoCommand)
-    console.log('✅ 金字塔添加完成')
-    
-    optimizationProgress.set(id, {
-      ...optimizationProgress.get(id),
-      progress: 90,
-      status: 'overviews_added',
-      step: '金字塔添加完成'
-    })
-  } catch (error) {
-    if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput)
-    optimizationProgress.delete(id)
-    throw new Error('添加金字塔失败: ' + error.message)
   }
   
   // 更新进度：保存优化文件
