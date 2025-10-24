@@ -1107,10 +1107,16 @@ async function optimizeTifFile(id, options = {}) {
     step: '投影转换 + COG转换 + 金字塔生成（最耗时）...'
   })
   
-  // ✅ 修复：COG格式在转换时自动生成内部金字塔，无需再用gdaladdo添加外部金字塔
-  // 添加 -co OVERVIEW_RESAMPLING=NEAREST 参数指定金字塔重采样方法
-  // 添加 -co NUM_THREADS=ALL_CPUS 参数启用多线程加速
-  const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co TILED=YES -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -r near "${inputPath}" "${tempOutput}"`
+  // ✅ 优化GDAL参数，提升速度和压缩率
+  // -co NUM_THREADS=ALL_CPUS: 启用多线程加速（最重要）
+  // -co COMPRESS=DEFLATE: 使用DEFLATE压缩（比LZW更快，压缩率更高）
+  // -co PREDICTOR=2: 启用预测编码（提升15-30%压缩率）
+  // -co ZLEVEL=6: 压缩等级6（平衡速度和压缩率，1最快9最小）
+  // -co BIGTIFF=IF_SAFER: 大文件自动使用BigTIFF
+  // -wo NUM_THREADS=ALL_CPUS: 投影变换也使用多线程
+  // -co OVERVIEW_RESAMPLING=NEAREST: 金字塔重采样方法
+  // -multi: 启用多线程处理（GDAL 2.1+）
+  const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -wo NUM_THREADS=ALL_CPUS -multi -of COG -co COMPRESS=DEFLATE -co PREDICTOR=2 -co ZLEVEL=6 -co BLOCKSIZE=512 -co TILED=YES -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -co BIGTIFF=IF_SAFER -r near "${inputPath}" "${tempOutput}"`
   const gdalCommand = buildGDALCommand(gdalwarpCmd)
   
   let startTime = Date.now()
@@ -1140,16 +1146,53 @@ async function optimizeTifFile(id, options = {}) {
     step: '保存优化文件...'
   })
   
-  // 7. 保存优化文件
+  // 7. 保存优化文件（添加重试机制）
   console.log('⏳ 保存优化文件...')
   
+  // 删除旧文件（如果存在）
   if (fs.existsSync(optimizedPath)) {
     console.log('   删除旧的优化文件...')
-    fs.unlinkSync(optimizedPath)
+    try {
+      fs.unlinkSync(optimizedPath)
+      // 等待文件系统同步
+      await new Promise(resolve => setTimeout(resolve, 200))
+    } catch (unlinkErr) {
+      console.warn('   ⚠️ 删除旧文件失败:', unlinkErr.message)
+    }
   }
   
-  fs.renameSync(tempOutput, optimizedPath)
-  console.log(`✅ 优化文件已保存: ${path.basename(optimizedPath)}`)
+  // 重命名临时文件（添加重试逻辑）
+  let renameSuccess = false
+  let retryCount = 0
+  const maxRetries = 3
+  
+  while (!renameSuccess && retryCount < maxRetries) {
+    try {
+      fs.renameSync(tempOutput, optimizedPath)
+      renameSuccess = true
+      console.log(`✅ 优化文件已保存: ${path.basename(optimizedPath)}`)
+    } catch (renameErr) {
+      retryCount++
+      console.warn(`   ⚠️ 重命名失败 (尝试 ${retryCount}/${maxRetries}): ${renameErr.message}`)
+      
+      if (retryCount < maxRetries) {
+        // 等待后重试
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      } else {
+        // 最后尝试：复制+删除
+        console.log('   🔄 使用复制方式...')
+        try {
+          fs.copyFileSync(tempOutput, optimizedPath)
+          fs.unlinkSync(tempOutput)
+          renameSuccess = true
+          console.log(`✅ 使用备选方案成功保存`)
+        } catch (copyErr) {
+          if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput)
+          throw new Error(`文件保存失败: ${copyErr.message}。请检查：1) 关闭占用文件的程序 2) 以管理员权限运行 3) 检查磁盘空间`)
+        }
+      }
+    }
+  }
   
   // 更新进度：完成
   optimizationProgress.set(id, {
@@ -1194,62 +1237,90 @@ async function optimizeTifFile(id, options = {}) {
         console.warn(`⚠️ 优化后TIF分析失败: ${image.name}`, err.message)
       }
     } else {
-      // 不覆盖原文件：创建新记录，原记录保持不变
+      // 不覆盖原文件：创建新记录或更新已存在的优化结果
       // 1. 原记录保持不变（继续指向原文件）
       currentImage.isOptimized = false  // 原文件未优化
+      currentImage.status = 'processed'  // 🔧 修复：更新状态为已处理
       
-      // 2. 创建新记录for优化后的文件
-      // 找到最大ID，避免冲突
-      let maxId = 0
-      currentMetadata.images.forEach(img => {
-        const match = img.id.match(/^IMG(\d+)$/)
-        if (match) {
-          const num = parseInt(match[1], 10)
-          if (num > maxId) maxId = num
+      // 🔧 修复：检查是否已存在相同文件名的优化结果
+      let existingOptimizedImage = currentMetadata.images.find(img => 
+        img.name === finalFileName && img.isOptimizedResult === true
+      )
+      
+      if (existingOptimizedImage) {
+        // 已存在优化结果，更新它
+        console.log(`🔄 更新已存在的优化结果: ${existingOptimizedImage.id} - ${finalFileName}`)
+        
+        existingOptimizedImage.size = optimizedSizeMB + 'MB'
+        existingOptimizedImage.optimizedSize = optimizedSizeMB + 'MB'
+        existingOptimizedImage.uploadTime = new Date().toISOString()
+        existingOptimizedImage.description = `优化自 ${image.name}（压缩率${compressionRatio}%，节省${savedSpaceMB}MB）`
+        
+        // 📊 分析优化后的TIF文件
+        try {
+          console.log(`📊 正在分析优化后的文件: ${finalFileName}`)
+          const statistics = await analyzeTifFile(optimizedPath)
+          if (statistics) {
+            existingOptimizedImage.statistics = statistics
+            console.log(`✅ 统计数据已更新`)
+          }
+        } catch (err) {
+          console.warn(`⚠️ 优化后TIF分析失败: ${finalFileName}`, err.message)
         }
-      })
-      const newId = 'IMG' + String(maxId + 1).padStart(3, '0')
-      
-      const newImage = {
-        id: newId,
-        name: finalFileName,
-        year: currentImage.year,
-        period: currentImage.period,
-        cropType: currentImage.cropType,
-        sensor: currentImage.sensor,
-        region: currentImage.region,
-        date: currentImage.date,
-        cloudCover: currentImage.cloudCover,
-        status: 'processed',
-        size: optimizedSizeMB + 'MB',
-        originalSize: originalSizeMB + 'MB',
-        optimizedSize: optimizedSizeMB + 'MB',
-        thumbnail: `/data/${finalFileName}`,
-        preview: `/data/${finalFileName}`,
-        filePath: `/data/${finalFileName}`,
-        optimizedPath: `/data/${finalFileName}`,
-        originalPath: `/data/${image.name}`,
-        isOptimized: true,
-        isOptimizedResult: true,  // 标记为优化结果文件
-        sourceFileId: id,  // 记录源文件ID
-        uploadTime: new Date().toISOString(),
-        description: `优化自 ${image.name}（压缩率${compressionRatio}%，节省${savedSpaceMB}MB）`
-      }
-      
-      // 📊 分析优化后的TIF文件
-      try {
-        console.log(`📊 正在分析优化后的新文件: ${finalFileName}`)
-        const statistics = await analyzeTifFile(optimizedPath)
-        if (statistics) {
-          newImage.statistics = statistics
-          console.log(`✅ 统计数据已保存到新记录`)
+      } else {
+        // 不存在，创建新记录
+        // 找到最大ID，避免冲突
+        let maxId = 0
+        currentMetadata.images.forEach(img => {
+          const match = img.id.match(/^IMG(\d+)$/)
+          if (match) {
+            const num = parseInt(match[1], 10)
+            if (num > maxId) maxId = num
+          }
+        })
+        const newId = 'IMG' + String(maxId + 1).padStart(3, '0')
+        
+        const newImage = {
+          id: newId,
+          name: finalFileName,
+          year: currentImage.year,
+          period: currentImage.period,
+          cropType: currentImage.cropType,
+          sensor: currentImage.sensor,
+          region: currentImage.region,
+          date: currentImage.date,
+          cloudCover: currentImage.cloudCover,
+          status: 'processed',
+          size: optimizedSizeMB + 'MB',
+          originalSize: originalSizeMB + 'MB',
+          optimizedSize: optimizedSizeMB + 'MB',
+          thumbnail: `/data/${finalFileName}`,
+          preview: `/data/${finalFileName}`,
+          filePath: `/data/${finalFileName}`,
+          optimizedPath: `/data/${finalFileName}`,
+          originalPath: `/data/${image.name}`,
+          isOptimized: true,
+          isOptimizedResult: true,  // 标记为优化结果文件
+          sourceFileId: id,  // 记录源文件ID
+          uploadTime: new Date().toISOString(),
+          description: `优化自 ${image.name}（压缩率${compressionRatio}%，节省${savedSpaceMB}MB）`
         }
-      } catch (err) {
-        console.warn(`⚠️ 优化后TIF分析失败: ${finalFileName}`, err.message)
+        
+        // 📊 分析优化后的TIF文件
+        try {
+          console.log(`📊 正在分析优化后的新文件: ${finalFileName}`)
+          const statistics = await analyzeTifFile(optimizedPath)
+          if (statistics) {
+            newImage.statistics = statistics
+            console.log(`✅ 统计数据已保存到新记录`)
+          }
+        } catch (err) {
+          console.warn(`⚠️ 优化后TIF分析失败: ${finalFileName}`, err.message)
+        }
+        
+        currentMetadata.images.push(newImage)
+        console.log(`✅ 创建新记录: ${newId} - ${finalFileName}`)
       }
-      
-      currentMetadata.images.push(newImage)
-      console.log(`✅ 创建新记录: ${newId} - ${finalFileName}`)
     }
     
     writeMetadata(currentMetadata)

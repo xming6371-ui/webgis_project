@@ -647,7 +647,9 @@ const cropLegend = [
 // 获取影像数据列表
 const fetchImageData = async () => {
   try {
-    const response = await axios.get('/data/imageData.json')
+    // 🔧 修复：添加时间戳参数，防止浏览器缓存
+    const timestamp = Date.now()
+    const response = await axios.get(`/data/imageData.json?t=${timestamp}`)
     imageData.value = response.data.images || []
     
     // 提取所有年份
