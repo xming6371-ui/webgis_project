@@ -1,0 +1,69 @@
+# ========================================
+# Docker 忽略文件 - 不打包到镜像中的文件
+# ========================================
+
+# 依赖（会在容器中重新安装）
+node_modules
+server/node_modules
+
+# 构建产物（会在容器中重新构建）
+dist
+.vite
+
+# 环境文件
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Git 相关
+.git
+.gitignore
+.gitattributes
+
+# IDE 配置
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.editorconfig
+
+# 日志文件
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 临时文件
+*.tmp
+*.temp
+.cache
+
+# 数据文件（会通过 volume 挂载，不需要打包）
+public/data/*
+!public/data/.gitkeep
+
+# 文档
+docs
+*.md
+README.md
+
+# 批处理文件（Windows 脚本）
+*.bat
+
+# Docker 相关
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# 其他
+.eslintrc.cjs
+jsconfig.json
+

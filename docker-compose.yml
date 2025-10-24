@@ -1,0 +1,72 @@
+# ========================================
+# Docker Compose 配置 - 编排前后端服务
+# ========================================
+# 使用方法：
+# 启动: docker-compose up -d
+# 停止: docker-compose down
+# 查看日志: docker-compose logs -f
+# ========================================
+
+version: '3.8'
+
+services:
+  # ==========================================
+  # 后端服务 - Node.js + Express + GDAL
+  # ==========================================
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: webgis-backend
+    ports:
+      - "8080:8080"  # 映射端口：主机端口8080 -> 容器端口8080
+    volumes:
+      # 持久化数据目录（影像文件存储）
+      - ./public/data:/app/public/data
+      # 挂载配置文件（只读）
+      - ./server/config.js:/app/config.js:ro
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+    restart: unless-stopped  # 自动重启（除非手动停止）
+    networks:
+      - webgis-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ==========================================
+  # 前端服务 - Nginx + Vue.js 静态文件
+  # ==========================================
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webgis-frontend
+    ports:
+      - "80:80"      # HTTP 端口
+      # - "443:443"  # HTTPS 端口（配置 SSL 证书后取消注释）
+    depends_on:
+      backend:
+        condition: service_healthy  # 等待后端服务健康后再启动
+    restart: unless-stopped
+    networks:
+      - webgis-network
+
+# ==========================================
+# 网络配置 - 让前后端容器可以互相通信
+# ==========================================
+networks:
+  webgis-network:
+    driver: bridge
+
+# ==========================================
+# 数据卷（可选）- 用于数据持久化
+# ==========================================
+# volumes:
+#   webgis-data:
+#     driver: local
+
