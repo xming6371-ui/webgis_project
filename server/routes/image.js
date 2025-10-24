@@ -570,7 +570,11 @@ router.put('/:id', (req, res) => {
     // 保存到文件
     writeMetadata(metadata)
     
+    // 🆕 清除缓存，确保其他接口能获取到最新数据
+    clearCache()
+    
     console.log(`✅ 更新影像元数据: ${image.name}`)
+    console.log(`   更新字段:`, Object.keys(updates).filter(k => allowedFields.includes(k)))
     
     res.json({
       code: 200,

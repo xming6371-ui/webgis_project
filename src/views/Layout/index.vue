@@ -6,7 +6,7 @@
         <el-icon class="logo-icon" :size="32" color="white">
           <Location />
         </el-icon>
-        <h1 class="system-title">新疆WebGIS监测与分析系统</h1>
+        <h1 class="system-title">作物识别与分析系统</h1>
       </div>
       <div class="header-right">
         <el-space :size="20">
