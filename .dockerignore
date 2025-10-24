@@ -6,8 +6,8 @@
 node_modules
 server/node_modules
 
-# 构建产物（会在容器中重新构建）
-dist
+# 构建产物
+# dist  # 注释掉：前端需要使用本地构建的 dist
 .vite
 
 # 环境文件
