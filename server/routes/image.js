@@ -23,6 +23,18 @@ const METADATA_FILE = path.join(DATA_DIR, 'imageData.json')
 const optimizationProgress = new Map()
 // 格式: { id: string, progress: number (0-100), status: string, step: string, startTime: number }
 
+// 🆕 元数据缓存机制
+let metadataCache = null
+let lastSyncTime = 0
+const CACHE_DURATION = 5 * 60 * 1000 // 5分钟缓存
+
+// 清除缓存的辅助函数
+function clearCache() {
+  metadataCache = null
+  lastSyncTime = 0
+  console.log('🗑️ 元数据缓存已清除')
+}
+
 // 缓存conda环境中的GDAL路径（避免重复查找）
 let cachedGDALPath = null
 let cachedCondaEnvPath = null
@@ -306,14 +318,36 @@ initGDALPath().then((result) => {
 
 // 路由
 
-// 获取影像列表
+// 获取影像列表（带缓存机制）
 router.get('/list', async (req, res) => {
   try {
+    const now = Date.now()
+    const forceRefresh = req.query.refresh === 'true' // 支持前端强制刷新
+    
+    // 如果有缓存且未过期且不强制刷新，直接返回缓存
+    if (!forceRefresh && metadataCache && (now - lastSyncTime < CACHE_DURATION)) {
+      const cacheAge = Math.floor((now - lastSyncTime) / 1000)
+      console.log(`✅ 使用缓存数据（缓存时间: ${cacheAge}秒）`)
+      return res.json({
+        code: 200,
+        message: '获取成功（缓存）',
+        data: metadataCache.images,
+        cached: true,
+        cacheAge: cacheAge
+      })
+    }
+    
+    // 否则重新同步
+    console.log('🔄 重新同步元数据...')
     const metadata = await syncMetadata()
+    metadataCache = metadata
+    lastSyncTime = now
+    
     res.json({
       code: 200,
       message: '获取成功',
-      data: metadata.images
+      data: metadata.images,
+      cached: false
     })
   } catch (error) {
     res.status(500).json({
@@ -436,6 +470,9 @@ router.get('/file/:filename', (req, res) => {
 // 上传影像
 router.post('/upload', upload.array('files'), async (req, res) => {
   try {
+    // 🆕 清除缓存，确保后续获取的是最新数据
+    clearCache()
+    
     const metadata = await syncMetadata()
     
     // 获取新上传的文件
@@ -572,6 +609,9 @@ router.delete('/:id', (req, res) => {
     metadata.images = metadata.images.filter(img => img.id !== id)
     writeMetadata(metadata)
     
+    // 🆕 清除缓存
+    clearCache()
+    
     res.json({
       code: 200,
       message: '删除成功'
@@ -602,6 +642,9 @@ router.post('/batch-delete', (req, res) => {
     
     metadata.images = metadata.images.filter(img => !ids.includes(img.id))
     writeMetadata(metadata)
+    
+    // 🆕 清除缓存
+    clearCache()
     
     res.json({
       code: 200,
@@ -1055,63 +1098,38 @@ async function optimizeTifFile(id, options = {}) {
     startTime: Date.now()
   })
   
-  // 5. 直接执行投影转换和COG转换
-  console.log('⏳ 投影转换 + COG格式转换...')
+  // 5. 直接执行投影转换和COG转换（COG格式自带金字塔，无需手动添加）
+  console.log('⏳ 投影转换 + COG格式转换（包含自动生成金字塔）...')
   
   optimizationProgress.set(id, {
     progress: 30,
     status: 'reprojecting',
-    step: '投影转换 + COG转换（最耗时）...'
+    step: '投影转换 + COG转换 + 金字塔生成（最耗时）...'
   })
   
-  const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co TILED=YES -r near "${inputPath}" "${tempOutput}"`
+  // ✅ 修复：COG格式在转换时自动生成内部金字塔，无需再用gdaladdo添加外部金字塔
+  // 添加 -co OVERVIEW_RESAMPLING=NEAREST 参数指定金字塔重采样方法
+  // 添加 -co NUM_THREADS=ALL_CPUS 参数启用多线程加速
+  const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co TILED=YES -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -r near "${inputPath}" "${tempOutput}"`
   const gdalCommand = buildGDALCommand(gdalwarpCmd)
   
   let startTime = Date.now()
   try {
     await execAsync(gdalCommand)
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
-    console.log(`✅ 投影转换完成 (耗时: ${elapsed}秒)`)
+    console.log(`✅ 投影转换 + COG转换 + 金字塔生成完成 (耗时: ${elapsed}秒)`)
+    console.log(`   COG格式已包含内部金字塔，无需额外添加`)
     
     optimizationProgress.set(id, {
       ...optimizationProgress.get(id),
-      progress: 70,
-      status: 'reprojected',
-      step: '投影转换完成'
+      progress: 90,
+      status: 'completed',
+      step: '优化完成（COG格式 + 内部金字塔）'
     })
   } catch (error) {
     if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput)
     optimizationProgress.delete(id)
     throw new Error('GDAL转换失败: ' + error.message)
-  }
-  
-  // 更新进度：添加金字塔
-  optimizationProgress.set(id, {
-    ...optimizationProgress.get(id),
-    progress: 75,
-    status: 'adding_overviews',
-    step: '添加金字塔（加快显示速度）...'
-  })
-  
-  // 6. 添加金字塔
-  console.log('⏳ 添加金字塔...')
-  const gdaladdoCmd = `gdaladdo -r nearest "${tempOutput}" 2 4 8 16`
-  const addoCommand = buildGDALCommand(gdaladdoCmd)
-  
-  try {
-    await execAsync(addoCommand)
-    console.log('✅ 金字塔添加完成')
-    
-    optimizationProgress.set(id, {
-      ...optimizationProgress.get(id),
-      progress: 90,
-      status: 'overviews_added',
-      step: '金字塔添加完成'
-    })
-  } catch (error) {
-    if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput)
-    optimizationProgress.delete(id)
-    throw new Error('添加金字塔失败: ' + error.message)
   }
   
   // 更新进度：保存优化文件

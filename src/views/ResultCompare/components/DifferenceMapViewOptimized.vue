@@ -20,6 +20,13 @@
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <span>{{ data.title }}</span>
               <el-space>
+                <el-button 
+                  size="small" 
+                  type="primary" 
+                  @click="fitMapToLayerExtent"
+                >
+                  缩放至图层
+                </el-button>
                 <el-switch
                   v-model="showCompareMode"
                   active-text="卷帘对比"
@@ -127,9 +134,9 @@
                 {{ feature.properties.plotName || `地块${index + 1}` }}
               </div>
               <div style="font-size: 12px; color: #606266; margin: 2px 0;">
-                <el-tag type="info" size="small">{{ feature.properties.originalCrop }}</el-tag>
+                <el-tag type="info" size="small">{{ getCropDisplayName(feature.properties, 'original') }}</el-tag>
                 <el-icon style="margin: 0 4px;"><Right /></el-icon>
-                <el-tag type="danger" size="small">{{ feature.properties.currentCrop }}</el-tag>
+                <el-tag type="danger" size="small">{{ getCropDisplayName(feature.properties, 'current') }}</el-tag>
               </div>
               <div style="font-size: 12px; color: #909399;">
                 面积: {{ feature.properties.area || 0 }} 亩
@@ -150,6 +157,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Right } from '@element-plus/icons-vue'
+import { getCropName } from '@/config/cropMapping'
 
 const props = defineProps({
   data: {
@@ -174,10 +182,16 @@ const sliderPosition = ref(50)
 const isDragging = ref(false)
 const compareContainer = ref(null)
 
+// 地图同步标志（防止无限循环）
+let isSyncing = false
+
 // Leaflet地图实例
 let mapBase = null
 let mapCompare = null
 let mapResult = null
+
+// 高亮图层（用于显示选中的地块）
+let highlightLayer = null
 
 // 变化地块
 const changedFeatures = computed(() => {
@@ -189,6 +203,31 @@ const changeRate = computed(() => {
   if (props.data.stats.total === 0) return 0
   return ((props.data.stats.changed / props.data.stats.total) * 100).toFixed(1)
 })
+
+// 获取作物显示名称（使用gridcode字段）
+const getCropDisplayName = (properties, type) => {
+  // type: 'original' 或 'current'
+  const gridcodeKey = type === 'original' ? 'originalGridcode' : 'currentGridcode'
+  const cropKey = type === 'original' ? 'originalCrop' : 'currentCrop'
+  
+  // 优先使用gridcode字段
+  const gridcode = properties[gridcodeKey]
+  if (gridcode !== undefined && gridcode !== null) {
+    return getCropName(gridcode)
+  }
+  
+  // 如果没有gridcode，尝试解析作物名称中的数字（如"作物1" -> 1）
+  const cropName = properties[cropKey]
+  if (cropName && typeof cropName === 'string') {
+    const match = cropName.match(/作物(\d+)/)
+    if (match) {
+      return getCropName(parseInt(match[1]))
+    }
+  }
+  
+  // 最后返回原始值或默认值
+  return cropName || '未知'
+}
 
 // 初始化地图
 const initMaps = async () => {
@@ -263,7 +302,7 @@ const initMaps = async () => {
     // 初始化原始图
     mapBase = L.map('map-base', {
       center: center,
-      zoom: 12,
+      zoom: 10, // 初始zoom值
       zoomControl: true,
       preferCanvas: true, // 使用Canvas渲染，性能更好
       renderer: L.canvas({ tolerance: 5, padding: 0.5 }) // 优化Canvas渲染器
@@ -271,7 +310,8 @@ const initMaps = async () => {
     
     // 自动定位到数据区域
     if (bounds) {
-      mapBase.fitBounds(bounds, { padding: [50, 50] })
+      // 初始化时使用较小padding，更好地展示图层范围
+      mapBase.fitBounds(bounds, { padding: [30, 30] })
     }
     
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -292,12 +332,15 @@ const initMaps = async () => {
       },
       onEachFeature: (feature, layer) => {
         const props = feature.properties
+        const originalCropName = getCropDisplayName(props, 'original')
+        // 使用properties中的area或0
+        const area = props.area || 0
         layer.bindPopup(`
           <div style="min-width: 180px;">
             <strong>${props.plotName || '地块'}</strong><br>
             <hr style="margin: 6px 0;">
-            原始作物: ${props.originalCrop}<br>
-            面积: ${props.area || 0} 亩
+            原始作物: <strong>${originalCropName}</strong><br>
+            面积: ${area} 亩
           </div>
         `)
       }
@@ -306,7 +349,7 @@ const initMaps = async () => {
     // 初始化对比图
     mapCompare = L.map('map-compare', {
       center: center,
-      zoom: 12,
+      zoom: 10, // 初始zoom值
       zoomControl: true,
       preferCanvas: true,
       renderer: L.canvas({ tolerance: 5, padding: 0.5 })
@@ -314,7 +357,8 @@ const initMaps = async () => {
     
     // 自动定位到数据区域
     if (bounds) {
-      mapCompare.fitBounds(bounds, { padding: [50, 50] })
+      // 初始化时使用较小padding，更好地展示图层范围
+      mapCompare.fitBounds(bounds, { padding: [30, 30] })
     }
     
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -338,13 +382,18 @@ const initMaps = async () => {
       },
       onEachFeature: (feature, layer) => {
         const props = feature.properties
+        const originalCropName = getCropDisplayName(props, 'original')
+        const currentCropName = getCropDisplayName(props, 'current')
+        // 使用properties中的area或0
+        const area = props.area || 0
         layer.bindPopup(`
           <div style="min-width: 180px;">
             <strong>${props.plotName || '地块'}</strong><br>
             <hr style="margin: 6px 0;">
-            原始: ${props.originalCrop}<br>
-            当前: ${props.currentCrop}<br>
-            状态: <span style="color: ${props.hasChange ? '#f56c6c' : '#67c23a'}">
+            原始: <strong>${originalCropName}</strong><br>
+            当前: <strong>${currentCropName}</strong><br>
+            面积: ${area} 亩<br>
+            状态: <span style="color: ${props.hasChange ? '#f56c6c' : '#67c23a'}; font-weight: 600;">
               ${props.hasChange ? '有变化' : '无变化'}
             </span>
           </div>
@@ -352,18 +401,44 @@ const initMaps = async () => {
       }
     }).addTo(mapCompare)
     
-    // 同步地图视图
-    mapBase.on('move', () => {
-      mapCompare.setView(mapBase.getCenter(), mapBase.getZoom(), { animate: false })
+    // 同步地图视图（使用标志位防止无限循环，使用moveend提高性能）
+    mapBase.on('moveend', () => {
+      if (!isSyncing) {
+        isSyncing = true
+        mapCompare.setView(mapBase.getCenter(), mapBase.getZoom(), { animate: false })
+        setTimeout(() => { isSyncing = false }, 10)
+      }
     })
-    mapCompare.on('move', () => {
-      mapBase.setView(mapCompare.getCenter(), mapCompare.getZoom(), { animate: false })
+    
+    mapCompare.on('moveend', () => {
+      if (!isSyncing) {
+        isSyncing = true
+        mapBase.setView(mapCompare.getCenter(), mapCompare.getZoom(), { animate: false })
+        setTimeout(() => { isSyncing = false }, 10)
+      }
+    })
+    
+    // 同步缩放
+    mapBase.on('zoomend', () => {
+      if (!isSyncing) {
+        isSyncing = true
+        mapCompare.setZoom(mapBase.getZoom(), { animate: false })
+        setTimeout(() => { isSyncing = false }, 10)
+      }
+    })
+    
+    mapCompare.on('zoomend', () => {
+      if (!isSyncing) {
+        isSyncing = true
+        mapBase.setZoom(mapCompare.getZoom(), { animate: false })
+        setTimeout(() => { isSyncing = false }, 10)
+      }
     })
     
     // 初始化结果图
     mapResult = L.map('map-result', {
       center: center,
-      zoom: 12,
+      zoom: 10, // 初始zoom值
       zoomControl: true,
       preferCanvas: true,
       renderer: L.canvas({ tolerance: 5, padding: 0.5 })
@@ -371,7 +446,8 @@ const initMaps = async () => {
     
     // 自动定位到数据区域
     if (bounds) {
-      mapResult.fitBounds(bounds, { padding: [50, 50] })
+      // 初始化时使用较小padding，更好地展示图层范围
+      mapResult.fitBounds(bounds, { padding: [30, 30] })
     }
     
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -394,13 +470,17 @@ const initMaps = async () => {
       },
       onEachFeature: (feature, layer) => {
         const props = feature.properties
+        const originalCropName = getCropDisplayName(props, 'original')
+        const currentCropName = getCropDisplayName(props, 'current')
+        // 使用properties中的area或0
+        const area = props.area || 0
         layer.bindPopup(`
           <div style="min-width: 200px;">
             <strong style="font-size: 14px;">${props.plotName || '地块'}</strong><br>
             <hr style="margin: 8px 0;">
-            原始作物: <strong>${props.originalCrop}</strong><br>
-            当前作物: <strong>${props.currentCrop}</strong><br>
-            面积: ${props.area || 0} 亩<br>
+            原始作物: <strong>${originalCropName}</strong><br>
+            当前作物: <strong>${currentCropName}</strong><br>
+            面积: ${area} 亩<br>
             状态: <span style="color: ${props.hasChange ? '#f56c6c' : '#67c23a'}; font-weight: 600;">
               ${props.hasChange ? '有变化' : '无变化'}
             </span>
@@ -438,6 +518,8 @@ const mercatorToLatLng = (x, y) => {
   // 已经是经纬度坐标
   return [x, y]
 }
+
+// 移除了面积缓存机制，面积现在在差异检测分析时直接计算并保存
 
 // 计算地块的边界（可指定要计算的features，默认使用所有features）
 const calculateBounds = (featuresToCalc = null) => {
@@ -550,11 +632,115 @@ const stopDrag = () => {
   document.body.style.userSelect = ''
 }
 
-// 高亮地块
+// 计算单个地块的边界
+const calculateFeatureBounds = (feature) => {
+  if (!feature || !feature.geometry) {
+    return null
+  }
+  
+  let minLat = Infinity, maxLat = -Infinity
+  let minLng = Infinity, maxLng = -Infinity
+  
+  const geom = feature.geometry
+  
+  const processCoords = (coords) => {
+    coords.forEach(([x, y]) => {
+      const [lng, lat] = mercatorToLatLng(x, y)
+      minLat = Math.min(minLat, lat)
+      maxLat = Math.max(maxLat, lat)
+      minLng = Math.min(minLng, lng)
+      maxLng = Math.max(maxLng, lng)
+    })
+  }
+  
+  if (geom.type === 'Polygon') {
+    processCoords(geom.coordinates[0])
+  } else if (geom.type === 'MultiPolygon') {
+    geom.coordinates.forEach(polygon => {
+      processCoords(polygon[0])
+    })
+  }
+  
+  if (minLat === Infinity) return null
+  
+  return [[minLat, minLng], [maxLat, maxLng]]
+}
+
+// 高亮地块并智能缩放
 const highlightFeature = (feature) => {
+  // 切换到单图模式
   showCompareMode.value = false
+  
   nextTick(() => {
-    if (mapResult) {
+    if (!mapResult) return
+    
+    // 移除之前的高亮图层
+    if (highlightLayer) {
+      mapResult.removeLayer(highlightLayer)
+      highlightLayer = null
+    }
+    
+    // 计算地块边界
+    const bounds = calculateFeatureBounds(feature)
+    
+    if (bounds) {
+      // 计算地块大小（用于判断是大地块还是小地块）
+      const [[minLat, minLng], [maxLat, maxLng]] = bounds
+      const latDiff = maxLat - minLat
+      const lngDiff = maxLng - minLng
+      const size = Math.max(latDiff, lngDiff)
+      
+      // 根据地块大小设置padding和maxZoom
+      let padding, maxZoom
+      
+      if (size > 0.01) {
+        // 大地块：使用较小的padding，确保显示完整
+        padding = [50, 50]
+        maxZoom = 16
+      } else if (size > 0.001) {
+        // 中等地块：适中的padding
+        padding = [80, 80]
+        maxZoom = 17
+      } else {
+        // 小地块：使用较大的padding，放大显示
+        padding = [120, 120]
+        maxZoom = 18
+      }
+      
+      // 添加高亮图层（黄色边框）
+      highlightLayer = L.geoJSON(feature, {
+        coordsToLatLng: (coords) => {
+          const [lng, lat] = mercatorToLatLng(coords[0], coords[1])
+          return L.latLng(lat, lng)
+        },
+        style: {
+          color: '#FFD700',
+          weight: 4,
+          fillColor: '#FFD700',
+          fillOpacity: 0.2,
+          dashArray: '5, 5'
+        }
+      }).addTo(mapResult)
+      
+      // 缩放到地块，居中显示
+      mapResult.fitBounds(bounds, {
+        padding: padding,
+        maxZoom: maxZoom,
+        animate: true,
+        duration: 0.5
+      })
+      
+      // 延迟打开popup和提示消息，确保地图缩放完成
+      setTimeout(() => {
+        mapResult.eachLayer(layer => {
+          if (layer.feature && layer.feature.properties.plotId === feature.properties.plotId) {
+            layer.openPopup()
+          }
+        })
+        ElMessage.success(`已定位到地块: ${feature.properties.plotName || '未命名'}`)
+      }, 600)
+    } else {
+      // 如果无法计算边界，只打开popup
       mapResult.eachLayer(layer => {
         if (layer.feature && layer.feature.properties.plotId === feature.properties.plotId) {
           layer.openPopup()
@@ -562,6 +748,35 @@ const highlightFeature = (feature) => {
       })
     }
   })
+}
+
+// 缩放至图层范围
+const fitMapToLayerExtent = () => {
+  if (!props.data.features || props.data.features.length === 0) {
+    ElMessage.warning('无数据可显示')
+    return
+  }
+  
+  const bounds = calculateBounds(props.data.features)
+  if (bounds) {
+    // 使用较小的padding值，让地块占据更多视野
+    const fitOptions = { 
+      padding: [30, 30],  // 减小padding，让图层更紧凑地显示
+      animate: true,      // 添加动画效果
+      duration: 0.5       // 动画持续时间（秒）
+    }
+    
+    // 根据当前模式缩放对应的地图
+    if (showCompareMode.value) {
+      // 卷帘对比模式：同时缩放两个地图
+      if (mapBase) mapBase.fitBounds(bounds, fitOptions)
+      if (mapCompare) mapCompare.fitBounds(bounds, fitOptions)
+    } else {
+      // 单图模式：缩放结果图
+      if (mapResult) mapResult.fitBounds(bounds, fitOptions)
+    }
+    ElMessage.success('已缩放至图层范围')
+  }
 }
 
 // 导出CSV
@@ -572,7 +787,10 @@ const exportCSV = () => {
     
     changedFeatures.value.forEach((feature, index) => {
       const props = feature.properties
-      csvContent += `${index + 1},${props.plotId || ''},${props.plotName || ''},${props.originalCrop || ''},${props.currentCrop || ''},${props.area || 0}\n`
+      const originalCropName = getCropDisplayName(props, 'original')
+      const currentCropName = getCropDisplayName(props, 'current')
+      const area = props.area || 0
+      csvContent += `${index + 1},${props.plotId || ''},${props.plotName || ''},${originalCropName},${currentCropName},${area}\n`
     })
     
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
@@ -591,7 +809,11 @@ const exportCSV = () => {
 watch(showCompareMode, async () => {
   await nextTick()
   if (showCompareMode.value) {
-    // 切换到卷帘对比模式时，更新地图尺寸
+    // 切换到卷帘对比模式时，清除高亮图层并更新地图尺寸
+    if (highlightLayer && mapResult) {
+      mapResult.removeLayer(highlightLayer)
+      highlightLayer = null
+    }
     updateMapSizes()
   } else {
     if (mapResult) mapResult.invalidateSize()
@@ -608,9 +830,15 @@ onMounted(() => {
 // 组件卸载
 onUnmounted(() => {
   if (isDragging.value) stopDrag()
+  if (highlightLayer && mapResult) {
+    mapResult.removeLayer(highlightLayer)
+    highlightLayer = null
+  }
   if (mapBase) mapBase.remove()
   if (mapCompare) mapCompare.remove()
   if (mapResult) mapResult.remove()
+  // 重置同步标志
+  isSyncing = false
 })
 </script>
 
