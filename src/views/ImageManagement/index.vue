@@ -81,6 +81,12 @@
               <el-option label="高分系列" value="gaofen" />
             </el-select>
           </el-form-item>
+          <el-form-item label="区域">
+            <el-select v-model="filterForm.region" placeholder="全部区域" style="width: 140px" clearable>
+              <el-option label="全部" value="" />
+              <el-option v-for="region in availableRegions" :key="region" :label="region" :value="region" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="优化状态">
             <el-select v-model="filterForm.optimizationStatus" placeholder="全部状态" style="width: 140px" clearable>
               <el-option label="全部" value="" />
@@ -1324,7 +1330,7 @@ import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as Uploa
 import { Picture, DataAnalysis, SuccessFilled, InfoFilled, Check, Clock, Warning } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysis'
-import { getImageList, refreshImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage } from '@/api/image'
+import { getImageList, refreshImageList, uploadImage, updateImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage } from '@/api/image'
 import { 
   getRecognitionResults, 
   convertShpToGeojson, 
@@ -2097,7 +2103,8 @@ const filterForm = ref({
   dateRange: [],
   sensor: '',
   cloudCover: 30,
-  optimizationStatus: '' // 优化状态筛选：all/optimized/unoptimized/processing/result
+  optimizationStatus: '', // 优化状态筛选：all/optimized/unoptimized/processing/result
+  region: '' // 🆕 区域筛选
 })
 
 // 上传表单数据
@@ -2133,6 +2140,11 @@ const filteredData = computed(() => {
   // 传感器过滤
   if (filterForm.value.sensor) {
     data = data.filter(item => item.sensor.toLowerCase().includes(filterForm.value.sensor.toLowerCase()))
+  }
+  
+  // 🆕 区域过滤
+  if (filterForm.value.region) {
+    data = data.filter(item => item.region && item.region.toLowerCase().includes(filterForm.value.region.toLowerCase()))
   }
   
   // 云量过滤（只过滤有云量值的数据）
@@ -2194,6 +2206,17 @@ const tableData = computed(() => {
 
 // 总数
 const total = computed(() => filteredData.value.length)
+
+// 🆕 从数据中提取可用的区域列表
+const availableRegions = computed(() => {
+  const regions = new Set()
+  allData.value.forEach(item => {
+    if (item.region && item.region.trim()) {
+      regions.add(item.region.trim())
+    }
+  })
+  return Array.from(regions).sort()
+})
 
 // 加载影像列表
 const loadImageList = async (silent = false) => {
@@ -2287,16 +2310,28 @@ const stopAutoRefresh = () => {
   console.log('⏹️ 已停止自动刷新')
 }
 
-// 刷新列表（强制从服务器重新同步）
+// 刷新列表（强制从服务器重新同步，并重置所有筛选条件）
 const handleRefresh = async () => {
   try {
     loading.value = true
+    
+    // 🔧 修复：重置所有筛选条件
+    searchKeyword.value = ''
+    filterForm.value = {
+      dateRange: [],
+      sensor: '',
+      cloudCover: 30,
+      optimizationStatus: '',
+      region: ''
+    }
+    currentPage.value = 1
+    
     // 🆕 使用强制刷新API，清除后端缓存
     const res = await refreshImageList()
     allData.value = res.data || []
     
-    console.log('🔄 强制刷新完成，已从服务器同步最新数据')
-    ElMessage.success('刷新成功')
+    console.log('🔄 强制刷新完成，已从服务器同步最新数据并重置筛选条件')
+    ElMessage.success('刷新成功，已重置所有筛选条件')
   } catch (error) {
     console.error('刷新失败：', error)
     ElMessage.error('刷新失败')
@@ -2311,14 +2346,17 @@ const handleSearch = () => {
 }
 
 const resetFilter = () => {
+  // 🔧 修复：重置所有筛选条件，包括搜索框和区域
+  searchKeyword.value = ''
   filterForm.value = {
     dateRange: [],
     sensor: '',
     cloudCover: 30,
-    optimizationStatus: ''
+    optimizationStatus: '',
+    region: ''
   }
   currentPage.value = 1
-  ElMessage.success('筛选条件已重置')
+  ElMessage.success('所有筛选条件已重置')
 }
 
 // 重置识别结果筛选条件
@@ -2589,36 +2627,33 @@ const handleSaveEdit = async () => {
       return
     }
     
-    // 在真实项目中，这里应该调用后端API保存数据
-    // await updateImage(editForm.value.id, editForm.value)
+    // 🔧 修复：调用后端API保存数据（持久化到imageData.json）
+    const updateData = {
+      year: editForm.value.year,
+      period: editForm.value.period,
+      cropType: editForm.value.cropType,
+      region: editForm.value.region,
+      sensor: editForm.value.sensor,
+      date: editForm.value.date,
+      cloudCover: editForm.value.cloudCover,
+      description: editForm.value.description
+    }
     
-    // 模拟更新：在 allData 中找到对应项并更新
-    const index = allData.value.findIndex(item => item.id === editForm.value.id)
-    if (index !== -1) {
-      // 只更新可编辑字段
-      allData.value[index] = {
-        ...allData.value[index],
-        year: editForm.value.year,
-        period: editForm.value.period,
-        cropType: editForm.value.cropType,
-        region: editForm.value.region,
-        sensor: editForm.value.sensor,
-        date: editForm.value.date,
-        cloudCover: editForm.value.cloudCover,
-        description: editForm.value.description
-      }
-      
+    // 调用后端更新接口
+    const response = await updateImage(editForm.value.id, updateData)
+    
+    if (response.code === 200) {
       ElMessage.success('修改成功')
       showEditDialog.value = false
       
-      // 注意：纯前端项目，刷新后数据会丢失
-      // 在真实项目中，数据会持久化到数据库
+      // 🔧 修复：刷新列表，清除缓存获取最新数据
+      await loadImageList(false, true) // silent=false, forceRefresh=true
     } else {
-      ElMessage.error('未找到该影像数据')
+      ElMessage.error('保存失败: ' + (response.message || '未知错误'))
     }
   } catch (error) {
     console.error('保存失败:', error)
-    ElMessage.error('保存失败：' + error.message)
+    ElMessage.error('保存失败：' + (error.message || '网络错误'))
   }
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "xinjiang-webgis",
   "version": "1.0.0",
-  "description": "新疆WebGIS监测与分析系统",
+  "description": "作物识别与分析系统",
   "type": "module",
   "scripts": {
     "dev": "vite",

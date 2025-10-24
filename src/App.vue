@@ -6,7 +6,7 @@
 import { onMounted } from 'vue'
 
 onMounted(() => {
-  console.log('新疆WebGIS监测与分析系统 v1.0.0')
+  console.log('作物识别与分析系统 v1.0.0')
 })
 </script>
 
