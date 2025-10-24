@@ -1324,7 +1324,7 @@ import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as Uploa
 import { Picture, DataAnalysis, SuccessFilled, InfoFilled, Check, Clock, Warning } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysis'
-import { getImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage } from '@/api/image'
+import { getImageList, refreshImageList, uploadImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage } from '@/api/image'
 import { 
   getRecognitionResults, 
   convertShpToGeojson, 
@@ -2202,6 +2202,15 @@ const loadImageList = async (silent = false) => {
     const res = await getImageList()
     const newData = res.data || []
     
+    // 🆕 显示缓存信息
+    if (res.cached && !silent) {
+      console.log(`✅ 使用缓存数据（${res.cacheAge}秒前）`)
+      // 可选：显示轻量级提示
+      // ElMessage.info({ message: `数据已缓存 (${res.cacheAge}秒前)`, duration: 1500 })
+    } else if (!silent) {
+      console.log('🔄 已从服务器同步最新数据')
+    }
+    
     // 检测优化状态变化
     if (autoRefreshEnabled.value) {
       newData.forEach(image => {
@@ -2278,13 +2287,21 @@ const stopAutoRefresh = () => {
   console.log('⏹️ 已停止自动刷新')
 }
 
-// 刷新列表
+// 刷新列表（强制从服务器重新同步）
 const handleRefresh = async () => {
   try {
-    await loadImageList()
+    loading.value = true
+    // 🆕 使用强制刷新API，清除后端缓存
+    const res = await refreshImageList()
+    allData.value = res.data || []
+    
+    console.log('🔄 强制刷新完成，已从服务器同步最新数据')
     ElMessage.success('刷新成功')
   } catch (error) {
+    console.error('刷新失败：', error)
     ElMessage.error('刷新失败')
+  } finally {
+    loading.value = false
   }
 }
 

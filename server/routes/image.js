@@ -23,6 +23,18 @@ const METADATA_FILE = path.join(DATA_DIR, 'imageData.json')
 const optimizationProgress = new Map()
 // 格式: { id: string, progress: number (0-100), status: string, step: string, startTime: number }
 
+// 🆕 元数据缓存机制
+let metadataCache = null
+let lastSyncTime = 0
+const CACHE_DURATION = 5 * 60 * 1000 // 5分钟缓存
+
+// 清除缓存的辅助函数
+function clearCache() {
+  metadataCache = null
+  lastSyncTime = 0
+  console.log('🗑️ 元数据缓存已清除')
+}
+
 // 缓存conda环境中的GDAL路径（避免重复查找）
 let cachedGDALPath = null
 let cachedCondaEnvPath = null
@@ -306,14 +318,36 @@ initGDALPath().then((result) => {
 
 // 路由
 
-// 获取影像列表
+// 获取影像列表（带缓存机制）
 router.get('/list', async (req, res) => {
   try {
+    const now = Date.now()
+    const forceRefresh = req.query.refresh === 'true' // 支持前端强制刷新
+    
+    // 如果有缓存且未过期且不强制刷新，直接返回缓存
+    if (!forceRefresh && metadataCache && (now - lastSyncTime < CACHE_DURATION)) {
+      const cacheAge = Math.floor((now - lastSyncTime) / 1000)
+      console.log(`✅ 使用缓存数据（缓存时间: ${cacheAge}秒）`)
+      return res.json({
+        code: 200,
+        message: '获取成功（缓存）',
+        data: metadataCache.images,
+        cached: true,
+        cacheAge: cacheAge
+      })
+    }
+    
+    // 否则重新同步
+    console.log('🔄 重新同步元数据...')
     const metadata = await syncMetadata()
+    metadataCache = metadata
+    lastSyncTime = now
+    
     res.json({
       code: 200,
       message: '获取成功',
-      data: metadata.images
+      data: metadata.images,
+      cached: false
     })
   } catch (error) {
     res.status(500).json({
@@ -436,6 +470,9 @@ router.get('/file/:filename', (req, res) => {
 // 上传影像
 router.post('/upload', upload.array('files'), async (req, res) => {
   try {
+    // 🆕 清除缓存，确保后续获取的是最新数据
+    clearCache()
+    
     const metadata = await syncMetadata()
     
     // 获取新上传的文件
@@ -572,6 +609,9 @@ router.delete('/:id', (req, res) => {
     metadata.images = metadata.images.filter(img => img.id !== id)
     writeMetadata(metadata)
     
+    // 🆕 清除缓存
+    clearCache()
+    
     res.json({
       code: 200,
       message: '删除成功'
@@ -602,6 +642,9 @@ router.post('/batch-delete', (req, res) => {
     
     metadata.images = metadata.images.filter(img => !ids.includes(img.id))
     writeMetadata(metadata)
+    
+    // 🆕 清除缓存
+    clearCache()
     
     res.json({
       code: 200,

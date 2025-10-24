@@ -9,6 +9,15 @@ export const getImageList = (params) => {
   })
 }
 
+// 🆕 强制刷新影像列表（清除后端缓存）
+export const refreshImageList = () => {
+  return request({
+    url: '/image/list',
+    method: 'get',
+    params: { refresh: 'true' } // 强制重新同步
+  })
+}
+
 // 获取所有文件列表（包括TIF、SHP、GeoJSON等）
 export const getAllFiles = (params) => {
   return request({

@@ -1686,6 +1686,70 @@ const handleRunDifferenceDetection = async () => {
 }
 
 // 执行差异分析（对比两个GeoJSON）
+// 坐标转换：从Web Mercator (EPSG:3857) 转为 WGS84 (EPSG:4326)
+const mercatorToLatLng = (x, y) => {
+  if (Math.abs(x) > 180 || Math.abs(y) > 90) {
+    const lng = (x / 20037508.34) * 180
+    let lat = (y / 20037508.34) * 180
+    lat = 180 / Math.PI * (2 * Math.atan(Math.exp(lat * Math.PI / 180)) - Math.PI / 2)
+    return [lng, lat]
+  }
+  return [x, y]
+}
+
+// 计算多边形面积（使用球面几何，返回平方米）
+const calculatePolygonArea = (coordinates) => {
+  if (!coordinates || !coordinates[0] || coordinates[0].length < 3) {
+    return 0
+  }
+  
+  const EARTH_RADIUS = 6378137
+  const ring = coordinates[0].map(([x, y]) => {
+    const [lng, lat] = mercatorToLatLng(x, y)
+    return [lng, lat]
+  })
+  
+  let area = 0
+  const n = ring.length - 1
+  
+  for (let i = 0; i < n; i++) {
+    const [lng1, lat1] = ring[i]
+    const [lng2, lat2] = ring[i + 1]
+    const lat1Rad = lat1 * Math.PI / 180
+    const lat2Rad = lat2 * Math.PI / 180
+    const lngDiff = (lng2 - lng1) * Math.PI / 180
+    area += lngDiff * (2 + Math.sin(lat1Rad) + Math.sin(lat2Rad))
+  }
+  
+  area = Math.abs(area * EARTH_RADIUS * EARTH_RADIUS / 2)
+  return area
+}
+
+// 计算地块面积并转换为亩（1亩 ≈ 666.67平方米）
+const calculateFeatureAreaInMu = (feature) => {
+  if (!feature || !feature.geometry) {
+    return 0
+  }
+  
+  try {
+    let areaInSquareMeters = 0
+    
+    if (feature.geometry.type === 'Polygon') {
+      areaInSquareMeters = calculatePolygonArea(feature.geometry.coordinates)
+    } else if (feature.geometry.type === 'MultiPolygon') {
+      feature.geometry.coordinates.forEach(polygon => {
+        areaInSquareMeters += calculatePolygonArea(polygon)
+      })
+    }
+    
+    const areaInMu = areaInSquareMeters / 666.67
+    return Math.round(areaInMu * 100) / 100
+  } catch (error) {
+    console.error('计算面积失败:', error)
+    return 0
+  }
+}
+
 const performDifferenceAnalysis = (baseGeojson, compareGeojson, baseFile, compareFile) => {
   const baseFeatures = baseGeojson.features || []
   const compareFeatures = compareGeojson.features || []
@@ -1790,6 +1854,12 @@ const performDifferenceAnalysis = (baseGeojson, compareGeojson, baseFile, compar
       changedCount++
     }
     
+    // 计算地块面积（优先使用已有的area字段，如果没有则计算）
+    let calculatedArea = baseProps.area || baseProps.Area || baseProps.面积
+    if (!calculatedArea || calculatedArea === 0) {
+      calculatedArea = calculateFeatureAreaInMu(baseFeature)
+    }
+    
     // 创建结果要素
     resultFeatures.push({
       type: 'Feature',
@@ -1799,9 +1869,11 @@ const performDifferenceAnalysis = (baseGeojson, compareGeojson, baseFile, compar
         plotName: baseProps.name || baseProps.plotName || `地块${id}`,
         originalCrop: baseCrop,
         currentCrop: currentCrop,
+        originalGridcode: baseGridcode, // 保存原始gridcode
+        currentGridcode: currentGridcode, // 保存当前gridcode
         diffType: diffType,
         hasChange: hasChange,
-        area: baseProps.area || baseProps.Area || baseProps.面积 || 0
+        area: calculatedArea // 使用计算或已有的面积
       },
       geometry: baseFeature.geometry
     })
