@@ -8,7 +8,7 @@ export default {
   // 例如：'base', 'xm', 'gis', 'gdal_env' 等
   // 如果GDAL已添加到系统PATH，可设置为 null
   // Docker环境中应设置为 null（GDAL 已在系统层面安装）
-  condaEnv: process.env.DOCKER_ENV ? null : "py", // Docker中自动使用null
+  condaEnv: process.env.NODE_ENV === "production" ? null : "py", // 生产环境使用系统GDAL，本地开发使用py环境
 
   // 数据目录（相对于项目根目录）
   dataDir: "public/data",

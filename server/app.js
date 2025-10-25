@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import fs from 'fs'
 
 // 导入路由模块
 import imageRoutes from './routes/image.js'
@@ -36,10 +37,10 @@ app.use((req, res, next) => {
   next()
 })
 
-// 挂载路由
-app.use('/image', imageRoutes)
+// 挂载路由（添加 /api 前缀，符合RESTful规范）
+app.use('/api/image', imageRoutes)
 if (analysisRoutes) {
-  app.use('/analysis', analysisRoutes)
+  app.use('/api/analysis', analysisRoutes)
 }
 
 // 健康检查接口
@@ -62,7 +63,8 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
-      image: '/image/*'
+      image: '/api/image/*',
+      analysis: '/api/analysis/*'
     }
   })
 })
@@ -84,6 +86,33 @@ app.use((err, req, res, next) => {
   })
 })
 
+// 初始化数据目录
+const initDataDirectories = () => {
+  const dataDir = path.join(__dirname, '../public/data')
+  const requiredDirs = [
+    dataDir,
+    path.join(dataDir, 'data_shp'),
+    path.join(dataDir, 'data_geojson'),
+    path.join(dataDir, 'data_kmz'),
+    path.join(dataDir, 'data_analysis_results'),
+    path.join(dataDir, 'data_analysis_results/temporal'),
+    path.join(dataDir, 'data_analysis_results/difference'),
+    path.join(dataDir, 'data_reports')
+  ]
+
+  console.log('📁 初始化数据目录...')
+  requiredDirs.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+      console.log(`   ✅ 创建目录: ${path.relative(__dirname, dir)}`)
+    }
+  })
+  console.log('✅ 数据目录初始化完成\n')
+}
+
+// 启动时初始化目录
+initDataDirectories()
+
 // 启动服务器
 app.listen(PORT, () => {
   console.log('====================================')
@@ -94,7 +123,10 @@ app.listen(PORT, () => {
   console.log(`  数据目录: ${path.join(__dirname, '../public/data')}`)
   console.log('====================================')
   console.log('  可用服务:')
-  console.log('  - 影像数据管理 (/image)')
+  console.log('  - 影像数据管理 (/api/image)')
+  if (analysisRoutes) {
+    console.log('  - 识别结果管理 (/api/analysis)')
+  }
   console.log('====================================')
   console.log('  GDAL配置:')
   if (config.condaEnv) {

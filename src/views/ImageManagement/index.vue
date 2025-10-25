@@ -1947,7 +1947,8 @@ const startUpload = async () => {
           formData.append('metadata', JSON.stringify(metadata))
         }
         
-        const response = await fetch(`${baseUrl}/analysis/upload`, {
+        // 🔧 修复：使用相对路径，让 Nginx 代理转发到后端
+        const response = await fetch('/api/analysis/upload', {
           method: 'POST',
           body: formData
         })

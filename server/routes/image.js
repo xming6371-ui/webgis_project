@@ -439,27 +439,123 @@ router.get('/files', (req, res) => {
   }
 })
 
-// 获取影像文件（用于前端读取和渲染）
-router.get('/file/:filename', (req, res) => {
+// 处理OPTIONS请求（CORS预检）
+router.options('/file/:filename', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type')
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
+  res.sendStatus(204)
+})
+
+// 处理HEAD请求（geotiff.js用于查询文件大小）
+router.head('/file/:filename', (req, res) => {
   try {
-    const { filename } = req.params
+    // 🔧 修复：解码URL编码的文件名（处理括号等特殊字符）
+    const filename = decodeURIComponent(req.params.filename)
     const filePath = path.join(DATA_DIR, filename)
     
     if (!fs.existsSync(filePath)) {
+      console.error(`❌ HEAD请求 - 文件不存在: ${filePath}`)
+      return res.sendStatus(404)
+    }
+    
+    const stat = fs.statSync(filePath)
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Accept-Ranges', 'bytes')
+    res.setHeader('Content-Type', 'image/tiff')
+    res.setHeader('Content-Length', stat.size)
+    console.log(`✅ HEAD请求成功: ${filename} (${stat.size} bytes)`)
+    res.sendStatus(200)
+  } catch (error) {
+    console.error('❌ HEAD请求失败:', error)
+    res.sendStatus(500)
+  }
+})
+
+// 获取影像文件（用于前端读取和渲染，支持Range请求）
+router.get('/file/:filename', (req, res) => {
+  try {
+    // 🔧 修复：解码URL编码的文件名（处理括号等特殊字符）
+    const filename = decodeURIComponent(req.params.filename)
+    const filePath = path.join(DATA_DIR, filename)
+    
+    console.log(`📥 文件请求: ${filename}`)
+    console.log(`   完整路径: ${filePath}`)
+    
+    if (!fs.existsSync(filePath)) {
+      console.error(`❌ 文件不存在: ${filePath}`)
       return res.status(404).json({
         code: 404,
-        message: '文件不存在'
+        message: '文件不存在: ' + filename
       })
     }
     
-    // 设置正确的响应头
-    res.setHeader('Content-Type', 'image/tiff')
-    res.setHeader('Access-Control-Allow-Origin', '*')
+    // 获取文件信息
+    const stat = fs.statSync(filePath)
+    const fileSize = stat.size
     
-    // 发送文件
-    const fileStream = fs.createReadStream(filePath)
-    fileStream.pipe(res)
+    // 设置CORS和基本响应头（兼容本地和nginx代理）
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type')
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
+    res.setHeader('Accept-Ranges', 'bytes')
+    res.setHeader('Content-Type', 'image/tiff')
+    res.setHeader('Cache-Control', 'public, max-age=86400') // 缓存1天
+    
+    // 处理Range请求（geotiff.js需要用来读取TIF文件的部分数据）
+    const range = req.headers.range
+    
+    if (range) {
+      // 解析Range头: bytes=start-end
+      const parts = range.replace(/bytes=/, '').split('-')
+      const start = parseInt(parts[0], 10)
+      let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1
+      
+      // 🔧 修复：验证并调整范围（更宽松的处理）
+      if (start < 0 || start >= fileSize) {
+        console.error(`❌ 无效的Range起始位置: ${start}/${fileSize}`)
+        res.status(416).setHeader('Content-Range', `bytes */${fileSize}`)
+        return res.end()
+      }
+      
+      // 如果 end 超出范围，自动调整到文件末尾（兼容性更好）
+      if (end >= fileSize) {
+        console.warn(`⚠️ Range结束位置超出范围，自动调整: ${end} -> ${fileSize - 1}`)
+        end = fileSize - 1
+      }
+      
+      const chunksize = (end - start) + 1
+      
+      // 设置206 Partial Content响应
+      res.status(206)
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`)
+      res.setHeader('Content-Length', chunksize)
+      
+      console.log(`📦 Range请求: ${filename} [${start}-${end}/${fileSize}]`)
+      
+      // 创建文件流（只读取请求的部分）
+      const fileStream = fs.createReadStream(filePath, { start, end })
+      fileStream.on('error', (error) => {
+        console.error('❌ 文件流错误:', error)
+        res.end()
+      })
+      fileStream.pipe(res)
+    } else {
+      // 没有Range请求，发送完整文件
+      console.log(`📦 完整文件请求: ${filename} [${fileSize} bytes]`)
+      res.setHeader('Content-Length', fileSize)
+      
+      const fileStream = fs.createReadStream(filePath)
+      fileStream.on('error', (error) => {
+        console.error('❌ 文件流错误:', error)
+        res.end()
+      })
+      fileStream.pipe(res)
+    }
   } catch (error) {
+    console.error('❌ 文件读取失败:', error)
     res.status(500).json({
       code: 500,
       message: error.message
@@ -1257,6 +1353,10 @@ async function optimizeTifFile(id, options = {}) {
     }
     
     writeMetadata(currentMetadata)
+    
+    // 🆕 清除缓存，确保前端能立即获取到最新数据
+    clearCache()
+    console.log('🗑️ 已清除缓存，前端将获取最新数据')
     
     console.log(`\n✅ 优化成功!`)
     console.log(`   原始文件: ${image.name} (${originalSizeMB} MB)`)
