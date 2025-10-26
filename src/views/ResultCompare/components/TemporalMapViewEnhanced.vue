@@ -22,9 +22,56 @@
 
         <el-divider direction="vertical" />
 
+        <el-button @click="handlePreview" :icon="View" type="primary">预览PDF</el-button>
         <el-button @click="handleExportReport" :icon="Document">导出报告</el-button>
       </el-space>
     </div>
+    
+    <!-- PDF预览对话框 -->
+    <el-dialog
+      v-model="previewVisible"
+      title="PDF预览 - 可实时调整字体大小"
+      width="90%"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div style="background: #f5f5f5; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+        <el-alert type="info" :closable="false">
+          <template #title>
+            <div style="font-size: 14px;">
+              💡 <strong>如何调整字体：</strong>
+              <ol style="margin: 10px 0 0 20px; line-height: 1.8;">
+                <li>打开文件：<code>src/utils/pdfGenerator.js</code></li>
+                <li>找到第 44-60 行的 <code>FONT_SIZES</code> 对象</li>
+                <li>修改字体大小（如 <code>title: '30px'</code>）</li>
+                <li>保存文件后，点击下方"刷新预览"按钮</li>
+                <li>查看新效果，满意后关闭预览，点击"导出报告"</li>
+              </ol>
+            </div>
+          </template>
+        </el-alert>
+      </div>
+      
+      <el-button @click="refreshPreview" type="primary" style="margin-bottom: 10px;">
+        <el-icon><Refresh /></el-icon>
+        刷新预览（修改字体后点这里）
+      </el-button>
+      
+      <div style="border: 2px solid #ddd; border-radius: 8px; overflow: hidden; background: white;">
+        <iframe
+          ref="previewFrame"
+          :srcdoc="previewHTML"
+          style="width: 100%; height: 70vh; border: none;"
+        ></iframe>
+      </div>
+      
+      <template #footer>
+        <el-button @click="previewVisible = false">关闭预览</el-button>
+        <el-button type="primary" @click="handleExportFromPreview">
+          确认字体，导出PDF
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- 时间轴视图 -->
     <div v-show="activeTab === 'timeline'" class="timeline-view">
@@ -62,7 +109,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Timer, DataAnalysis, TrendCharts, Download, Document, ArrowLeft, ArrowRight, Location
+  Timer, DataAnalysis, TrendCharts, Download, Document, ArrowLeft, ArrowRight, Location, View, Refresh
 } from '@element-plus/icons-vue'
 import CropTransitionChart from './CropTransitionChart.vue'
 import CropDistributionChart from './CropDistributionChart.vue'
@@ -70,7 +117,7 @@ import RotationPatternChart from './RotationPatternChart.vue'
 import UnchangedCropChart from './UnchangedCropChart.vue'
 import TemporalChangeMap from './TemporalChangeMap.vue'
 import { exportToCSV, analyzeRotationPatterns } from '@/utils/temporalAnalysis'
-import { generateTemporalPDF, downloadPDFBlob } from '@/utils/pdfGenerator'
+import { generateTemporalPDF, downloadPDFBlob, generatePreviewHTML } from '@/utils/pdfGenerator'
 
 const props = defineProps({
   data: {
@@ -81,6 +128,11 @@ const props = defineProps({
 
 const activeTab = ref('timeline')
 
+// 预览相关
+const previewVisible = ref(false)
+const previewHTML = ref('')
+const previewFrame = ref(null)
+
 // 轮作模式分析
 const rotationPatterns = computed(() => {
   if (!props.data.trajectories) return []
@@ -88,6 +140,27 @@ const rotationPatterns = computed(() => {
     timeline: f.properties.timeline
   })))
 })
+
+// 打开预览
+const handlePreview = () => {
+  console.log('🔍 打开PDF预览...')
+  previewHTML.value = generatePreviewHTML(props.data, activeTab.value)
+  previewVisible.value = true
+  ElMessage.success('预览已打开！修改字体后点击"刷新预览"按钮')
+}
+
+// 刷新预览（修改字体后）
+const refreshPreview = () => {
+  console.log('🔄 刷新预览...')
+  previewHTML.value = generatePreviewHTML(props.data, activeTab.value)
+  ElMessage.success('预览已刷新！请查看新的字体效果')
+}
+
+// 从预览导出PDF
+const handleExportFromPreview = async () => {
+  previewVisible.value = false
+  await handleExportReport()
+}
 
 // 导出PDF报告
 const handleExportReport = async () => {

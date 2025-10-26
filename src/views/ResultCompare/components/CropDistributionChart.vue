@@ -35,31 +35,34 @@
 
         <!-- 当前时间点的作物分布 -->
         <div class="current-distribution">
-          <el-scrollbar max-height="400px">
-            <div class="crop-list">
-              <div
-                v-for="(crop, index) in currentCrops"
-                :key="index"
-                class="crop-item"
-              >
-                <div class="crop-header">
-                  <div class="crop-name">
-                    <div
-                      class="crop-color"
-                      :style="{ background: getCropColor(index) }"
-                    ></div>
-                    <span>{{ crop.crop }}</span>
+          <div class="crop-chart-container">
+            <div
+              v-for="(crop, index) in cropsWithHeight"
+              :key="index"
+              class="crop-bar-item"
+            >
+              <div class="crop-bar-wrapper">
+                <div class="vertical-bar">
+                  <div 
+                    class="bar-fill"
+                    :style="{ 
+                      height: crop.heightPercent + '%',
+                      backgroundColor: getCropColor(index)
+                    }"
+                  >
+                    <span class="bar-value">{{ getCropValue(crop) }}</span>
                   </div>
-                  <div class="crop-value">{{ getCropValue(crop) }}</div>
                 </div>
-                <el-progress
-                  :percentage="parseFloat(crop.percentage)"
-                  :color="getCropColor(index)"
-                  :show-text="false"
-                />
+                <div class="crop-label">
+                  <div
+                    class="crop-color-dot"
+                    :style="{ background: getCropColor(index) }"
+                  ></div>
+                  <span class="crop-name-text">{{ crop.crop }}</span>
+                </div>
               </div>
             </div>
-          </el-scrollbar>
+          </div>
         </div>
 
         <!-- 对比视图 -->
@@ -133,6 +136,38 @@ const currentCrops = computed(() => {
   const point = props.distribution[selectedTimeIndex.value]
   // 使用规范化函数，确保返回数组格式
   return normalizeCropsData(point?.crops)
+})
+
+// 计算每个作物柱子的实际高度（基于数值比例）
+const cropsWithHeight = computed(() => {
+  if (!currentCrops.value.length) return []
+  
+  // 根据显示模式获取最大值
+  const maxValue = Math.max(...currentCrops.value.map(crop => {
+    if (displayMode.value === 'count') return crop.count
+    if (displayMode.value === 'area') return crop.area
+    return parseFloat(crop.percentage)
+  }))
+  
+  // 计算每个作物的高度百分比（相对于最大值）
+  return currentCrops.value.map(crop => {
+    let value
+    if (displayMode.value === 'count') {
+      value = crop.count
+    } else if (displayMode.value === 'area') {
+      value = crop.area
+    } else {
+      value = parseFloat(crop.percentage)
+    }
+    
+    // 高度百分比，最小10%确保可见
+    const heightPercent = maxValue > 0 ? Math.max((value / maxValue) * 100, 10) : 10
+    
+    return {
+      ...crop,
+      heightPercent
+    }
+  })
 })
 
 // 构建对比数据表格
@@ -243,43 +278,88 @@ const getCropColor = (index) => {
   }
 
   .current-distribution {
-    .crop-list {
-      .crop-item {
-        margin-bottom: 20px;
-        padding: 12px;
-        background: #f5f7fa;
-        border-radius: 8px;
-        transition: all 0.3s;
-
-        &:hover {
-          background: #ecf5ff;
-          transform: translateX(4px);
-        }
-
-        .crop-header {
+    padding: 20px 10px;
+    
+    .crop-chart-container {
+      display: flex;
+      justify-content: space-around;
+      align-items: flex-end;
+      gap: 15px;
+      min-height: 350px;
+      padding: 10px 0;
+      
+      .crop-bar-item {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        
+        .crop-bar-wrapper {
+          width: 100%;
           display: flex;
-          justify-content: space-between;
+          flex-direction: column;
           align-items: center;
-          margin-bottom: 8px;
-
-          .crop-name {
+          height: 100%;
+          
+          .vertical-bar {
+            width: 60px;
+            height: 300px;
+            background: #f0f2f5;
+            border-radius: 8px;
             display: flex;
-            align-items: center;
-            gap: 8px;
-            font-weight: 600;
-            color: #303133;
-
-            .crop-color {
-              width: 16px;
-              height: 16px;
-              border-radius: 4px;
+            flex-direction: column;
+            justify-content: flex-end;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s;
+            
+            &:hover {
+              transform: translateY(-4px);
+              box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            }
+            
+            .bar-fill {
+              width: 100%;
+              border-radius: 8px 8px 0 0;
+              position: relative;
+              display: flex;
+              align-items: flex-start;
+              justify-content: center;
+              padding-top: 8px;
+              transition: height 0.5s ease;
+              min-height: 30px;
+              
+              .bar-value {
+                color: white;
+                font-size: 12px;
+                font-weight: bold;
+                text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+                white-space: nowrap;
+              }
             }
           }
-
-          .crop-value {
-            font-size: 16px;
-            font-weight: 600;
-            color: #409eff;
+          
+          .crop-label {
+            margin-top: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            
+            .crop-color-dot {
+              width: 12px;
+              height: 12px;
+              border-radius: 50%;
+            }
+            
+            .crop-name-text {
+              font-size: 13px;
+              font-weight: 600;
+              color: #303133;
+              text-align: center;
+              word-break: break-all;
+              max-width: 80px;
+            }
           }
         }
       }
