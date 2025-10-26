@@ -439,27 +439,123 @@ router.get('/files', (req, res) => {
   }
 })
 
-// 获取影像文件（用于前端读取和渲染）
-router.get('/file/:filename', (req, res) => {
+// 处理OPTIONS请求（CORS预检）
+router.options('/file/:filename', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type')
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
+  res.sendStatus(204)
+})
+
+// 处理HEAD请求（geotiff.js用于查询文件大小）
+router.head('/file/:filename', (req, res) => {
   try {
-    const { filename } = req.params
+    // 🔧 修复：解码URL编码的文件名（处理括号等特殊字符）
+    const filename = decodeURIComponent(req.params.filename)
     const filePath = path.join(DATA_DIR, filename)
     
     if (!fs.existsSync(filePath)) {
+      console.error(`❌ HEAD请求 - 文件不存在: ${filePath}`)
+      return res.sendStatus(404)
+    }
+    
+    const stat = fs.statSync(filePath)
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Accept-Ranges', 'bytes')
+    res.setHeader('Content-Type', 'image/tiff')
+    res.setHeader('Content-Length', stat.size)
+    console.log(`✅ HEAD请求成功: ${filename} (${stat.size} bytes)`)
+    res.sendStatus(200)
+  } catch (error) {
+    console.error('❌ HEAD请求失败:', error)
+    res.sendStatus(500)
+  }
+})
+
+// 获取影像文件（用于前端读取和渲染，支持Range请求）
+router.get('/file/:filename', (req, res) => {
+  try {
+    // 🔧 修复：解码URL编码的文件名（处理括号等特殊字符）
+    const filename = decodeURIComponent(req.params.filename)
+    const filePath = path.join(DATA_DIR, filename)
+    
+    console.log(`📥 文件请求: ${filename}`)
+    console.log(`   完整路径: ${filePath}`)
+    
+    if (!fs.existsSync(filePath)) {
+      console.error(`❌ 文件不存在: ${filePath}`)
       return res.status(404).json({
         code: 404,
-        message: '文件不存在'
+        message: '文件不存在: ' + filename
       })
     }
     
-    // 设置正确的响应头
-    res.setHeader('Content-Type', 'image/tiff')
-    res.setHeader('Access-Control-Allow-Origin', '*')
+    // 获取文件信息
+    const stat = fs.statSync(filePath)
+    const fileSize = stat.size
     
-    // 发送文件
-    const fileStream = fs.createReadStream(filePath)
-    fileStream.pipe(res)
+    // 设置CORS和基本响应头（兼容本地和nginx代理）
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type')
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges')
+    res.setHeader('Accept-Ranges', 'bytes')
+    res.setHeader('Content-Type', 'image/tiff')
+    res.setHeader('Cache-Control', 'public, max-age=86400') // 缓存1天
+    
+    // 处理Range请求（geotiff.js需要用来读取TIF文件的部分数据）
+    const range = req.headers.range
+    
+    if (range) {
+      // 解析Range头: bytes=start-end
+      const parts = range.replace(/bytes=/, '').split('-')
+      const start = parseInt(parts[0], 10)
+      let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1
+      
+      // 🔧 修复：验证并调整范围（更宽松的处理）
+      if (start < 0 || start >= fileSize) {
+        console.error(`❌ 无效的Range起始位置: ${start}/${fileSize}`)
+        res.status(416).setHeader('Content-Range', `bytes */${fileSize}`)
+        return res.end()
+      }
+      
+      // 如果 end 超出范围，自动调整到文件末尾（兼容性更好）
+      if (end >= fileSize) {
+        console.warn(`⚠️ Range结束位置超出范围，自动调整: ${end} -> ${fileSize - 1}`)
+        end = fileSize - 1
+      }
+      
+      const chunksize = (end - start) + 1
+      
+      // 设置206 Partial Content响应
+      res.status(206)
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`)
+      res.setHeader('Content-Length', chunksize)
+      
+      console.log(`📦 Range请求: ${filename} [${start}-${end}/${fileSize}]`)
+      
+      // 创建文件流（只读取请求的部分）
+      const fileStream = fs.createReadStream(filePath, { start, end })
+      fileStream.on('error', (error) => {
+        console.error('❌ 文件流错误:', error)
+        res.end()
+      })
+      fileStream.pipe(res)
+    } else {
+      // 没有Range请求，发送完整文件
+      console.log(`📦 完整文件请求: ${filename} [${fileSize} bytes]`)
+      res.setHeader('Content-Length', fileSize)
+      
+      const fileStream = fs.createReadStream(filePath)
+      fileStream.on('error', (error) => {
+        console.error('❌ 文件流错误:', error)
+        res.end()
+      })
+      fileStream.pipe(res)
+    }
   } catch (error) {
+    console.error('❌ 文件读取失败:', error)
     res.status(500).json({
       code: 500,
       message: error.message
@@ -740,20 +836,28 @@ async function initGDALPath() {
 
 // 构建GDAL命令（支持conda环境 + 加速模式）
 function buildGDALCommand(command) {
+  // 检测操作系统
+  const isWindows = process.platform === 'win32'
+  const gdalExecutableSuffix = isWindows ? '.exe' : ''
+  
   // 🚀 加速模式：使用绝对路径 + 环境变量（避免重复启动conda）
   if (cachedGDALPath && cachedCondaEnvPath) {
     // 替换命令中的 gdalwarp/gdaladdo/gdal_translate 为绝对路径
     const modifiedCmd = command
-      .replace(/^gdalwarp\b/, `"${path.join(cachedGDALPath, 'gdalwarp.exe')}"`)
-      .replace(/^gdaladdo\b/, `"${path.join(cachedGDALPath, 'gdaladdo.exe')}"`)
-      .replace(/^gdal_translate\b/, `"${path.join(cachedGDALPath, 'gdal_translate.exe')}"`)
+      .replace(/^gdalwarp\b/, `"${path.join(cachedGDALPath, 'gdalwarp' + gdalExecutableSuffix)}"`)
+      .replace(/^gdaladdo\b/, `"${path.join(cachedGDALPath, 'gdaladdo' + gdalExecutableSuffix)}"`)
+      .replace(/^gdal_translate\b/, `"${path.join(cachedGDALPath, 'gdal_translate' + gdalExecutableSuffix)}"`)
     
     // 设置环境变量（GDAL需要）
     const gdalData = path.join(cachedCondaEnvPath, 'Library', 'share', 'gdal')
     const projLib = path.join(cachedCondaEnvPath, 'Library', 'share', 'proj')
     
     // 构建完整命令（Windows）
-    return `set GDAL_DATA=${gdalData}& set PROJ_LIB=${projLib}& ${modifiedCmd}`
+    if (isWindows) {
+      return `set GDAL_DATA=${gdalData}& set PROJ_LIB=${projLib}& ${modifiedCmd}`
+    } else {
+      return `GDAL_DATA=${gdalData} PROJ_LIB=${projLib} ${modifiedCmd}`
+    }
   }
   
   // 🐢 降级方案：每次都启动conda环境（慢，但更兼容）
@@ -762,7 +866,8 @@ function buildGDALCommand(command) {
     return `"${condaPath}" run -n ${config.condaEnv} ${command}`
   }
   
-  // 假设GDAL在系统PATH中
+  // 假设GDAL在系统PATH中（Linux/Docker环境）
+  console.log(`📋 使用系统PATH中的GDAL命令: ${command}`)
   return command
 }
 
@@ -1111,16 +1216,10 @@ async function optimizeTifFile(id, options = {}) {
     step: '投影转换 + COG转换 + 金字塔生成（最耗时）...'
   })
   
-  // ✅ 优化GDAL参数，提升速度和压缩率
-  // -co NUM_THREADS=ALL_CPUS: 启用多线程加速（最重要）
-  // -co COMPRESS=DEFLATE: 使用DEFLATE压缩（比LZW更快，压缩率更高）
-  // -co PREDICTOR=2: 启用预测编码（提升15-30%压缩率）
-  // -co ZLEVEL=6: 压缩等级6（平衡速度和压缩率，1最快9最小）
-  // -co BIGTIFF=IF_SAFER: 大文件自动使用BigTIFF
-  // -wo NUM_THREADS=ALL_CPUS: 投影变换也使用多线程
-  // -co OVERVIEW_RESAMPLING=NEAREST: 金字塔重采样方法
-  // -multi: 启用多线程处理（GDAL 2.1+）
-  const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -wo NUM_THREADS=ALL_CPUS -multi -of COG -co COMPRESS=DEFLATE -co PREDICTOR=2 -co ZLEVEL=6 -co BLOCKSIZE=512 -co TILED=YES -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -co BIGTIFF=IF_SAFER -r near "${inputPath}" "${tempOutput}"`
+  // ✅ 修复：COG格式在转换时自动生成内部金字塔，无需再用gdaladdo添加外部金字塔
+  // 添加 -co OVERVIEW_RESAMPLING=NEAREST 参数指定金字塔重采样方法
+  // 添加 -co NUM_THREADS=ALL_CPUS 参数启用多线程加速
+  const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co TILED=YES -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -r near "${inputPath}" "${tempOutput}"`
   const gdalCommand = buildGDALCommand(gdalwarpCmd)
   
   let startTime = Date.now()
@@ -1150,53 +1249,16 @@ async function optimizeTifFile(id, options = {}) {
     step: '保存优化文件...'
   })
   
-  // 7. 保存优化文件（添加重试机制）
+  // 7. 保存优化文件
   console.log('⏳ 保存优化文件...')
   
-  // 删除旧文件（如果存在）
   if (fs.existsSync(optimizedPath)) {
     console.log('   删除旧的优化文件...')
-    try {
-      fs.unlinkSync(optimizedPath)
-      // 等待文件系统同步
-      await new Promise(resolve => setTimeout(resolve, 200))
-    } catch (unlinkErr) {
-      console.warn('   ⚠️ 删除旧文件失败:', unlinkErr.message)
-    }
+    fs.unlinkSync(optimizedPath)
   }
   
-  // 重命名临时文件（添加重试逻辑）
-  let renameSuccess = false
-  let retryCount = 0
-  const maxRetries = 3
-  
-  while (!renameSuccess && retryCount < maxRetries) {
-    try {
-      fs.renameSync(tempOutput, optimizedPath)
-      renameSuccess = true
-      console.log(`✅ 优化文件已保存: ${path.basename(optimizedPath)}`)
-    } catch (renameErr) {
-      retryCount++
-      console.warn(`   ⚠️ 重命名失败 (尝试 ${retryCount}/${maxRetries}): ${renameErr.message}`)
-      
-      if (retryCount < maxRetries) {
-        // 等待后重试
-        await new Promise(resolve => setTimeout(resolve, 1000))
-      } else {
-        // 最后尝试：复制+删除
-        console.log('   🔄 使用复制方式...')
-        try {
-          fs.copyFileSync(tempOutput, optimizedPath)
-          fs.unlinkSync(tempOutput)
-          renameSuccess = true
-          console.log(`✅ 使用备选方案成功保存`)
-        } catch (copyErr) {
-          if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput)
-          throw new Error(`文件保存失败: ${copyErr.message}。请检查：1) 关闭占用文件的程序 2) 以管理员权限运行 3) 检查磁盘空间`)
-        }
-      }
-    }
-  }
+  fs.renameSync(tempOutput, optimizedPath)
+  console.log(`✅ 优化文件已保存: ${path.basename(optimizedPath)}`)
   
   // 更新进度：完成
   optimizationProgress.set(id, {
@@ -1241,93 +1303,69 @@ async function optimizeTifFile(id, options = {}) {
         console.warn(`⚠️ 优化后TIF分析失败: ${image.name}`, err.message)
       }
     } else {
-      // 不覆盖原文件：创建新记录或更新已存在的优化结果
+      // 不覆盖原文件：创建新记录，原记录保持不变
       // 1. 原记录保持不变（继续指向原文件）
       currentImage.isOptimized = false  // 原文件未优化
-      currentImage.status = 'processed'  // 🔧 修复：更新状态为已处理
       
-      // 🔧 修复：检查是否已存在相同文件名的优化结果
-      let existingOptimizedImage = currentMetadata.images.find(img => 
-        img.name === finalFileName && img.isOptimizedResult === true
-      )
+      // 2. 创建新记录for优化后的文件
+      // 找到最大ID，避免冲突
+      let maxId = 0
+      currentMetadata.images.forEach(img => {
+        const match = img.id.match(/^IMG(\d+)$/)
+        if (match) {
+          const num = parseInt(match[1], 10)
+          if (num > maxId) maxId = num
+        }
+      })
+      const newId = 'IMG' + String(maxId + 1).padStart(3, '0')
       
-      if (existingOptimizedImage) {
-        // 已存在优化结果，更新它
-        console.log(`🔄 更新已存在的优化结果: ${existingOptimizedImage.id} - ${finalFileName}`)
-        
-        existingOptimizedImage.size = optimizedSizeMB + 'MB'
-        existingOptimizedImage.optimizedSize = optimizedSizeMB + 'MB'
-        existingOptimizedImage.uploadTime = new Date().toISOString()
-        existingOptimizedImage.description = `优化自 ${image.name}（压缩率${compressionRatio}%，节省${savedSpaceMB}MB）`
-        
-        // 📊 分析优化后的TIF文件
-        try {
-          console.log(`📊 正在分析优化后的文件: ${finalFileName}`)
-          const statistics = await analyzeTifFile(optimizedPath)
-          if (statistics) {
-            existingOptimizedImage.statistics = statistics
-            console.log(`✅ 统计数据已更新`)
-          }
-        } catch (err) {
-          console.warn(`⚠️ 优化后TIF分析失败: ${finalFileName}`, err.message)
-        }
-      } else {
-        // 不存在，创建新记录
-        // 找到最大ID，避免冲突
-        let maxId = 0
-        currentMetadata.images.forEach(img => {
-          const match = img.id.match(/^IMG(\d+)$/)
-          if (match) {
-            const num = parseInt(match[1], 10)
-            if (num > maxId) maxId = num
-          }
-        })
-        const newId = 'IMG' + String(maxId + 1).padStart(3, '0')
-        
-        const newImage = {
-          id: newId,
-          name: finalFileName,
-          year: currentImage.year,
-          period: currentImage.period,
-          cropType: currentImage.cropType,
-          sensor: currentImage.sensor,
-          region: currentImage.region,
-          date: currentImage.date,
-          cloudCover: currentImage.cloudCover,
-          status: 'processed',
-          size: optimizedSizeMB + 'MB',
-          originalSize: originalSizeMB + 'MB',
-          optimizedSize: optimizedSizeMB + 'MB',
-          thumbnail: `/data/${finalFileName}`,
-          preview: `/data/${finalFileName}`,
-          filePath: `/data/${finalFileName}`,
-          optimizedPath: `/data/${finalFileName}`,
-          originalPath: `/data/${image.name}`,
-          isOptimized: true,
-          isOptimizedResult: true,  // 标记为优化结果文件
-          sourceFileId: id,  // 记录源文件ID
-          uploadTime: new Date().toISOString(),
-          description: `优化自 ${image.name}（压缩率${compressionRatio}%，节省${savedSpaceMB}MB）`
-        }
-        
-        // 📊 分析优化后的TIF文件
-        try {
-          console.log(`📊 正在分析优化后的新文件: ${finalFileName}`)
-          const statistics = await analyzeTifFile(optimizedPath)
-          if (statistics) {
-            newImage.statistics = statistics
-            console.log(`✅ 统计数据已保存到新记录`)
-          }
-        } catch (err) {
-          console.warn(`⚠️ 优化后TIF分析失败: ${finalFileName}`, err.message)
-        }
-        
-        currentMetadata.images.push(newImage)
-        console.log(`✅ 创建新记录: ${newId} - ${finalFileName}`)
+      const newImage = {
+        id: newId,
+        name: finalFileName,
+        year: currentImage.year,
+        period: currentImage.period,
+        cropType: currentImage.cropType,
+        sensor: currentImage.sensor,
+        region: currentImage.region,
+        date: currentImage.date,
+        cloudCover: currentImage.cloudCover,
+        status: 'processed',
+        size: optimizedSizeMB + 'MB',
+        originalSize: originalSizeMB + 'MB',
+        optimizedSize: optimizedSizeMB + 'MB',
+        thumbnail: `/data/${finalFileName}`,
+        preview: `/data/${finalFileName}`,
+        filePath: `/data/${finalFileName}`,
+        optimizedPath: `/data/${finalFileName}`,
+        originalPath: `/data/${image.name}`,
+        isOptimized: true,
+        isOptimizedResult: true,  // 标记为优化结果文件
+        sourceFileId: id,  // 记录源文件ID
+        uploadTime: new Date().toISOString(),
+        description: `优化自 ${image.name}（压缩率${compressionRatio}%，节省${savedSpaceMB}MB）`
       }
+      
+      // 📊 分析优化后的TIF文件
+      try {
+        console.log(`📊 正在分析优化后的新文件: ${finalFileName}`)
+        const statistics = await analyzeTifFile(optimizedPath)
+        if (statistics) {
+          newImage.statistics = statistics
+          console.log(`✅ 统计数据已保存到新记录`)
+        }
+      } catch (err) {
+        console.warn(`⚠️ 优化后TIF分析失败: ${finalFileName}`, err.message)
+      }
+      
+      currentMetadata.images.push(newImage)
+      console.log(`✅ 创建新记录: ${newId} - ${finalFileName}`)
     }
     
     writeMetadata(currentMetadata)
+    
+    // 🆕 清除缓存，确保前端能立即获取到最新数据
+    clearCache()
+    console.log('🗑️ 已清除缓存，前端将获取最新数据')
     
     console.log(`\n✅ 优化成功!`)
     console.log(`   原始文件: ${image.name} (${originalSizeMB} MB)`)
