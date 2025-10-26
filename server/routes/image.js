@@ -836,20 +836,28 @@ async function initGDALPath() {
 
 // 构建GDAL命令（支持conda环境 + 加速模式）
 function buildGDALCommand(command) {
+  // 检测操作系统
+  const isWindows = process.platform === 'win32'
+  const gdalExecutableSuffix = isWindows ? '.exe' : ''
+  
   // 🚀 加速模式：使用绝对路径 + 环境变量（避免重复启动conda）
   if (cachedGDALPath && cachedCondaEnvPath) {
     // 替换命令中的 gdalwarp/gdaladdo/gdal_translate 为绝对路径
     const modifiedCmd = command
-      .replace(/^gdalwarp\b/, `"${path.join(cachedGDALPath, 'gdalwarp.exe')}"`)
-      .replace(/^gdaladdo\b/, `"${path.join(cachedGDALPath, 'gdaladdo.exe')}"`)
-      .replace(/^gdal_translate\b/, `"${path.join(cachedGDALPath, 'gdal_translate.exe')}"`)
+      .replace(/^gdalwarp\b/, `"${path.join(cachedGDALPath, 'gdalwarp' + gdalExecutableSuffix)}"`)
+      .replace(/^gdaladdo\b/, `"${path.join(cachedGDALPath, 'gdaladdo' + gdalExecutableSuffix)}"`)
+      .replace(/^gdal_translate\b/, `"${path.join(cachedGDALPath, 'gdal_translate' + gdalExecutableSuffix)}"`)
     
     // 设置环境变量（GDAL需要）
     const gdalData = path.join(cachedCondaEnvPath, 'Library', 'share', 'gdal')
     const projLib = path.join(cachedCondaEnvPath, 'Library', 'share', 'proj')
     
     // 构建完整命令（Windows）
-    return `set GDAL_DATA=${gdalData}& set PROJ_LIB=${projLib}& ${modifiedCmd}`
+    if (isWindows) {
+      return `set GDAL_DATA=${gdalData}& set PROJ_LIB=${projLib}& ${modifiedCmd}`
+    } else {
+      return `GDAL_DATA=${gdalData} PROJ_LIB=${projLib} ${modifiedCmd}`
+    }
   }
   
   // 🐢 降级方案：每次都启动conda环境（慢，但更兼容）
@@ -858,7 +866,8 @@ function buildGDALCommand(command) {
     return `"${condaPath}" run -n ${config.condaEnv} ${command}`
   }
   
-  // 假设GDAL在系统PATH中
+  // 假设GDAL在系统PATH中（Linux/Docker环境）
+  console.log(`📋 使用系统PATH中的GDAL命令: ${command}`)
   return command
 }
 
