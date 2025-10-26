@@ -1947,7 +1947,8 @@ const startUpload = async () => {
           formData.append('metadata', JSON.stringify(metadata))
         }
         
-        const response = await fetch(`${baseUrl}/analysis/upload`, {
+        // 🔧 修复：使用相对路径，让 Nginx 代理转发到后端
+        const response = await fetch('/api/analysis/upload', {
           method: 'POST',
           body: formData
         })
@@ -2219,11 +2220,10 @@ const availableRegions = computed(() => {
 })
 
 // 加载影像列表
-const loadImageList = async (silent = false, forceRefresh = false) => {
+const loadImageList = async (silent = false) => {
   try {
     if (!silent) loading.value = true
-    // 🔧 修复：自动刷新时强制清除后端缓存
-    const res = forceRefresh ? await refreshImageList() : await getImageList()
+    const res = await getImageList()
     const newData = res.data || []
     
     // 🆕 显示缓存信息
@@ -2237,8 +2237,6 @@ const loadImageList = async (silent = false, forceRefresh = false) => {
     
     // 检测优化状态变化
     if (autoRefreshEnabled.value) {
-      let completedCount = 0
-      
       newData.forEach(image => {
         const lastStatus = lastOptimizationStatus.value.get(image.id)
         const currentStatus = image.isOptimized || image.isOptimizedResult
@@ -2255,7 +2253,6 @@ const loadImageList = async (silent = false, forceRefresh = false) => {
           
           // 从优化列表中移除原文件ID
           optimizingFileIds.value.delete(image.sourceFileId)
-          completedCount++
           console.log(`✅ 优化完成，移除源文件ID: ${image.sourceFileId}`)
           console.log(`📄 生成优化文件: ${image.id} - ${image.name}`)
         }
@@ -2271,25 +2268,12 @@ const loadImageList = async (silent = false, forceRefresh = false) => {
           
           // 从优化列表中移除
           optimizingFileIds.value.delete(image.id)
-          completedCount++
           console.log(`✅ 优化完成（覆盖），移除ID: ${image.id}`)
         }
         
         // 更新状态记录
         lastOptimizationStatus.value.set(image.id, currentStatus)
       })
-      
-      // 🔧 修复：如果所有优化任务都完成，自动停止轮询
-      if (optimizingFileIds.value.size === 0 && completedCount > 0) {
-        console.log('🎉 所有优化任务已完成，停止自动刷新')
-        stopAutoRefresh()
-        // 最后再刷新一次，确保获取最新的统计数据
-        setTimeout(() => {
-          loadImageList(true, true).catch(err => {
-            console.error('最终刷新失败:', err)
-          })
-        }, 500)
-      }
     }
     
     allData.value = newData
@@ -2309,13 +2293,12 @@ const startAutoRefresh = () => {
   
   autoRefreshEnabled.value = true
   
-  // 🔧 修复：优化期间每2秒刷新一次，快速响应优化完成
-  // 优化完成后会自动停止轮询
+  // 每30秒静默刷新一次（减少频率，降低后端负担）
   autoRefreshTimer.value = setInterval(() => {
-    loadImageList(true, true) // silent = true, forceRefresh = true，强制清除缓存
-  }, 2000)  // 改为2秒，优化期间快速刷新
+    loadImageList(true) // silent = true，不显示加载状态
+  }, 30000)  // 从15秒改为30秒
   
-  console.log('🔄 已启动自动刷新（每2秒检测优化状态）')
+  console.log('🔄 已启动自动刷新（每30秒检测优化状态）')
 }
 
 // 停止自动刷新
@@ -2587,9 +2570,6 @@ const handleConfirmOptimize = async () => {
     })
     
     if (response.code === 200) {
-      // 🔧 修复：立即关闭对话框，不要等待刷新
-      showOptimizeDialog.value = false
-      
       ElNotification({
         title: '✅ 优化已启动',
         message: '系统正在后台优化文件，通常需要1-10分钟，完成后会自动通知您',
@@ -2605,12 +2585,10 @@ const handleConfirmOptimize = async () => {
       // 启动自动刷新，监测优化完成
       startAutoRefresh()
       
-      // 🔧 修复：立即刷新一次（不等3秒），强制清除缓存获取最新状态
-      setTimeout(() => {
-        loadImageList(true, true).catch(err => {
-          console.error('刷新列表失败:', err)
-        })
-      }, 100) // 100ms后刷新，确保后端已开始处理
+      showOptimizeDialog.value = false
+      
+      // 刷新列表
+      await loadImageList()
     } else {
       ElMessage.error('优化失败: ' + (response.message || '未知错误'))
     }

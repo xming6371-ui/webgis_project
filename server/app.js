@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import fs from 'fs'
 
 // 导入路由模块
 import imageRoutes from './routes/image.js'
@@ -36,10 +37,10 @@ app.use((req, res, next) => {
   next()
 })
 
-// 挂载路由
-app.use('/image', imageRoutes)
+// 挂载路由（添加 /api 前缀，符合RESTful规范）
+app.use('/api/image', imageRoutes)
 if (analysisRoutes) {
-  app.use('/analysis', analysisRoutes)
+  app.use('/api/analysis', analysisRoutes)
 }
 
 // 健康检查接口
@@ -62,7 +63,8 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
-      image: '/image/*'
+      image: '/api/image/*',
+      analysis: '/api/analysis/*'
     }
   })
 })
@@ -84,65 +86,59 @@ app.use((err, req, res, next) => {
   })
 })
 
-// 初始化GDAL环境（缓存路径，加速后续调用）
-async function initGDALEnvironment() {
-  if (!config.condaEnv) {
-    console.log('⏭️  未配置Conda环境，将使用系统PATH中的GDAL')
-    return
-  }
-  
-  try {
-    console.log('🔍 正在初始化GDAL环境...')
-    const { execAsync } = await import('./routes/image.js')
-    
-    // 尝试调用GDAL命令来触发路径缓存
-    const { exec } = await import('child_process')
-    const { promisify } = await import('util')
-    const execPromise = promisify(exec)
-    
-    const condaPath = process.env.CONDA_EXE || 'conda'
-    const testCmd = `"${condaPath}" run -n ${config.condaEnv} gdalinfo --version`
-    
-    const { stdout } = await execPromise(testCmd)
-    console.log(`✅ GDAL环境初始化成功: ${stdout.trim()}`)
-    console.log(`⚡ 后续优化操作速度将提升 50-80%`)
-  } catch (error) {
-    console.warn('⚠️  GDAL环境初始化失败，将在首次使用时初始化')
-    console.warn(`   ${error.message}`)
-  }
+// 初始化数据目录
+const initDataDirectories = () => {
+  const dataDir = path.join(__dirname, '../public/data')
+  const requiredDirs = [
+    dataDir,
+    path.join(dataDir, 'data_shp'),
+    path.join(dataDir, 'data_geojson'),
+    path.join(dataDir, 'data_kmz'),
+    path.join(dataDir, 'data_analysis_results'),
+    path.join(dataDir, 'data_analysis_results/temporal'),
+    path.join(dataDir, 'data_analysis_results/difference'),
+    path.join(dataDir, 'data_reports')
+  ]
+
+  console.log('📁 初始化数据目录...')
+  requiredDirs.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+      console.log(`   ✅ 创建目录: ${path.relative(__dirname, dir)}`)
+    }
+  })
+  console.log('✅ 数据目录初始化完成\n')
 }
+
+// 启动时初始化目录
+initDataDirectories()
 
 // 启动服务器
-async function startServer() {
-  // 先初始化GDAL
-  await initGDALEnvironment()
-  
-  app.listen(PORT, () => {
-    console.log('====================================')
-    console.log('  WebGIS 后端服务启动成功')
-    console.log('====================================')
-    console.log(`  服务地址: http://localhost:${PORT}`)
-    console.log(`  健康检查: http://localhost:${PORT}/health`)
-    console.log(`  数据目录: ${path.join(__dirname, '../public/data')}`)
-    console.log('====================================')
-    console.log('  可用服务:')
-    console.log('  - 影像数据管理 (/image)')
-    console.log('====================================')
-    console.log('  GDAL配置:')
-    if (config.condaEnv) {
-      console.log(`  - Conda环境: ${config.condaEnv}`)
-      console.log(`  - 如需修改，请编辑 server/config.js`)
-    } else {
-      console.log('  - 使用系统PATH中的GDAL')
-      console.log('  - 如需使用Conda环境，请配置 server/config.js')
-    }
-    console.log('====================================')
-    console.log('')
-  })
-}
-
-// 启动服务
-startServer()
+app.listen(PORT, () => {
+  console.log('====================================')
+  console.log('  WebGIS 后端服务启动成功')
+  console.log('====================================')
+  console.log(`  服务地址: http://localhost:${PORT}`)
+  console.log(`  健康检查: http://localhost:${PORT}/health`)
+  console.log(`  数据目录: ${path.join(__dirname, '../public/data')}`)
+  console.log('====================================')
+  console.log('  可用服务:')
+  console.log('  - 影像数据管理 (/api/image)')
+  if (analysisRoutes) {
+    console.log('  - 识别结果管理 (/api/analysis)')
+  }
+  console.log('====================================')
+  console.log('  GDAL配置:')
+  if (config.condaEnv) {
+    console.log(`  - Conda环境: ${config.condaEnv}`)
+    console.log(`  - 如需修改，请编辑 server/config.js`)
+  } else {
+    console.log('  - 使用系统PATH中的GDAL')
+    console.log('  - 如需使用Conda环境，请配置 server/config.js')
+  }
+  console.log('====================================')
+  console.log('')
+})
 
 export default app
 

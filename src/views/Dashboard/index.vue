@@ -647,10 +647,9 @@ const cropLegend = [
 // 获取影像数据列表
 const fetchImageData = async () => {
   try {
-    // 🔧 修复：添加时间戳参数，防止浏览器缓存
-    const timestamp = Date.now()
-    const response = await axios.get(`/data/imageData.json?t=${timestamp}`)
-    imageData.value = response.data.images || []
+    // 🔧 修复：使用后端 API 获取影像数据，而不是直接访问静态文件
+    const response = await axios.get('/api/image/list')
+    imageData.value = response.data.data || []
     
     // 提取所有年份
     const years = [...new Set(imageData.value.map(img => img.year))]
@@ -943,10 +942,12 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
         console.log(`🔄 [${i + 1}/${newFiles.length}] 加载: ${file.name}`)
         
         try {
-          // 构建文件路径（relativePath是文件夹路径，需要加上文件名）
-          // Windows路径分隔符转换为URL分隔符
-          const normalizedPath = file.relativePath.replace(/\\/g, '/')
-          const filePath = `http://localhost:3000/data/data_kmz/${normalizedPath}/${file.name}`
+          // 🔧 修复：构建文件路径，使用后端 API 而不是直接访问静态文件
+          // 如果有 relativePath，需要在文件名中包含它
+          const fileName = file.relativePath 
+            ? `${file.relativePath}/${file.name}`.replace(/\\/g, '/')
+            : file.name
+          const filePath = `/api/analysis/download/kmz/${encodeURIComponent(fileName)}`
           
           console.log(`   文件相对路径: ${file.relativePath}`)
           console.log(`   文件名: ${file.name}`)
@@ -2113,9 +2114,35 @@ const analyzeTifFile = async (tifUrl) => {
   try {
     console.log('📊 开始分析TIF文件:', tifUrl)
     
-    // 读取TIF文件
+    // 🔍 第1步：测试文件URL是否可访问
+    console.log('   🔍 步骤1：测试文件URL可访问性...')
+    try {
+      const testResponse = await fetch(tifUrl, { method: 'HEAD' })
+      console.log(`   ✅ HEAD响应状态: ${testResponse.status} ${testResponse.statusText}`)
+      console.log(`   📋 响应头:`)
+      console.log(`      - Content-Length: ${testResponse.headers.get('Content-Length')}`)
+      console.log(`      - Content-Type: ${testResponse.headers.get('Content-Type')}`)
+      console.log(`      - Accept-Ranges: ${testResponse.headers.get('Accept-Ranges')}`)
+      
+      if (!testResponse.ok) {
+        throw new Error(`文件不可访问 (HTTP ${testResponse.status})`)
+      }
+      
+      if (testResponse.headers.get('Accept-Ranges') !== 'bytes') {
+        console.warn('⚠️ 警告：服务器不支持 Range 请求，geotiff.js 可能无法正常工作')
+      }
+    } catch (fetchError) {
+      console.error('❌ HEAD请求失败:', fetchError)
+      throw new Error(`无法访问文件: ${fetchError.message}`)
+    }
+    
+    // 🔍 第2步：使用 geotiff.js 读取TIF文件
+    console.log('   🔍 步骤2：使用 geotiff.js 读取TIF数据...')
     const tiff = await fromUrl(tifUrl)
+    console.log('   ✅ GeoTIFF 对象创建成功')
+    
     const image = await tiff.getImage()
+    console.log('   ✅ 获取图像对象成功')
     
     // 获取像元数据
     const data = await image.readRasters()
@@ -2208,14 +2235,35 @@ const updateStatistics = async (imageData) => {
   } else {
     // 元数据中没有统计数据，使用前端实时分析（较慢）
     console.log('⚠️ 元数据中无统计数据，开始实时分析（较慢）')
+    
+    // 🔍 输出详细的影像信息
+    console.log('📂 影像详细信息:')
+    console.log('   - ID:', imageData.id)
+    console.log('   - 文件名:', imageData.name)
+    console.log('   - 年份:', imageData.year)
+    console.log('   - 期次:', imageData.period)
+    console.log('   - filePath:', imageData.filePath)
+    console.log('   - originalPath:', imageData.originalPath)
+    console.log('   - optimizedPath:', imageData.optimizedPath)
+    console.log('   - isOptimized:', imageData.isOptimized)
+    
     const loadingMsg = ElMessage.info({
       message: '正在分析影像数据，请稍候...',
       duration: 0
     })
     
+    // 在 try 外部定义 tifUrl，方便 catch 块使用
+    // 🔧 修复：对文件名进行URL编码，处理括号等特殊字符
+    const encodedFileName = encodeURIComponent(imageData.name)
+    const tifUrl = `/api/image/file/${encodedFileName}`
+    
     try {
-      // 构建TIF文件URL
-      const tifUrl = `/data/${imageData.name}`
+      // 🔧 修复：构建TIF文件URL，使用后端 API 路径
+      console.log('🔗 原始文件名:', imageData.name)
+      console.log('🔗 编码后文件名:', encodedFileName)
+      console.log('🔗 构建的TIF文件URL:', tifUrl)
+      console.log('🌐 当前页面URL:', window.location.href)
+      console.log('🌐 完整请求URL:', new URL(tifUrl, window.location.href).href)
       
       // 使用geotiff.js分析
       stats = await analyzeTifFile(tifUrl)
@@ -2232,10 +2280,52 @@ const updateStatistics = async (imageData) => {
       
     } catch (error) {
       loadingMsg.close()
-      console.error('前端TIF分析失败:', error)
+      console.error('❌ 前端TIF分析失败:', error)
+      console.error('   错误类型:', error.constructor.name)
+      console.error('   错误消息:', error.message)
+      console.error('   错误堆栈:', error.stack)
+      
+      // 根据错误类型提供具体的解决方案
+      let errorMessage = '影像分析失败'
+      let solution = ''
+      
+      if (error.message.includes('404') || error.message.includes('不可访问')) {
+        errorMessage = `文件不存在: ${imageData.name}`
+        solution = `
+        
+请检查：
+1️⃣ 后端服务是否正在运行（npm run server）
+2️⃣ 文件是否存在于 public/data/ 目录
+3️⃣ 文件名是否正确: ${imageData.name}
+
+完整URL: ${tifUrl}`
+      } else if (error.message.includes('Range') || error.message.includes('不支持')) {
+        errorMessage = '服务器不支持 Range 请求'
+        solution = `
+
+解决方法：
+1️⃣ 停止后端服务（Ctrl+C）
+2️⃣ 确保 server/routes/image.js 已保存最新代码
+3️⃣ 重新启动后端: npm run server`
+      } else if (error.name === 'AggregateError' || error.message.includes('Request failed')) {
+        errorMessage = '网络请求失败'
+        solution = `
+
+可能的原因：
+1️⃣ 后端服务未运行或端口不对
+2️⃣ 文件不存在或路径错误
+3️⃣ 服务器不支持 Range 请求（需要更新后端代码并重启）
+
+已尝试的URL: ${tifUrl}
+后端地址: http://localhost:8080`
+      } else {
+        errorMessage = `分析失败: ${error.message}`
+        solution = '\n\n请查看控制台了解详细错误信息'
+      }
+      
       ElMessage.error({
-        message: `影像分析失败: ${error.message}。请确保文件格式正确。`,
-        duration: 5000
+        message: errorMessage + solution,
+        duration: 10000
       })
       
       // 重置为空状态
