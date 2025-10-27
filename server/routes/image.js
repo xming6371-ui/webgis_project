@@ -175,20 +175,25 @@ async function syncMetadata() {
       }
       
       // 📊 补充分析：如果元数据中没有统计数据，则自动分析（只分析一次）
-      if (!existingImage.statistics) {
+      if (!existingImage.statistics || !existingImage.statistics.analyzed) {
         try {
           console.log(`📊 [补充分析] 检测到旧文件缺少统计数据: ${filename}`)
           const statistics = await analyzeTifFile(filePath)
-          if (statistics) {
-            existingImage.statistics = statistics
-            console.log(`✅ [补充分析] 旧文件统计数据已保存`)
-          }
+          // ✅ 无论成功或失败，都保存结果（避免重复分析）
+          existingImage.statistics = statistics
+          console.log(`✅ [补充分析] 统计数据已保存`)
         } catch (err) {
           console.warn(`⚠️ [补充分析] 旧文件分析失败: ${filename}`, err.message)
-          // 分析失败不影响主流程
+          // ✅ 即使异常也标记为已分析
+          existingImage.statistics = {
+            analyzed: true,
+            error: true,
+            errorMessage: err.message,
+            analyzedAt: new Date().toISOString()
+          }
         }
       } else {
-        console.log(`⏭️ [补充分析] 跳过已有统计数据的文件: ${filename}`)
+        console.log(`⏭️ [补充分析] 跳过已分析的文件: ${filename}`)
       }
       
       console.log(`✅ 更新文件信息: ${filename} (${fileSize})`)
@@ -243,17 +248,22 @@ async function syncMetadata() {
         console.warn(`⚠️ 新文件自动检测失败: ${filename}`)
       }
       
-      // 📊 自动分析TIF文件并保存统计数据（新增功能）
+      // 📊 自动分析TIF文件并保存统计数据
       try {
         console.log(`📊 正在分析新文件: ${filename}`)
         const statistics = await analyzeTifFile(filePath)
-        if (statistics) {
-          newImage.statistics = statistics
-          console.log(`✅ 统计数据已保存到元数据`)
-        }
+        // ✅ 无论成功或失败，都保存结果（避免重复分析）
+        newImage.statistics = statistics
+        console.log(`✅ 统计数据已保存到元数据`)
       } catch (err) {
         console.warn(`⚠️ TIF分析失败: ${filename}`, err.message)
-        // 分析失败不影响主流程
+        // ✅ 即使异常也标记为已分析
+        newImage.statistics = {
+          analyzed: true,
+          error: true,
+          errorMessage: err.message,
+          analyzedAt: new Date().toISOString()
+        }
       }
       
       metadata.images.push(newImage)
@@ -566,13 +576,29 @@ router.get('/file/:filename', (req, res) => {
 // 上传影像
 router.post('/upload', upload.array('files'), async (req, res) => {
   try {
-    // 🆕 清除缓存，确保后续获取的是最新数据
-    clearCache()
-    
-    const metadata = await syncMetadata()
-    
     // 获取新上传的文件
     const uploadedFiles = req.files
+    
+    // 读取现有元数据
+    const metadata = readMetadata()
+    
+    // 获取上传模式和元数据
+    const uploadMode = req.body.uploadMode || 'batch'
+    let fileMetadataList = []
+    
+    if (uploadMode === 'individual') {
+      fileMetadataList = JSON.parse(req.body.fileMetadataList || '[]')
+    }
+    
+    // 批量模式的通用元数据
+    const userMetadata = {
+      year: req.body.year || String(new Date().getFullYear()),
+      month: req.body.month || String(new Date().getMonth() + 1).padStart(2, '0'),
+      period: req.body.period || '1',
+      region: req.body.region || '',
+      sensor: req.body.sensor || '',
+      description: req.body.description || ''
+    }
     
     // 获取优化选项
     const needOptimize = req.body.needOptimize === 'true'
@@ -580,17 +606,107 @@ router.post('/upload', upload.array('files'), async (req, res) => {
     const optimizedFileName = req.body.optimizedFileName || ''
     
     console.log('📥 上传选项:', {
+      uploadMode,
       needOptimize,
       overwriteOriginal,
       optimizedFileName
     })
     
-    // 立即返回响应
+    // ✅ 手动为每个文件创建元数据（不触发全量同步）
+    const newImages = []
+    
+    for (let i = 0; i < uploadedFiles.length; i++) {
+      const file = uploadedFiles[i]
+      const stats = fs.statSync(path.join(DATA_DIR, file.originalname))
+      const fileSize = (stats.size / (1024 * 1024)).toFixed(2) + 'MB'
+      
+      // 获取该文件的元数据
+      let fileMeta
+      if (uploadMode === 'individual' && fileMetadataList[i]) {
+        fileMeta = fileMetadataList[i]
+      } else {
+        fileMeta = userMetadata
+      }
+      
+      // 🔧 查找最大ID
+      let maxId = 0
+      metadata.images.forEach(img => {
+        const match = img.id.match(/^IMG(\d+)$/)
+        if (match) {
+          const num = parseInt(match[1], 10)
+          if (num > maxId) maxId = num
+        }
+      })
+      const newId = 'IMG' + String(maxId + 1).padStart(3, '0')
+      
+      // ✅ 检查是否是覆盖已有文件
+      const existingIndex = metadata.images.findIndex(img => img.name === file.originalname)
+      
+      const newImage = {
+        id: existingIndex >= 0 ? metadata.images[existingIndex].id : newId,
+        name: file.originalname,
+        year: fileMeta.year,
+        month: fileMeta.month,
+        period: fileMeta.period,
+        region: fileMeta.region,
+        sensor: fileMeta.sensor,
+        description: fileMeta.description,
+        size: fileSize,
+        originalSize: fileSize,
+        optimizedSize: null,
+        thumbnail: `/data/${file.originalname}`,
+        preview: `/data/${file.originalname}`,
+        filePath: `/data/${file.originalname}`,
+        originalPath: `/data/${file.originalname}`,
+        optimizedPath: null,
+        isOptimized: false,
+        uploadTime: stats.mtime.toISOString(),
+        status: 'processed'
+      }
+      
+      // ✅ 上传时立即进行统计分析
+      try {
+        console.log(`📊 正在分析上传的文件: ${file.originalname}`)
+        const filePath = path.join(DATA_DIR, file.originalname)
+        const statistics = await analyzeTifFile(filePath)
+        newImage.statistics = statistics
+        console.log(`✅ 统计数据已保存`)
+      } catch (err) {
+        console.warn(`⚠️ TIF分析失败: ${file.originalname}`, err.message)
+        newImage.statistics = {
+          analyzed: true,
+          error: true,
+          errorMessage: err.message,
+          analyzedAt: new Date().toISOString()
+        }
+      }
+      
+      if (existingIndex >= 0) {
+        // 覆盖现有文件
+        metadata.images[existingIndex] = newImage
+        console.log(`🔄 更新文件元数据: ${file.originalname}`)
+      } else {
+        // 添加新文件
+        metadata.images.push(newImage)
+        console.log(`✅ 添加新文件元数据: ${file.originalname} (ID: ${newId})`)
+      }
+      
+      newImages.push(newImage)
+    }
+    
+    // 保存元数据
+    writeMetadata(metadata)
+    
+    // ✅ 清除缓存，但不触发全量同步
+    clearCache()
+    
+    // ✅ 返回新上传文件的元数据
     res.json({
       code: 200,
       message: '上传成功',
       data: {
-        count: uploadedFiles.length
+        count: uploadedFiles.length,
+        images: newImages
       }
     })
     
@@ -699,10 +815,13 @@ router.delete('/:id', (req, res) => {
       })
     }
     
+    console.log(`🗑️ 删除影像: ${image.name}`)
+    
     // 删除文件
     const filePath = path.join(DATA_DIR, image.name)
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath)
+      console.log(`   ✅ 文件已删除: ${filePath}`)
     }
     
     // 更新元数据
@@ -893,76 +1012,9 @@ async function checkGDAL() {
   }
 }
 
-// 作物类型映射（与前端cropLegend保持一致）
-const CROP_TYPE_MAP = {
-  1: '裸地',
-  2: '棉花',
-  3: '小麦',
-  4: '玉米',
-  5: '番茄',
-  6: '甜菜',
-  7: '打瓜',
-  8: '辣椒',
-  9: '籽用葫芦',
-  10: '其它耕地'
-}
+// ✅ 已删除作物类型映射和检测函数，因为现在只统计像元个数
 
-// 智能检测TIF文件类型（判断是否为作物分类图）
-function detectTifType(values) {
-  const uniqueValues = new Set()
-  let minVal = Infinity
-  let maxVal = -Infinity
-  let positiveCount = 0
-  
-  // 采样检测（检查前10000个像元，提高速度）
-  const sampleSize = Math.min(10000, values.length)
-  for (let i = 0; i < sampleSize; i++) {
-    const val = values[i]
-    if (!isNaN(val) && isFinite(val)) {
-      uniqueValues.add(val)
-      if (val > 0) {
-        positiveCount++
-        if (val < minVal) minVal = val
-        if (val > maxVal) maxVal = val
-      }
-    }
-  }
-  
-  // 判断逻辑：
-  // 1. 唯一值数量少（分类图通常只有几个类别）
-  // 2. 最大值不超过20（作物类别通常10个以内）
-  // 3. 最小值大于等于0（分类代码从0或1开始）
-  // 4. 值都是整数（检查前100个正值）
-  let allIntegers = true
-  let checkedCount = 0
-  for (let i = 0; i < values.length && checkedCount < 100; i++) {
-    if (values[i] > 0) {
-      if (values[i] !== Math.floor(values[i])) {
-        allIntegers = false
-        break
-      }
-      checkedCount++
-    }
-  }
-  
-  const isClassification = 
-    uniqueValues.size <= 30 && 
-    maxVal <= 20 && 
-    minVal >= 0 && 
-    allIntegers &&
-    positiveCount > 0
-  
-  return {
-    isClassification,
-    uniqueCount: uniqueValues.size,
-    minValue: minVal === Infinity ? 0 : minVal,
-    maxValue: maxVal === -Infinity ? 0 : maxVal,
-    allIntegers,
-    positiveCount
-  }
-}
-
-// 分析TIF文件并生成统计数据（后端版本，与前端analyzeTifFile保持一致）
+// ✅ 简化版TIF分析：只统计像元个数和基本信息
 async function analyzeTifFile(filePath) {
   try {
     console.log('📊 [后端] 开始分析TIF文件:', path.basename(filePath))
@@ -974,84 +1026,42 @@ async function analyzeTifFile(filePath) {
     // 获取像元数据
     const data = await image.readRasters()
     const values = data[0] // 第一个波段
-    
-    console.log(`   读取了 ${values.length} 个像元`)
-    
-    // ✅ 智能检测TIF类型
-    const detection = detectTifType(values)
-    console.log(`   类型检测: 唯一值=${detection.uniqueCount}, 范围=[${detection.minValue}, ${detection.maxValue}], 整数=${detection.allIntegers}`)
-    
-    // ⚠️ 如果不是作物分类图，跳过分析
-    if (!detection.isClassification) {
-      console.log(`⏭️ [后端] 跳过非作物分类图（可能是NDVI、DEM或原始遥感影像）`)
-      console.log(`   建议：该TIF文件不适合作物统计分析`)
-      return null // 返回null，不报错，不阻塞流程
-    }
-    
-    console.log(`✅ [后端] 检测为作物分类图，开始统计分析`)
+    const pixelCount = values.length
     
     // 获取地理变换参数（用于计算面积）
     const pixelSize = image.getResolution() // [宽度, 高度]
     const pixelAreaM2 = Math.abs(pixelSize[0] * pixelSize[1]) // 平方米
     const pixelAreaMu = pixelAreaM2 / 666.67 // 转换为亩
+    const totalAreaMu = pixelCount * pixelAreaMu
     
-    console.log(`   像元大小: ${pixelSize[0]}m × ${pixelSize[1]}m = ${pixelAreaM2.toFixed(2)}平方米 = ${pixelAreaMu.toFixed(4)}亩`)
+    console.log(`✅ 像元个数: ${pixelCount.toLocaleString()}`)
+    console.log(`   像元大小: ${pixelSize[0]}m × ${pixelSize[1]}m`)
+    console.log(`   总面积: ${totalAreaMu.toFixed(2)} 亩`)
     
-    // 统计每个像元值的数量
-    const counts = {}
-    let totalPixels = 0
-    
-    for (let i = 0; i < values.length; i++) {
-      const val = values[i]
-      
-      // 跳过NoData值（通常是0或负数）
-      if (val > 0 && val <= 10) {
-        counts[val] = (counts[val] || 0) + 1
-        totalPixels++
-      }
-    }
-    
-    // ⚠️ 二次验证：如果没有统计到有效像元，说明不是预期的作物分类图
-    if (totalPixels === 0) {
-      console.log(`⏭️ [后端] 未检测到有效作物数据（像元值不在1-10范围内）`)
-      return null
-    }
-    
-    console.log('   像元值分布:', counts)
-    
-    // 映射到作物类型并计算百分比
-    const cropDistribution = {}
-    let totalArea = 0
-    
-    Object.entries(counts).forEach(([value, count]) => {
-      const valueInt = parseInt(value)
-      const cropName = CROP_TYPE_MAP[valueInt] || `未知类型(${valueInt})`
-      const percentage = (count / totalPixels) * 100
-      const area = count * pixelAreaMu
-      
-      cropDistribution[cropName] = percentage.toFixed(2)
-      totalArea += area
-    })
-    
-    console.log('✅ [后端] 作物分布统计:', cropDistribution)
-    console.log(`   总面积: ${totalArea.toFixed(0)} 亩, 有效像元: ${totalPixels}`)
-    
+    // ✅ 返回简化的统计信息
     const statistics = {
-      totalArea: totalArea.toFixed(0),
-      plotCount: totalPixels.toString(),
-      pixelCount: totalPixels,
-      matchRate: '0',
-      diffCount: '0',
-      cropDistribution: cropDistribution,
+      pixelCount: pixelCount,
+      pixelWidth: image.getWidth(),
+      pixelHeight: image.getHeight(),
+      pixelSizeX: pixelSize[0],
+      pixelSizeY: pixelSize[1],
+      pixelAreaM2: pixelAreaM2,
       pixelAreaMu: pixelAreaMu,
-      counts: counts,
-      analyzedAt: new Date().toISOString()
+      totalAreaMu: totalAreaMu.toFixed(2),
+      analyzedAt: new Date().toISOString(),
+      analyzed: true
     }
     
     return statistics
   } catch (error) {
     console.error('❌ [后端] TIF分析失败:', error.message)
-    return null // 失败时返回null，不阻塞流程
+    // ✅ 即使失败也返回标记，避免重复分析
+    return {
+      analyzed: true,
+      error: true,
+      errorMessage: error.message,
+      analyzedAt: new Date().toISOString()
+    }
   }
 }
 
@@ -1194,6 +1204,19 @@ async function optimizeTifFile(id, options = {}) {
     optimizedPath = path.join(DATA_DIR, finalFileName)
   }
   
+  // ✅ 检查文件名冲突（不覆盖原文件模式下）
+  if (!overwriteOriginal && fs.existsSync(optimizedPath) && optimizedPath !== inputPath) {
+    // 检查是否已经在元数据中存在同名文件
+    const existingImage = metadata.images.find(img => img.name === finalFileName)
+    if (existingImage) {
+      console.warn(`⚠️ 优化文件 ${finalFileName} 已存在，将被覆盖`)
+      // ✅ 不抛出错误，允许覆盖优化文件
+      // 删除旧的元数据记录，稍后会创建新的
+      metadata.images = metadata.images.filter(img => img.name !== finalFileName)
+      writeMetadata(metadata)
+    }
+  }
+  
   // 获取原始文件大小（优化前）
   const originalStats = fs.statSync(inputPath)
   const originalSizeMB = (originalStats.size / (1024 * 1024)).toFixed(2)
@@ -1295,12 +1318,16 @@ async function optimizeTifFile(id, options = {}) {
       try {
         console.log(`📊 正在分析优化后的文件: ${image.name}`)
         const statistics = await analyzeTifFile(optimizedPath)
-        if (statistics) {
-          currentImage.statistics = statistics
-          console.log(`✅ 统计数据已更新`)
-        }
+        currentImage.statistics = statistics
+        console.log(`✅ 统计数据已更新`)
       } catch (err) {
         console.warn(`⚠️ 优化后TIF分析失败: ${image.name}`, err.message)
+        currentImage.statistics = {
+          analyzed: true,
+          error: true,
+          errorMessage: err.message,
+          analyzedAt: new Date().toISOString()
+        }
       }
     } else {
       // 不覆盖原文件：创建新记录，原记录保持不变
@@ -1349,12 +1376,16 @@ async function optimizeTifFile(id, options = {}) {
       try {
         console.log(`📊 正在分析优化后的新文件: ${finalFileName}`)
         const statistics = await analyzeTifFile(optimizedPath)
-        if (statistics) {
-          newImage.statistics = statistics
-          console.log(`✅ 统计数据已保存到新记录`)
-        }
+        newImage.statistics = statistics
+        console.log(`✅ 统计数据已保存到新记录`)
       } catch (err) {
         console.warn(`⚠️ 优化后TIF分析失败: ${finalFileName}`, err.message)
+        newImage.statistics = {
+          analyzed: true,
+          error: true,
+          errorMessage: err.message,
+          analyzedAt: new Date().toISOString()
+        }
       }
       
       currentMetadata.images.push(newImage)

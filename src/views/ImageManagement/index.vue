@@ -95,10 +95,6 @@
               <el-option label="未优化" value="unoptimized" />
             </el-select>
           </el-form-item>
-          <el-form-item label="云量">
-            <el-slider v-model="filterForm.cloudCover" :max="100" style="width: 180px" />
-            <span style="margin-left: 10px">≤ {{ filterForm.cloudCover }}%</span>
-          </el-form-item>
           <el-form-item>
             <el-button @click="resetFilter">重置</el-button>
           </el-form-item>
@@ -114,7 +110,7 @@
         @selection-change="handleSelectionChange"
       >
         <el-table-column type="selection" width="55" />
-        <el-table-column prop="displayId" label="影像ID" width="100" />
+        <el-table-column prop="displayIndex" label="序号" width="80" align="center" />
         <el-table-column label="缩略图" width="100">
           <template #default="scope">
             <div class="thumbnail-wrapper" @click="handlePreview(scope.row)">
@@ -141,17 +137,6 @@
         <el-table-column prop="sensor" label="传感器" width="100" />
         <el-table-column prop="date" label="采集日期" width="110" />
         <el-table-column prop="region" label="区域" width="80" />
-        <el-table-column prop="cloudCover" label="云量" width="70">
-          <template #default="scope">
-            <el-tag 
-              v-if="scope.row.cloudCover !== undefined && scope.row.cloudCover !== null"
-              :type="scope.row.cloudCover < 10 ? 'success' : scope.row.cloudCover < 30 ? '' : 'warning'"
-            >
-              {{ scope.row.cloudCover }}%
-            </el-tag>
-            <span v-else style="color: #999">-</span>
-          </template>
-        </el-table-column>
         <el-table-column prop="size" label="文件大小" width="100" />
       <el-table-column label="优化状态" width="120" align="center">
         <template #default="scope">
@@ -230,7 +215,6 @@
               <span>{{ item.date }}</span>
             </div>
             <div class="grid-meta">
-              <span>云量: {{ item.cloudCover }}%</span>
               <span>{{ item.size }}</span>
             </div>
             <div class="grid-actions">
@@ -630,54 +614,88 @@
     <el-dialog
       v-model="showUploadDialog"
       title="上传影像"
-      width="700px"
+      width="750px"
       :close-on-click-modal="false"
     >
-      <!-- 添加影像信息表单 -->
-      <el-form :model="uploadForm" label-width="100px" style="margin-bottom: 20px">
+      <!-- 🆕 模式切换（只在有多个文件时显示） -->
+      <el-alert 
+        v-if="uploadFiles.length > 1"
+        :title="`已选择 ${uploadFiles.length} 个文件`"
+        type="info"
+        :closable="false"
+        style="margin-bottom: 20px;"
+      >
+        <div style="display: flex; align-items: center; gap: 15px; margin-top: 10px;">
+          <span style="font-weight: 600;">填写模式：</span>
+          <el-radio-group v-model="uploadMode" size="default">
+            <el-radio label="batch">
+              <span style="display: flex; align-items: center; gap: 5px;">
+                批量填写
+                <el-tooltip content="所有文件使用相同的元数据（推荐，快速）" placement="top">
+                  <el-icon><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
+            </el-radio>
+            <el-radio label="individual">
+              <span style="display: flex; align-items: center; gap: 5px;">
+                逐个填写
+                <el-tooltip content="为每个文件单独填写不同的元数据" placement="top">
+                  <el-icon><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
+            </el-radio>
+          </el-radio-group>
+        </div>
+      </el-alert>
+      
+      <!-- 批量模式：单个表单 -->
+      <el-form v-if="uploadMode === 'batch'" :model="uploadForm" label-width="100px" style="margin-bottom: 20px">
         <el-form-item label="年份" required>
           <el-date-picker
             v-model="uploadForm.year"
             type="year"
-            placeholder="选择年份"
+            placeholder="选择年份（自动识别）"
             format="YYYY"
             value-format="YYYY"
             style="width: 100%"
           />
         </el-form-item>
+        <el-form-item label="月份" required>
+          <el-select v-model="uploadForm.month" placeholder="请选择月份（自动识别）" style="width: 100%" clearable>
+            <el-option label="1月" value="01" />
+            <el-option label="2月" value="02" />
+            <el-option label="3月" value="03" />
+            <el-option label="4月" value="04" />
+            <el-option label="5月" value="05" />
+            <el-option label="6月" value="06" />
+            <el-option label="7月" value="07" />
+            <el-option label="8月" value="08" />
+            <el-option label="9月" value="09" />
+            <el-option label="10月" value="10" />
+            <el-option label="11月" value="11" />
+            <el-option label="12月" value="12" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="期次" required>
-          <el-select v-model="uploadForm.period" placeholder="选择期次" style="width: 100%">
+          <el-select v-model="uploadForm.period" placeholder="请选择期次" style="width: 100%" clearable>
             <el-option label="第一期" value="1" />
             <el-option label="第二期" value="2" />
             <el-option label="第三期" value="3" />
             <el-option label="第四期" value="4" />
           </el-select>
         </el-form-item>
-        <el-form-item label="作物类型" required>
-          <el-select v-model="uploadForm.cropType" placeholder="选择作物类型" style="width: 100%">
-            <el-option label="全部作物" value="all" />
-            <el-option label="小麦" value="wheat" />
-            <el-option label="玉米" value="corn" />
-            <el-option label="棉花" value="cotton" />
-            <el-option label="水稻" value="rice" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="区域">
-          <el-input v-model="uploadForm.region" placeholder="输入区域代码或名称" />
+          <el-select v-model="uploadForm.region" placeholder="选择区域" style="width: 100%" clearable>
+            <el-option label="包头湖" value="包头湖" />
+            <el-option label="经济牧场" value="经济牧场" />
+            <el-option label="库尔楚" value="库尔楚" />
+            <el-option label="普惠牧场" value="普惠牧场" />
+            <el-option label="普惠农场" value="普惠农场" />
+            <el-option label="原种场" value="原种场" />
+          </el-select>
         </el-form-item>
         <el-form-item label="传感器">
           <el-input v-model="uploadForm.sensor" placeholder="如: Sentinel-2, Landsat-8" />
-        </el-form-item>
-        <el-form-item label="云量 (%)">
-          <el-input-number 
-            v-model="uploadForm.cloudCover" 
-            :min="0" 
-            :max="100" 
-            :precision="1"
-            placeholder="留空表示无云量信息"
-            style="width: 100%"
-          />
-          <span style="color: #999; font-size: 12px; margin-left: 10px">可选，如果没有云量信息可不填</span>
         </el-form-item>
         <el-form-item label="描述">
           <el-input 
@@ -720,6 +738,126 @@
           </div>
         </el-form-item>
       </el-form>
+      
+      <!-- 逐个模式：Tab切换每个文件 -->
+      <div v-else-if="uploadMode === 'individual' && uploadFiles.length > 0">
+        <el-tabs v-model="currentFileIndex" type="card" style="margin-bottom: 20px;">
+          <el-tab-pane 
+            v-for="(file, index) in uploadFiles" 
+            :key="index" 
+            :name="index"
+          >
+            <template #label>
+              <span style="display: flex; align-items: center; gap: 8px;">
+                <el-icon><Document /></el-icon>
+                文件 {{ index + 1 }}
+                <el-tag size="small" type="info">{{ file.name }}</el-tag>
+              </span>
+            </template>
+            
+            <el-form :model="fileMetadataList[index]" label-width="100px">
+              <el-form-item label="年份" required>
+                <el-date-picker
+                  v-model="fileMetadataList[index].year"
+                  type="year"
+                  placeholder="选择年份（自动识别）"
+                  format="YYYY"
+                  value-format="YYYY"
+                  style="width: 100%"
+                />
+              </el-form-item>
+              <el-form-item label="月份" required>
+                <el-select v-model="fileMetadataList[index].month" placeholder="请选择月份（自动识别）" style="width: 100%" clearable>
+                  <el-option label="1月" value="01" />
+                  <el-option label="2月" value="02" />
+                  <el-option label="3月" value="03" />
+                  <el-option label="4月" value="04" />
+                  <el-option label="5月" value="05" />
+                  <el-option label="6月" value="06" />
+                  <el-option label="7月" value="07" />
+                  <el-option label="8月" value="08" />
+                  <el-option label="9月" value="09" />
+                  <el-option label="10月" value="10" />
+                  <el-option label="11月" value="11" />
+                  <el-option label="12月" value="12" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="期次" required>
+                <el-select v-model="fileMetadataList[index].period" placeholder="请选择期次" style="width: 100%" clearable>
+                  <el-option label="第一期" value="1" />
+                  <el-option label="第二期" value="2" />
+                  <el-option label="第三期" value="3" />
+                  <el-option label="第四期" value="4" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="区域">
+                <el-select v-model="fileMetadataList[index].region" placeholder="选择区域" style="width: 100%" clearable>
+                  <el-option label="包头湖" value="包头湖" />
+                  <el-option label="经济牧场" value="经济牧场" />
+                  <el-option label="库尔楚" value="库尔楚" />
+                  <el-option label="普惠牧场" value="普惠牧场" />
+                  <el-option label="普惠农场" value="普惠农场" />
+                  <el-option label="原种场" value="原种场" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="传感器">
+                <el-input v-model="fileMetadataList[index].sensor" placeholder="如: Sentinel-2, Landsat-8" />
+              </el-form-item>
+              <el-form-item label="描述">
+                <el-input 
+                  v-model="fileMetadataList[index].description" 
+                  type="textarea" 
+                  :rows="2"
+                  placeholder="填写影像描述信息（可选）" 
+                />
+              </el-form-item>
+            </el-form>
+            
+            <!-- 导航按钮 -->
+            <div style="display: flex; justify-content: space-between; margin-top: 15px;">
+              <el-button 
+                v-if="index > 0"
+                @click="currentFileIndex = index - 1"
+              >
+                <el-icon><ArrowLeft /></el-icon>
+                上一个
+              </el-button>
+              <div v-else></div>
+              
+              <el-tag type="info">{{ index + 1 }} / {{ uploadFiles.length }}</el-tag>
+              
+              <el-button 
+                v-if="index < uploadFiles.length - 1"
+                @click="currentFileIndex = index + 1"
+                type="primary"
+              >
+                下一个
+                <el-icon><ArrowRight /></el-icon>
+              </el-button>
+              <div v-else></div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+        
+        <!-- 优化选项（逐个模式也需要） -->
+        <el-divider content-position="left">优化设置（应用到所有文件）</el-divider>
+        
+        <el-form :model="uploadForm" label-width="100px">
+          <el-form-item label="是否优化" required>
+            <el-radio-group v-model="uploadForm.needOptimize">
+              <el-radio :label="true">是（推荐）- 投影转换、压缩、加金字塔</el-radio>
+              <el-radio :label="false">否 - 保留原始文件</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          
+          <el-form-item v-if="uploadForm.needOptimize" label="覆盖原文件" required>
+            <el-radio-group v-model="uploadForm.overwriteOriginal">
+              <el-radio :label="true">是 - 直接覆盖原文件</el-radio>
+              <el-radio :label="false">否 - 保存为新文件</el-radio>
+            </el-radio-group>
+          </el-form-item>
+        </el-form>
+      </div>
 
       <el-divider content-position="left">选择文件</el-divider>
 
@@ -800,11 +938,6 @@
             <el-descriptions-item label="传感器">{{ currentPreview.sensor }}</el-descriptions-item>
             <el-descriptions-item label="采集日期">{{ currentPreview.date }}</el-descriptions-item>
             <el-descriptions-item label="区域">{{ currentPreview.region }}</el-descriptions-item>
-            <el-descriptions-item v-if="currentPreview.cloudCover !== undefined && currentPreview.cloudCover !== null" label="云量">
-              <el-tag :type="currentPreview.cloudCover < 10 ? 'success' : currentPreview.cloudCover < 30 ? '' : 'warning'">
-                {{ currentPreview.cloudCover }}%
-              </el-tag>
-            </el-descriptions-item>
             <el-descriptions-item label="文件大小">
               {{ currentPreview.size }}
               <span v-if="currentPreview.isOptimized && currentPreview.optimizedSize" style="color: #67c23a; font-size: 12px; margin-left: 5px">
@@ -928,7 +1061,14 @@
         </el-form-item>
         
         <el-form-item label="区域">
-          <el-input v-model="editForm.region" placeholder="请输入区域" />
+          <el-select v-model="editForm.region" placeholder="选择区域" style="width: 100%" clearable>
+            <el-option label="包头湖" value="包头湖" />
+            <el-option label="经济牧场" value="经济牧场" />
+            <el-option label="库尔楚" value="库尔楚" />
+            <el-option label="普惠牧场" value="普惠牧场" />
+            <el-option label="普惠农场" value="普惠农场" />
+            <el-option label="原种场" value="原种场" />
+          </el-select>
         </el-form-item>
         
         <el-form-item label="传感器">
@@ -950,28 +1090,6 @@
             format="YYYY-MM-DD"
             value-format="YYYY-MM-DD"
           />
-        </el-form-item>
-        
-        <el-form-item label="云量 (%)">
-          <el-input-number 
-            v-model="editForm.cloudCover" 
-            :min="0" 
-            :max="100" 
-            :precision="1"
-            placeholder="留空表示无云量信息"
-            style="width: 100%"
-          />
-          <el-alert 
-            type="warning" 
-            :closable="false"
-            style="margin-top: 8px"
-          >
-            <template #title>
-              <span style="font-size: 12px">
-                ⚠️ 云量数据通常从遥感影像元数据中自动提取，请谨慎修改
-              </span>
-            </template>
-          </el-alert>
         </el-form-item>
         
         <el-form-item label="文件大小">
@@ -1327,10 +1445,10 @@
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings, FileArchive, RefreshCw, Eye, Zap } from 'lucide-vue-next'
-import { Picture, DataAnalysis, SuccessFilled, InfoFilled, Check, Clock, Warning } from '@element-plus/icons-vue'
+import { Picture, DataAnalysis, SuccessFilled, InfoFilled, Check, Clock, Warning, QuestionFilled, Document, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysis'
-import { getImageList, refreshImageList, uploadImage, updateImage, deleteImage, batchDeleteImage, downloadImage, optimizeImage } from '@/api/image'
+import { getImageList, refreshImageList, uploadImage, updateImage, deleteImage, batchDeleteImage, optimizeImage } from '@/api/image'
 import { 
   getRecognitionResults, 
   convertShpToGeojson, 
@@ -1356,6 +1474,11 @@ const uploading = ref(false)
 const uploadFiles = ref([])
 const selectedRows = ref([])
 const loading = ref(false)
+
+// 🆕 多文件上传模式
+const uploadMode = ref('batch') // 'batch': 批量填写, 'individual': 逐个填写
+const currentFileIndex = ref(0) // 当前正在编辑的文件索引（逐个模式）
+const fileMetadataList = ref([]) // 每个文件的元数据列表
 const showPreviewDialog = ref(false)
 const showOptimizeDialog = ref(false)  // 手动优化对话框
 
@@ -2007,26 +2130,6 @@ const startUpload = async () => {
   }
 }
 
-// 下载分析结果
-const handleDownloadResult = (row) => {
-  if (row.type === 'EXCEL' || row.type === 'CSV') {
-    // Excel/CSV文件在分析时已经导出到本地
-    ElMessage({
-      message: `该文件已在任务执行时导出到本地下载文件夹，文件名: ${row.name}`,
-      type: 'info',
-      duration: 5000,
-      showClose: true
-    })
-  } else {
-    // SHP/KMZ/GEOJSON文件从服务器下载
-    ElMessage.info(`正在下载: ${row.name}`)
-    // TODO: 实际项目中应该从后端下载文件
-    setTimeout(() => {
-      ElMessage.success(`${row.name} 下载完成`)
-    }, 1000)
-  }
-}
-
 // 删除单个分析结果
 const handleDeleteResult = async (row, queueType) => {
   try {
@@ -2086,7 +2189,6 @@ const editForm = ref({
   region: '',
   sensor: '',
   date: '',
-  cloudCover: null,
   size: '',
   uploadTime: '',
   description: ''
@@ -2103,19 +2205,17 @@ const optimizing = ref(false)
 const filterForm = ref({
   dateRange: [],
   sensor: '',
-  cloudCover: 30,
   optimizationStatus: '', // 优化状态筛选：all/optimized/unoptimized/processing/result
   region: '' // 🆕 区域筛选
 })
 
 // 上传表单数据
 const uploadForm = ref({
-  year: new Date().getFullYear().toString(),
-  period: '1',
-  cropType: 'all',
+  year: '',
+  month: '',
+  period: '',
   region: '',
   sensor: '',
-  cloudCover: null, // 云量（可选）
   description: '',
   needOptimize: false, // 是否优化（默认不优化，保留原始文件）
   overwriteOriginal: false, // 是否覆盖原文件（默认不覆盖）
@@ -2147,13 +2247,6 @@ const filteredData = computed(() => {
   if (filterForm.value.region) {
     data = data.filter(item => item.region && item.region.toLowerCase().includes(filterForm.value.region.toLowerCase()))
   }
-  
-  // 云量过滤（只过滤有云量值的数据）
-  data = data.filter(item => 
-    item.cloudCover === null || 
-    item.cloudCover === undefined || 
-    item.cloudCover <= filterForm.value.cloudCover
-  )
   
   // 时间范围过滤
   if (filterForm.value.dateRange && filterForm.value.dateRange.length === 2) {
@@ -2189,10 +2282,10 @@ const filteredData = computed(() => {
     return aTime - bTime  // 升序：最早的在前面
   })
   
-  // 动态生成ID（从IMG001开始）
+  // ✅ 添加显示序号（1,2,3...），但保留真实ID用于操作
   data = data.map((item, index) => ({
     ...item,
-    displayId: `IMG${String(index + 1).padStart(3, '0')}`
+    displayIndex: index + 1  // 显示序号（从1开始）
   }))
   
   return data
@@ -2293,12 +2386,18 @@ const startAutoRefresh = () => {
   
   autoRefreshEnabled.value = true
   
-  // 每30秒静默刷新一次（减少频率，降低后端负担）
+  // ✅ 提升响应速度：每5秒静默刷新一次，及时检测优化完成
   autoRefreshTimer.value = setInterval(() => {
     loadImageList(true) // silent = true，不显示加载状态
-  }, 30000)  // 从15秒改为30秒
+    
+    // ✅ 如果所有优化都完成了，自动停止刷新
+    if (optimizingFileIds.value.size === 0) {
+      console.log('✅ 所有优化已完成，停止自动刷新')
+      stopAutoRefresh()
+    }
+  }, 5000)  // 从30秒改为5秒，提升响应速度
   
-  console.log('🔄 已启动自动刷新（每30秒检测优化状态）')
+  console.log('🔄 已启动自动刷新（每5秒检测优化状态）')
 }
 
 // 停止自动刷新
@@ -2321,7 +2420,6 @@ const handleRefresh = async () => {
     filterForm.value = {
       dateRange: [],
       sensor: '',
-      cloudCover: 30,
       optimizationStatus: '',
       region: ''
     }
@@ -2352,7 +2450,6 @@ const resetFilter = () => {
   filterForm.value = {
     dateRange: [],
     sensor: '',
-    cloudCover: 30,
     optimizationStatus: '',
     region: ''
   }
@@ -2563,6 +2660,32 @@ const handleConfirmOptimize = async () => {
   try {
     optimizing.value = true
     
+    // ✅ 在不覆盖原文件的情况下，检查文件名冲突
+    if (!optimizeForm.value.overwriteOriginal) {
+      const customFileName = optimizeForm.value.customFileName
+      const defaultFileName = currentOptimizeImage.value.name.replace(/\.tif$/i, '_optimized.tif')
+      const finalFileName = customFileName ? `${customFileName}.tif` : defaultFileName
+      
+      // 检查文件名是否已存在
+      const existingFile = allData.value.find(img => img.name === finalFileName)
+      if (existingFile) {
+        // ✅ 文件名冲突，提示用户
+        await ElMessageBox.confirm(
+          `优化文件"${finalFileName}"已存在。\n\n是否替换已有的优化文件？\n\n✅ 确定：将删除旧的优化文件，生成新的\n❌ 取消：您可以修改自定义文件名或选择覆盖原文件`,
+          '优化文件已存在',
+          {
+            confirmButtonText: '替换已有文件',
+            cancelButtonText: '取消',
+            type: 'warning',
+            distinguishCancelAndClose: true
+          }
+        )
+        
+        // 用户选择替换已有文件，继续优化（后端会自动删除旧文件）
+        // 不需要设置 overwriteOriginal = true
+      }
+    }
+    
     // 调用优化API
     const response = await optimizeImage(currentOptimizeImage.value.id, {
       overwriteOriginal: optimizeForm.value.overwriteOriginal,
@@ -2586,15 +2709,38 @@ const handleConfirmOptimize = async () => {
       startAutoRefresh()
       
       showOptimizeDialog.value = false
-      
-      // 刷新列表
-      await loadImageList()
     } else {
-      ElMessage.error('优化失败: ' + (response.message || '未知错误'))
+      // ✅ 处理后端返回的冲突错误
+      if (response.message && response.message.includes('文件名冲突')) {
+        ElMessageBox.alert(
+          response.message + '\n\n请修改自定义文件名或选择覆盖原文件。',
+          '文件名冲突',
+          {
+            confirmButtonText: '知道了',
+            type: 'warning'
+          }
+        )
+      } else {
+        ElMessage.error('优化失败: ' + (response.message || '未知错误'))
+      }
     }
   } catch (error) {
     console.error('优化失败：', error)
-    ElMessage.error('优化失败：' + (error.message || '未知错误'))
+    // ✅ 用户取消了冲突对话框
+    if (error === 'cancel' || error === 'close') {
+      ElMessage.info('已取消优化')
+    } else if (error.message && error.message.includes('文件名冲突')) {
+      ElMessageBox.alert(
+        error.message + '\n\n请修改自定义文件名或选择覆盖原文件。',
+        '文件名冲突',
+        {
+          confirmButtonText: '知道了',
+          type: 'warning'
+        }
+      )
+    } else {
+      ElMessage.error('优化失败：' + (error.message || '未知错误'))
+    }
   } finally {
     optimizing.value = false
   }
@@ -2611,7 +2757,6 @@ const handleEdit = (row) => {
     region: row.region,
     sensor: row.sensor,
     date: row.date,
-    cloudCover: row.cloudCover,
     size: row.size,
     uploadTime: row.uploadTime,
     description: row.description || ''
@@ -2636,7 +2781,6 @@ const handleSaveEdit = async () => {
       region: editForm.value.region,
       sensor: editForm.value.sensor,
       date: editForm.value.date,
-      cloudCover: editForm.value.cloudCover,
       description: editForm.value.description
     }
     
@@ -2647,8 +2791,14 @@ const handleSaveEdit = async () => {
       ElMessage.success('修改成功')
       showEditDialog.value = false
       
-      // 🔧 修复：刷新列表，清除缓存获取最新数据
-      await loadImageList(false, true) // silent=false, forceRefresh=true
+      // ✅ 直接更新前端列表中的数据（不触发全量同步）
+      const index = allData.value.findIndex(img => img.id === editForm.value.id)
+      if (index >= 0) {
+        allData.value[index] = {
+          ...allData.value[index],
+          ...updateData
+        }
+      }
     } else {
       ElMessage.error('保存失败: ' + (response.message || '未知错误'))
     }
@@ -2773,7 +2923,9 @@ const handleDelete = (row) => {
     try {
       await deleteImage(row.id)
       ElMessage.success('删除成功')
-      await loadImageList()
+      
+      // ✅ 直接从前端列表中移除（不触发全量同步）
+      allData.value = allData.value.filter(img => img.id !== row.id)
     } catch (error) {
       console.error('删除失败：', error)
       ElMessage.error('删除失败')
@@ -2798,7 +2950,10 @@ const handleBatchDelete = () => {
       const ids = selectedRows.value.map(row => row.id)
       await batchDeleteImage(ids)
       ElMessage.success(`成功删除 ${ids.length} 个影像`)
-      await loadImageList()
+      
+      // ✅ 直接从前端列表中移除（不触发全量同步）
+      allData.value = allData.value.filter(img => !ids.includes(img.id))
+      selectedRows.value = []
     } catch (error) {
       console.error('批量删除失败：', error)
       ElMessage.error('批量删除失败')
@@ -2842,11 +2997,85 @@ const handleFileChange = (file) => {
   }
   
   uploadFiles.value.push(file.raw)
+  
+  // 🆕 从文件名自动识别年份和月份
+  const autoMetadata = parseFileNameMetadata(file.name)
+  
+  // 🆕 初始化该文件的元数据（逐个模式使用）
+  fileMetadataList.value.push({
+    year: autoMetadata.year || '',
+    month: autoMetadata.month || '',
+    period: '',
+    region: '',
+    sensor: '',
+    description: ''
+  })
+  
+  // 🆕 如果是第一个文件，自动填充批量表单
+  if (uploadFiles.value.length === 1 && autoMetadata.year) {
+    uploadForm.value.year = autoMetadata.year
+    if (autoMetadata.month) {
+      uploadForm.value.month = autoMetadata.month
+    }
+  }
+  
   ElMessage.success(` 已添加: ${file.name}`)
 }
 
 const removeFile = (index) => {
   uploadFiles.value.splice(index, 1)
+  // 🆕 同时删除对应的元数据
+  fileMetadataList.value.splice(index, 1)
+  // 如果当前选中的索引超出范围，调整到最后一个
+  if (currentFileIndex.value >= uploadFiles.value.length) {
+    currentFileIndex.value = Math.max(0, uploadFiles.value.length - 1)
+  }
+}
+
+// 🆕 从文件名自动识别年份和月份
+const parseFileNameMetadata = (filename) => {
+  const result = {
+    year: '',
+    month: ''
+  }
+  
+  // 移除文件扩展名
+  const nameWithoutExt = filename.replace(/\.(tif|tiff|img|jp2)$/i, '')
+  
+  // 尝试匹配各种日期格式
+  // 格式1: YYYYMMDD (如: BTH20250611RGB.tif → 20250611)
+  let match = nameWithoutExt.match(/(\d{4})(\d{2})(\d{2})/)
+  if (match) {
+    result.year = match[1]
+    result.month = match[2]
+    return result
+  }
+  
+  // 格式2: YYYY_MM (如: 2024_06_data.tif)
+  match = nameWithoutExt.match(/(\d{4})[_-](\d{2})/)
+  if (match) {
+    result.year = match[1]
+    result.month = match[2]
+    return result
+  }
+  
+  // 格式3: YYYY-MM-DD (如: 2024-06-11_data.tif)
+  match = nameWithoutExt.match(/(\d{4})-(\d{2})-(\d{2})/)
+  if (match) {
+    result.year = match[1]
+    result.month = match[2]
+    return result
+  }
+  
+  // 格式4: 只有年份 (如: 2024_kle_vh_kndvi.tif)
+  match = nameWithoutExt.match(/(\d{4})/)
+  if (match) {
+    result.year = match[1]
+    // 月份留空
+    return result
+  }
+  
+  return result
 }
 
 const formatFileSize = (bytes) => {
@@ -2863,18 +3092,41 @@ const handleUpload = async () => {
     return
   }
   
-  // 验证必填字段
-  if (!uploadForm.value.year) {
-    ElMessage.warning('请选择年份')
-    return
-  }
-  if (!uploadForm.value.period) {
-    ElMessage.warning('请选择期次')
-    return
-  }
-  if (!uploadForm.value.cropType) {
-    ElMessage.warning('请选择作物类型')
-    return
+  // 🆕 根据上传模式进行不同的验证
+  if (uploadMode.value === 'batch') {
+    // 批量模式：验证批量表单
+    if (!uploadForm.value.year) {
+      ElMessage.warning('请选择年份')
+      return
+    }
+    if (!uploadForm.value.month) {
+      ElMessage.warning('请选择月份')
+      return
+    }
+    if (!uploadForm.value.period) {
+      ElMessage.warning('请选择期次')
+      return
+    }
+  } else {
+    // 逐个模式：验证每个文件的元数据
+    for (let i = 0; i < fileMetadataList.value.length; i++) {
+      const meta = fileMetadataList.value[i]
+      if (!meta.year) {
+        ElMessage.warning(`文件${i + 1}（${uploadFiles.value[i].name}）缺少年份信息`)
+        currentFileIndex.value = i // 跳转到该文件
+        return
+      }
+      if (!meta.month) {
+        ElMessage.warning(`文件${i + 1}（${uploadFiles.value[i].name}）缺少月份信息`)
+        currentFileIndex.value = i
+        return
+      }
+      if (!meta.period) {
+        ElMessage.warning(`文件${i + 1}（${uploadFiles.value[i].name}）缺少期次信息`)
+        currentFileIndex.value = i
+        return
+      }
+    }
   }
   
   // ✅ 检查是否有同名文件
@@ -2905,8 +3157,80 @@ const handleUpload = async () => {
     }
   }
   
+  // ✅ 检查优化文件名冲突（当启用自动优化且不覆盖原文件时）
+  if (uploadForm.value.needOptimize && !uploadForm.value.overwriteOriginal) {
+    const optimizedConflicts = []
+    
+    uploadFiles.value.forEach(file => {
+      let optimizedName
+      if (uploadForm.value.optimizedFileName) {
+        // 如果有自定义文件名，多个文件会导致冲突
+        if (uploadFiles.value.length > 1) {
+          optimizedName = `${uploadForm.value.optimizedFileName}_${file.name}`
+        } else {
+          optimizedName = `${uploadForm.value.optimizedFileName}.tif`
+        }
+      } else {
+        // 默认添加_optimized后缀
+        optimizedName = file.name.replace(/\.(tif|tiff)$/i, '_optimized.tif')
+      }
+      
+      // 检查优化后的文件名是否已存在
+      const existing = allData.value.find(img => img.name === optimizedName)
+      if (existing) {
+        optimizedConflicts.push({ original: file.name, optimized: optimizedName })
+      }
+    })
+    
+    if (optimizedConflicts.length > 0) {
+      const conflictList = optimizedConflicts.map(c => `  • ${c.original} → ${c.optimized}`).join('\n')
+      const confirmMessage = `以下优化文件已存在：\n\n${conflictList}\n\n是否替换已有的优化文件？\n\n✅ 确定：将删除旧的优化文件，生成新的\n❌ 取消：您可以修改自定义文件名或取消自动优化`
+      
+      try {
+        await ElMessageBox.confirm(confirmMessage, '优化文件已存在', {
+          confirmButtonText: '替换已有文件',
+          cancelButtonText: '取消上传',
+          type: 'warning',
+          distinguishCancelAndClose: true
+        })
+        
+        // 用户选择替换已有文件，继续上传（后端会自动删除旧文件）
+        // 不需要设置 overwriteOriginal = true
+      } catch (error) {
+        // 用户取消了
+        ElMessage.info('已取消上传')
+        return
+      }
+    }
+  }
+  
+  // ✅ 提前声明通知变量，方便catch块访问
+  let uploadingNotification = null
+  
   try {
     uploading.value = true
+    
+    // 🆕 计算总文件大小，显示上传信息
+    const totalSize = uploadFiles.value.reduce((sum, file) => sum + file.size, 0)
+    const totalSizeMB = (totalSize / (1024 * 1024)).toFixed(2)
+    
+    // 🆕 显示上传提示（包含预估时间）
+    let uploadEstimate = '预计需要几秒钟'
+    if (totalSize > 100 * 1024 * 1024) { // 大于100MB
+      uploadEstimate = '预计需要1-3分钟'
+    } else if (totalSize > 500 * 1024 * 1024) { // 大于500MB
+      uploadEstimate = '预计需要3-10分钟'
+    }
+    
+    // ✅ 保存通知实例，以便稍后关闭
+    uploadingNotification = ElNotification({
+      title: '📤 正在上传',
+      message: `正在上传 ${uploadFiles.value.length} 个文件（共${totalSizeMB}MB）\n${uploadEstimate}，请稍候...`,
+      type: 'info',
+      duration: 0, // 不自动关闭
+      position: 'bottom-right'
+    })
+    
     const formData = new FormData()
     
     // 添加文件
@@ -2914,23 +3238,30 @@ const handleUpload = async () => {
       formData.append('files', file)
     })
     
-    // 添加元数据
-    formData.append('year', uploadForm.value.year)
-    formData.append('period', uploadForm.value.period)
-    formData.append('cropType', uploadForm.value.cropType)
-    formData.append('region', uploadForm.value.region || '')
-    formData.append('sensor', uploadForm.value.sensor || '')
-    if (uploadForm.value.cloudCover !== null && uploadForm.value.cloudCover !== undefined) {
-      formData.append('cloudCover', uploadForm.value.cloudCover.toString())
+    // 🆕 根据模式添加元数据
+    if (uploadMode.value === 'batch') {
+      // 批量模式：所有文件使用相同的元数据
+      formData.append('year', uploadForm.value.year)
+      formData.append('month', uploadForm.value.month)
+      formData.append('period', uploadForm.value.period)
+      formData.append('region', uploadForm.value.region || '')
+      formData.append('sensor', uploadForm.value.sensor || '')
+      formData.append('description', uploadForm.value.description || '')
+    } else {
+      // 逐个模式：每个文件有独立的元数据
+      formData.append('uploadMode', 'individual')
+      formData.append('fileMetadataList', JSON.stringify(fileMetadataList.value))
     }
-    formData.append('description', uploadForm.value.description || '')
     
     // 添加优化选项
     formData.append('needOptimize', uploadForm.value.needOptimize.toString())
     formData.append('overwriteOriginal', uploadForm.value.overwriteOriginal.toString())
     formData.append('optimizedFileName', uploadForm.value.optimizedFileName || '')
     
-    await uploadImage(formData)
+    const uploadResponse = await uploadImage(formData)
+    
+    // ✅ 关闭上传中的通知
+    uploadingNotification.close()
     
     // ✅ 上传成功提示
     ElMessage.success({
@@ -2959,42 +3290,58 @@ const handleUpload = async () => {
       })
     }
     
-    // 只有选择优化时才添加到优化列表
-    if (uploadForm.value.needOptimize) {
-      // 将新上传的文件添加到优化列表
-      const uploadedFileNames = uploadFiles.value.map(f => f.name)
-      const metadata = await getImageList()
-      metadata.data.forEach(image => {
-        if (uploadedFileNames.includes(image.name) && !image.isOptimized) {
-          optimizingFileIds.value.add(image.id)
-          lastOptimizationStatus.value.set(image.id, false)
-          console.log(`📝 添加到优化监测列表: ${image.id}`)
+    // ✅ 直接添加新文件到列表（不触发全量同步）
+    if (uploadResponse.data && uploadResponse.data.images) {
+      uploadResponse.data.images.forEach(newImage => {
+        // 检查是否是覆盖已有文件
+        const existingIndex = allData.value.findIndex(img => img.id === newImage.id)
+        if (existingIndex >= 0) {
+          // 更新现有文件
+          allData.value[existingIndex] = newImage
+        } else {
+          // 添加新文件
+          allData.value.push(newImage)
+        }
+        
+        // 只有选择优化时才添加到优化列表
+        if (uploadForm.value.needOptimize && !newImage.isOptimized) {
+          optimizingFileIds.value.add(newImage.id)
+          lastOptimizationStatus.value.set(newImage.id, false)
         }
       })
       
       // 启动自动刷新，监测优化完成
-      startAutoRefresh()
+      if (uploadForm.value.needOptimize) {
+        startAutoRefresh()
+      }
     }
     
     showUploadDialog.value = false
     uploadFiles.value = []
     
+    // 🆕 重置逐个模式的数据
+    fileMetadataList.value = []
+    currentFileIndex.value = 0
+    uploadMode.value = 'batch'
+    
     // 重置表单
     uploadForm.value = {
-      year: new Date().getFullYear().toString(),
-      period: '1',
-      cropType: 'all',
+      year: '',
+      month: '',
+      period: '',
       region: '',
       sensor: '',
-      cloudCover: null,
       description: '',
       needOptimize: false,
       overwriteOriginal: false,
       optimizedFileName: ''
     }
-    
-    await loadImageList()
   } catch (error) {
+    // ✅ 关闭上传中的通知（如果失败）
+    if (uploadingNotification) {
+      uploadingNotification.close()
+    }
+    
     console.error('上传失败：', error)
     ElMessage.error('上传失败：' + (error.message || '未知错误'))
   } finally {
