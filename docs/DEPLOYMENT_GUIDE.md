@@ -43,7 +43,15 @@ git pull origin ym
 
 # 2.4 重新构建并启动服务
 docker compose down
-docker compose build --no-cache
+# ===== 情况A：只修改了代码（最常见） =====
+docker compose restart  # 只重启，不重新构建（秒级完成）
+
+# ===== 情况B：修改了代码和配置文件 =====
+docker compose up -d --build  # 使用缓存构建（几十秒完成）
+
+# ===== 情况C：修改了依赖或Dockerfile =====
+docker compose build --no-cache  # 完全重新构建（几分钟）
+# 接下来
 docker compose up -d
 
 # 2.5 查看日志确认启动成功
@@ -55,6 +63,38 @@ docker compose logs -f backend
 访问 `http://120.26.239.62` 测试功能是否正常。
 
 ---
+<!-- 如果又遇到冲突 就用下面这个方法 -->
+# ===== 第1步：清除本地修改 =====
+cd /root/webgis_project
+
+# 放弃所有本地修改
+git reset --hard HEAD
+
+# 删除未跟踪的文件(这个有可能会删除data)
+git clean -fd
+
+# ===== 第2步：拉取最新代码 =====
+git pull origin main
+
+# ===== 第3步：重新构建并启动服务 =====
+# 停止旧服务
+docker compose down
+
+# 重新构建（不使用缓存）
+docker compose build --no-cache
+
+# 启动服务 后台运行（不占用终端）
+docker compose up -d
+
+# ===== 第4步：验证部署 =====
+# 查看服务状态
+docker compose ps
+
+# 查看日志
+docker compose logs backend --tail 50
+
+# 访问网站测试
+# http://120.26.239.62
 
 ## ⚡ 方式二：SCP 直接上传（快速测试）
 
