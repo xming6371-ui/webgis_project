@@ -3,6 +3,11 @@ import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
 import multer from 'multer'
+import { spawn } from 'child_process'
+import { promisify } from 'util'
+import { exec } from 'child_process'
+
+const execAsync = promisify(exec)
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -40,6 +45,9 @@ const ANALYSIS_RESULTS_DIR = path.join(DATA_DIR, 'data_analysis_results')
 const TEMPORAL_DIR = path.join(ANALYSIS_RESULTS_DIR, 'temporal')
 const DIFFERENCE_DIR = path.join(ANALYSIS_RESULTS_DIR, 'difference')
 const REPORTS_DIR = path.join(ANALYSIS_RESULTS_DIR, 'reports')
+
+// Python脚本路径
+const CALCULATE_AREA_SCRIPT = path.join(__dirname, '../scripts/calculate_area.py')
 
 // 确保目录存在
 if (!fs.existsSync(SHP_DIR)) {
@@ -154,6 +162,76 @@ function findShpFile(dirPath, filename) {
     console.error(`递归查找失败: ${dirPath}`, error)
     return null
   }
+}
+
+/**
+ * 使用 GeoPandas 计算 GeoJSON 中所有 feature 的面积
+ * @param {Object} geojson - GeoJSON对象
+ * @returns {Promise<Array>} 面积数组 [{area_m2, area_mu}, ...]
+ */
+async function calculateAreasWithGeopandas(geojson) {
+  return new Promise((resolve, reject) => {
+    console.log('📐 调用 Python (GeoPandas) 计算面积...')
+    
+    // 检查Python脚本是否存在
+    if (!fs.existsSync(CALCULATE_AREA_SCRIPT)) {
+      return reject(new Error(`Python脚本不存在: ${CALCULATE_AREA_SCRIPT}`))
+    }
+    
+    // 使用 python 命令（假设在系统 PATH 中）
+    // 如果需要使用 conda 环境，可以使用: conda run -n <env_name> python
+    const pythonCmd = 'python'
+    const python = spawn(pythonCmd, [CALCULATE_AREA_SCRIPT])
+    
+    let output = ''
+    let errorOutput = ''
+    
+    python.stdout.on('data', (data) => {
+      output += data.toString()
+    })
+    
+    python.stderr.on('data', (data) => {
+      errorOutput += data.toString()
+    })
+    
+    python.on('close', (code) => {
+      if (code !== 0) {
+        console.error('❌ Python脚本执行失败')
+        console.error('   错误输出:', errorOutput)
+        return reject(new Error(`Python脚本失败 (退出码 ${code}): ${errorOutput}`))
+      }
+      
+      try {
+        const areas = JSON.parse(output)
+        console.log(`✅ 面积计算完成，共 ${areas.length} 个地块`)
+        
+        // 统计总面积
+        const totalAreaMu = areas.reduce((sum, a) => sum + (a.area_mu || 0), 0)
+        console.log(`   总面积: ${totalAreaMu.toFixed(2)} 亩`)
+        
+        resolve(areas)
+      } catch (e) {
+        console.error('❌ 解析Python输出失败')
+        console.error('   原始输出:', output)
+        reject(new Error('解析Python输出失败: ' + e.message))
+      }
+    })
+    
+    python.on('error', (error) => {
+      console.error('❌ 启动Python进程失败:', error.message)
+      console.error('   提示: 请确保已安装 Python 和 geopandas')
+      console.error('   安装命令: conda install geopandas')
+      reject(new Error(`启动Python失败: ${error.message}`))
+    })
+    
+    // 将GeoJSON通过stdin传给Python
+    try {
+      python.stdin.write(JSON.stringify(geojson))
+      python.stdin.end()
+    } catch (e) {
+      reject(new Error('写入Python stdin失败: ' + e.message))
+    }
+  })
 }
 
 console.log('✅ 分析结果管理模块已加载')
@@ -522,6 +600,35 @@ router.post('/convert-to-geojson', async (req, res) => {
         geojson.features.push(result.value)
       }
       result = await source.read()
+    }
+    
+    // 🆕 使用 GeoPandas 计算面积并添加到 properties
+    console.log(`📐 开始计算面积...`)
+    try {
+      const areas = await calculateAreasWithGeopandas(geojson)
+      
+      // 将面积添加到每个 feature 的 properties 中
+      geojson.features.forEach((feature, idx) => {
+        if (areas[idx]) {
+          if (!feature.properties) {
+            feature.properties = {}
+          }
+          feature.properties.area_m2 = areas[idx].area_m2
+          feature.properties.area_mu = areas[idx].area_mu
+          
+          // 如果计算出错，标记错误
+          if (areas[idx].error) {
+            feature.properties.area_error = true
+          }
+        }
+      })
+      
+      console.log(`✅ 面积已添加到GeoJSON的properties中`)
+    } catch (areaError) {
+      // 面积计算失败不影响转换，只是不添加面积字段
+      console.warn(`⚠️ 面积计算失败，将继续转换但不包含面积信息`)
+      console.warn(`   错误: ${areaError.message}`)
+      console.warn(`   提示: 请确保已安装 geopandas (conda install geopandas)`)
     }
     
     // 写入文件

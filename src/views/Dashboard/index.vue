@@ -495,7 +495,6 @@ import axios from 'axios'
 import { fromUrl } from 'geotiff'  // 用于前端读取和分析TIF文件
 import JSZip from 'jszip'  // 用于解压KMZ文件
 import GeoJSON from 'ol/format/GeoJSON'  // 用于KMZ转GeoJSON
-import area from '@turf/area'  // 🌍 用于计算测地线面积（与ArcGIS Pro一致）
 
 // 数据源选择
 const dataSource = ref('image') // 'image' 或 'recognition'
@@ -842,83 +841,6 @@ const loadRecognitionData = async () => {
   ElMessage.success(`已选择 ${matchedFiles.length} 个文件${newFiles.length > 0 ? '，其中' + newFiles.length + '个是新增的' : ''}`)
 }
 
-// 🎨 根据作物类型或种植情况获取样式（用于识别结果图层）
-const getFeatureStyle = (feature, recognitionType) => {
-  const props = feature.getProperties()
-  
-  // 🔧 判断识别类型：种植情况识别 vs 作物识别
-  if (recognitionType === 'planting_situation') {
-    // 种植情况识别：class字段 0=未种植（红色），1=已种植（绿色）
-    if (props.class !== undefined && props.class !== null) {
-      const classValue = parseInt(props.class)
-      
-      if (classValue === 0) {
-        // 未种植 - 红色
-        return new Style({
-          fill: new Fill({ color: 'rgba(244, 67, 54, 0.6)' }),
-          stroke: new Stroke({ color: '#F44336', width: 2 }),
-          image: new Circle({ radius: 7, fill: new Fill({ color: '#F44336' }) })
-        })
-      } else if (classValue === 1) {
-        // 已种植 - 绿色
-        return new Style({
-          fill: new Fill({ color: 'rgba(76, 175, 80, 0.6)' }),
-          stroke: new Stroke({ color: '#4CAF50', width: 2 }),
-          image: new Circle({ radius: 7, fill: new Fill({ color: '#4CAF50' }) })
-        })
-      }
-    }
-  } else {
-    // 作物识别：根据作物类型字段使用cropLegend颜色
-    let cropValue = null
-    
-    // 检查多种可能的作物类型字段
-    if (props.cropType !== undefined && props.cropType !== null) {
-      cropValue = props.cropType
-    } else if (props.crop_type !== undefined && props.crop_type !== null) {
-      cropValue = props.crop_type
-    } else if (props.crop !== undefined && props.crop !== null) {
-      cropValue = props.crop
-    } else if (props.category !== undefined && props.category !== null) {
-      cropValue = props.category
-    } else if (props.type !== undefined && props.type !== null) {
-      cropValue = props.type
-    } else if (props.class !== undefined && props.class !== null) {
-      cropValue = props.class
-    } else if (props.value !== undefined && props.value !== null) {
-      cropValue = props.value
-    } else if (props.gridcode !== undefined && props.gridcode !== null) {
-      cropValue = props.gridcode
-    }
-    
-    // 如果获取到了作物类型值，尝试映射到颜色
-    if (cropValue !== null) {
-      const numValue = parseInt(cropValue)
-      
-      // 如果是数字且在1-10范围内，使用cropLegend中的颜色
-      if (!isNaN(numValue) && numValue >= 1 && numValue <= 10) {
-        const cropInfo = cropLegend.find(c => c.value === numValue)
-        if (cropInfo) {
-          // 将hex颜色转换为rgba
-          const rgb = hexToRgb(cropInfo.color)
-          return new Style({
-            fill: new Fill({ color: `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.6)` }),
-            stroke: new Stroke({ color: cropInfo.color, width: 2 }),
-            image: new Circle({ radius: 7, fill: new Fill({ color: cropInfo.color }) })
-          })
-        }
-      }
-    }
-  }
-  
-  // 默认样式（绿色）
-  return new Style({
-    fill: new Fill({ color: 'rgba(67, 160, 71, 0.5)' }),
-    stroke: new Stroke({ color: '#2E7D32', width: 2 }),
-    image: new Circle({ radius: 7, fill: new Fill({ color: '#43A047' }) })
-  })
-}
-
 // 前端解析KMZ为GeoJSON（使用JSZip）
 const parseKmzToGeoJSON = async (kmzUrl) => {
   try {
@@ -1042,7 +964,21 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
             
             const newLayer = new VectorLayer({
               source: geojsonSource,
-              style: (feature) => getFeatureStyle(feature, file.recognitionType),  // 🎨 动态样式
+              style: new Style({
+                fill: new Fill({
+                  color: 'rgba(67, 160, 71, 0.5)'
+                }),
+                stroke: new Stroke({
+                  color: '#2E7D32',
+                  width: 2
+                }),
+                image: new Circle({
+                  radius: 7,
+                  fill: new Fill({
+                    color: '#43A047'
+                  })
+                })
+              }),
               zIndex: 100 + layerIndex,
               visible: true
             })
@@ -1050,7 +986,6 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
             // 保存文件名到图层（用于增量加载判断）
             newLayer.set('fileName', file.name)
             newLayer.set('fileData', file)
-            newLayer.set('recognitionType', file.recognitionType)
             
             map.addLayer(newLayer)
             kmzLayers.push(newLayer)
@@ -1213,7 +1148,21 @@ const loadShpFilesIncremental = async (selectedFiles) => {
               
               const newLayer = new VectorLayer({
                 source: geojsonSource,
-                style: (feature) => getFeatureStyle(feature, file.recognitionType),  // 🎨 动态样式
+                style: new Style({
+                  fill: new Fill({
+                    color: 'rgba(67, 160, 71, 0.5)'
+                  }),
+                  stroke: new Stroke({
+                    color: '#2E7D32',
+                    width: 2
+                  }),
+                  image: new Circle({
+                    radius: 7,
+                    fill: new Fill({
+                      color: '#43A047'
+                    })
+                  })
+                }),
                 zIndex: 100 + layerIndex,
                 visible: true
               })
@@ -1221,7 +1170,6 @@ const loadShpFilesIncremental = async (selectedFiles) => {
               newLayer.set('fileName', file.name)
               newLayer.set('fileData', file)
               newLayer.set('fileType', 'SHP')
-              newLayer.set('recognitionType', file.recognitionType)
               
               map.addLayer(newLayer)
               kmzLayers.push(newLayer)
@@ -1317,7 +1265,21 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
               
               const newLayer = new VectorLayer({
                 source: geojsonSource,
-                style: (feature) => getFeatureStyle(feature, file.recognitionType),  // 🎨 动态样式
+                style: new Style({
+                  fill: new Fill({
+                    color: 'rgba(67, 160, 71, 0.5)'
+                  }),
+                  stroke: new Stroke({
+                    color: '#2E7D32',
+                    width: 2
+                  }),
+                  image: new Circle({
+                    radius: 7,
+                    fill: new Fill({
+                      color: '#43A047'
+                    })
+                  })
+                }),
                 zIndex: 100 + layerIndex,
                 visible: true
               })
@@ -1325,7 +1287,6 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
               newLayer.set('fileName', file.name)
               newLayer.set('fileData', file)
               newLayer.set('fileType', 'GeoJSON')
-              newLayer.set('recognitionType', file.recognitionType)
               
               map.addLayer(newLayer)
               kmzLayers.push(newLayer)
@@ -1394,9 +1355,6 @@ const updateGeoJsonStatistics = (fileData, features) => {
   
   // 统计作物类型或种植情况分布
   const typeCounts = {}
-  const isPlantingSituation = fileData.recognitionType === 'planting_situation'
-  
-  console.log(`🔍 识别类型: ${fileData.recognitionType}`)
   
   features.forEach((feature, idx) => {
     const props = feature.getProperties()
@@ -1411,71 +1369,37 @@ const updateGeoJsonStatistics = (fileData, features) => {
     
     let type = '未知'
     
-    if (isPlantingSituation) {
-      // 🌱 种植情况识别：优先检查class字段（0=未种植，1=已种植）
-      if (props.class !== undefined && props.class !== null) {
-        const classValue = parseInt(props.class)
-        type = classValue === 0 ? '未种植' : '已种植'
-      }
-      // 检查planted字段
-      else if (props.planted !== undefined && props.planted !== null) {
-        type = props.planted === 1 || props.planted === '1' ? '已种植' : '未种植'
-      }
-      // 检查status字段
-      else if (props.status) {
-        type = props.status
-      }
-      // 检查planting_status或plantingStatus字段
-      else if (props.planting_status || props.plantingStatus) {
-        const status = props.planting_status || props.plantingStatus
-        type = status === 'planted' || status === 1 || status === '1' ? '已种植' : '未种植'
-      }
-    } else {
-      // 🌾 作物识别：检查作物类型字段（数值1-10对应cropLegend）
-      let cropValue = null
-      
-      if (props.cropType !== undefined && props.cropType !== null) {
-        cropValue = props.cropType
-      } else if (props.crop_type !== undefined && props.crop_type !== null) {
-        cropValue = props.crop_type
-      } else if (props.crop !== undefined && props.crop !== null) {
-        cropValue = props.crop
-      } else if (props.category !== undefined && props.category !== null) {
-        cropValue = props.category
-      } else if (props.type !== undefined && props.type !== null) {
-        cropValue = props.type
-      } else if (props.class !== undefined && props.class !== null) {
-        cropValue = props.class
-      } else if (props.value !== undefined && props.value !== null) {
-        cropValue = props.value
-      } else if (props.gridcode !== undefined && props.gridcode !== null) {
-        cropValue = props.gridcode
-      }
-      
-      // 如果获取到了作物类型值，尝试映射到作物名称
-      if (cropValue !== null) {
-        const numValue = parseInt(cropValue)
-        
-        // 如果是数字且在1-10范围内，使用cropLegend映射
-        if (!isNaN(numValue) && numValue >= 1 && numValue <= 10) {
-          const cropInfo = cropLegend.find(c => c.value === numValue)
-          type = cropInfo ? cropInfo.label : `作物${numValue}`
-          
-          if (idx < 3) {
-            console.log(`   🌾 作物类型映射: ${cropValue} -> ${type}`)
-          }
-        } else if (typeof cropValue === 'string' && cropValue.trim() !== '') {
-          // 字符串类型，直接使用
-          type = cropValue
-        }
-      }
+    // ✅ 优先检查class字段（SHP文件常用字段）
+    if (props.class !== undefined && props.class !== null) {
+      // class字段：1=已种植，0=未种植
+      type = props.class === 1 || props.class === '1' ? '已种植' : '未种植'
+    }
+    // 检查planted字段（0/1或字符串）
+    else if (props.planted !== undefined && props.planted !== null) {
+      type = props.planted === 1 || props.planted === '1' ? '已种植' : '未种植'
+    }
+    // 检查status字段（字符串形式）
+    else if (props.status) {
+      type = props.status
+    }
+    // 检查planting_status或plantingStatus字段
+    else if (props.planting_status || props.plantingStatus) {
+      const status = props.planting_status || props.plantingStatus
+      type = status === 'planted' || status === 1 || status === '1' ? '已种植' : '未种植'
+    }
+    // 检查作物类型相关字段
+    else if (props.cropType || props.crop_type || props.type) {
+      type = props.cropType || props.crop_type || props.type
+    }
+    // 检查category字段
+    else if (props.category) {
+      type = props.category
     }
     
     typeCounts[type] = (typeCounts[type] || 0) + 1
   })
   
   console.log('📊 分类统计:', typeCounts)
-  console.log(`📊 共识别到 ${Object.keys(typeCounts).length} 种类别:`, Object.keys(typeCounts))
   
   // 更新KPI数据
   kpiData.value = {
@@ -1487,82 +1411,59 @@ const updateGeoJsonStatistics = (fileData, features) => {
   
   // 更新饼图
   if (cropChart) {
-    // 🎨 根据识别类型设置颜色
-    const chartData = Object.entries(typeCounts).map(([name, value]) => {
-      let itemStyle = undefined
-      
-      if (isPlantingSituation) {
-        // 种植情况：特殊颜色
-        if (name === '未种植') {
-          itemStyle = { color: '#F44336' }  // 红色
-        } else if (name === '已种植') {
-          itemStyle = { color: '#4CAF50' }  // 绿色
-        }
-      } else {
-        // 作物识别：从cropLegend查找颜色
-        const cropInfo = cropLegend.find(c => c.label === name)
-        if (cropInfo) {
-          itemStyle = { color: cropInfo.color }
-        }
-      }
-      
-      return {
-        name: name,
-        value: value,
-        itemStyle: itemStyle
-      }
-    })
+    const chartData = Object.entries(typeCounts).map(([name, value]) => ({
+      name: name,
+      value: value
+    }))
     
     console.log('📊 准备更新饼图，数据:', chartData)
     
-    const chartTitle = isPlantingSituation ? '种植情况分布' : '作物类型分布'
+    const chartTitle = fileData.recognitionType === 'planting_situation' ? '种植情况分布' : '作物类型分布'
     
     // ✅ 使用完整的配置，确保饼图正确显示
     const option = {
-      color: cropLegend.map(item => item.color),  // 全局颜色配置
+      title: {
+        text: chartTitle,
+        left: 'center',
+        top: 10,
+        textStyle: {
+          fontSize: 16,
+          fontWeight: 600
+        }
+      },
       tooltip: {
         trigger: 'item',
         formatter: '{b}: {c}个 ({d}%)'
       },
       legend: {
-        bottom: '0%',
-        left: 'center',
-        type: 'plain',
-        orient: 'horizontal',
+        orient: 'vertical',
+        left: 'left',
+        top: 'middle',
         textStyle: {
-          fontSize: 11
-        },
-        itemWidth: 12,
-        itemHeight: 12,
-        itemGap: 8
+          fontSize: 12
+        }
       },
       series: [{
         name: chartTitle,
         type: 'pie',
-        radius: ['35%', '60%'],
-        center: ['50%', '42%'],
-        avoidLabelOverlap: false,
-        minAngle: 0,  // 确保所有扇区都显示
-        minShowLabelAngle: 0,  // 确保所有标签都能显示
+        radius: ['40%', '70%'],
+        center: ['60%', '50%'],
+        avoidLabelOverlap: true,
         itemStyle: {
-          borderRadius: 10,
+          borderRadius: 8,
           borderColor: '#fff',
           borderWidth: 2
         },
         label: {
-          show: false,
-          position: 'center'
+          show: true,
+          formatter: '{b}: {d}%'
         },
         emphasis: {
           label: {
             show: true,
-            fontSize: 16,
-            fontWeight: 'bold',
-            formatter: '{b}\n{c}个'
+            fontSize: 14,
+            fontWeight: 'bold'
           }
-        },
-        labelLine: {
-          show: false
         },
         data: chartData
       }]
@@ -1571,7 +1472,6 @@ const updateGeoJsonStatistics = (fileData, features) => {
     cropChart.setOption(option, true)  // 完全替换配置
     
     console.log('✅ 饼图已更新，数据项数:', chartData.length)
-    console.log('🎨 饼图配置:', isPlantingSituation ? '种植情况模式' : '作物识别模式')
   } else {
     console.warn('⚠️ cropChart未初始化')
   }
@@ -1607,11 +1507,8 @@ const updateKmzStatistics = (fileData, index) => {
   const totalArea = calculateKmzArea(features)
   const plotCount = features.length
   
-  // 统计作物类型或种植情况分布
+  // 统计种植情况分布（从description字段解析）
   const statusCounts = {}
-  const isPlantingSituation = fileData.recognitionType === 'planting_situation'
-  
-  console.log(`🔍 识别类型: ${fileData.recognitionType}`)
   
   features.forEach((feature, idx) => {
     const props = feature.getProperties()
@@ -1624,106 +1521,62 @@ const updateKmzStatistics = (fileData, index) => {
       }, {}))
     }
     
+    // 尝试多种可能的字段名来确定种植状态
     let status = '未知'
     
-    if (isPlantingSituation) {
-      // 🌱 种植情况识别
-      // 优先检查class字段
-      if (props.class !== undefined && props.class !== null) {
-        const classValue = parseInt(props.class)
-        status = classValue === 0 ? '未种植' : '已种植'
+    // 优先从description字段解析
+    if (props.description) {
+      // description是HTML格式，需要解析
+      const desc = props.description
+      
+      // 尝试匹配"种植情况"相关的内容
+      // 例如: <td>已种植</td> 或 <td>未种植</td>
+      const plantedMatch = desc.match(/种植情况.*?<td>([^<]+)<\/td>/i) ||
+                          desc.match(/<td>(已种植|未种植)<\/td>/i) ||
+                          desc.match(/>(已种植|未种植)</i)
+      
+      if (plantedMatch && plantedMatch[1]) {
+        status = plantedMatch[1].trim()
       }
-      // 从description字段解析
-      else if (props.description) {
-        const desc = props.description
-        
-        // 尝试匹配"种植情况"相关的内容
-        const plantedMatch = desc.match(/种植情况.*?<td>([^<]+)<\/td>/i) ||
-                            desc.match(/<td>(已种植|未种植)<\/td>/i) ||
-                            desc.match(/>(已种植|未种植)</i)
-        
-        if (plantedMatch && plantedMatch[1]) {
-          status = plantedMatch[1].trim()
-        }
-        
-        // 如果上面没匹配到，尝试从name字段
-        if (status === '未知' && props.name) {
-          if (props.name === '0') {
-            status = '未种植'
-          } else if (props.name === '1') {
-            status = '已种植'
-          }
-        }
-      } else if (props.planted === 1 || props.planted === '1') {
-        status = '已种植'
-      } else if (props.planted === 0 || props.planted === '0') {
-        status = '未种植'
-      } else if (props.status) {
-        status = props.status
-      } else if (props.planting_status) {
-        status = props.planting_status === 'planted' ? '已种植' : '未种植'
-      } else if (props.name) {
+      
+      // 输出第一个要素的完整description用于调试
+      if (idx === 0) {
+        console.log('📝 第一个要素的description完整内容:')
+        console.log(desc.substring(0, 1000))  // 输出前1000字符
+      }
+      
+      // 如果上面没匹配到，尝试从name字段
+      if (status === '未知' && props.name) {
+        // name字段可能是 '0' 或 '1'
         if (props.name === '0') {
           status = '未种植'
         } else if (props.name === '1') {
           status = '已种植'
         }
       }
-    } else {
-      // 🌾 作物识别：从KMZ的description字段解析作物类型
-      let cropValue = null
-      
-      // 优先检查直接的作物类型字段
-      if (props.class !== undefined && props.class !== null) {
-        cropValue = props.class
-      } else if (props.cropType !== undefined && props.cropType !== null) {
-        cropValue = props.cropType
-      } else if (props.crop_type !== undefined && props.crop_type !== null) {
-        cropValue = props.crop_type
-      } else if (props.type !== undefined && props.type !== null) {
-        cropValue = props.type
-      } else if (props.value !== undefined && props.value !== null) {
-        cropValue = props.value
-      } else if (props.gridcode !== undefined && props.gridcode !== null) {
-        cropValue = props.gridcode
-      } else if (props.description) {
-        // 从description字段解析作物类型
-        const desc = props.description
-        
-        // 尝试匹配作物类型字段（需要根据实际KMZ格式调整）
-        const cropMatch = desc.match(/作物类型.*?<td>([^<]+)<\/td>/i) ||
-                         desc.match(/type.*?<td>([^<]+)<\/td>/i) ||
-                         desc.match(/crop.*?<td>([^<]+)<\/td>/i)
-        
-        if (cropMatch && cropMatch[1]) {
-          cropValue = cropMatch[1].trim()
-        }
-      }
-      
-      // 映射作物类型值到名称
-      if (cropValue !== null) {
-        const numValue = parseInt(cropValue)
-        
-        // 如果是数字且在1-10范围内，使用cropLegend映射
-        if (!isNaN(numValue) && numValue >= 1 && numValue <= 10) {
-          const cropInfo = cropLegend.find(c => c.value === numValue)
-          status = cropInfo ? cropInfo.label : `作物${numValue}`
-          
-          if (idx < 3) {
-            console.log(`   🌾 作物类型映射: ${cropValue} -> ${status}`)
-          }
-        } else if (typeof cropValue === 'string' && cropValue.trim() !== '') {
-          // 字符串类型，直接使用
-          status = cropValue
-        }
+    } else if (props.planted === 1 || props.planted === '1') {
+      status = '已种植'
+    } else if (props.planted === 0 || props.planted === '0') {
+      status = '未种植'
+    } else if (props.status) {
+      status = props.status
+    } else if (props.planting_status) {
+      status = props.planting_status === 'planted' ? '已种植' : '未种植'
+    } else if (props.type) {
+      status = props.type
+    } else if (props.name) {
+      // name字段是 '0' 或 '1'
+      if (props.name === '0') {
+        status = '未种植'
+      } else if (props.name === '1') {
+        status = '已种植'
       }
     }
     
     statusCounts[status] = (statusCounts[status] || 0) + 1
   })
   
-  console.log('📊 分类统计:', statusCounts)
-  console.log(`📊 共识别到 ${Object.keys(statusCounts).length} 种类别:`, Object.keys(statusCounts))
+  console.log('🌾 种植情况统计:', statusCounts)
   
   // 更新统计数据
   kpiData.value = {
@@ -1735,94 +1588,23 @@ const updateKmzStatistics = (fileData, index) => {
   
   // 更新饼图
   if (cropChart) {
-    // 🎨 根据识别类型设置颜色
-    const chartData = Object.entries(statusCounts).map(([name, value]) => {
-      let itemStyle = undefined
-      
-      if (isPlantingSituation) {
-        // 种植情况：特殊颜色
-        if (name === '未种植') {
-          itemStyle = { color: '#F44336' }  // 红色
-        } else if (name === '已种植') {
-          itemStyle = { color: '#4CAF50' }  // 绿色
-        }
-      } else {
-        // 作物识别：从cropLegend查找颜色
-        const cropInfo = cropLegend.find(c => c.label === name)
-        if (cropInfo) {
-          itemStyle = { color: cropInfo.color }
-        }
-      }
-      
-      return {
-        name: name,
-        value: value,
-        itemStyle: itemStyle
-      }
-    })
+    const chartData = Object.entries(statusCounts).map(([status, count]) => ({
+      value: count,
+      name: status
+    }))
     
     // 按数量排序
     chartData.sort((a, b) => b.value - a.value)
     
-    console.log('📊 准备更新饼图，数据:', chartData)
+    console.log('📊 饼图数据:', chartData)
     
-    const chartTitle = isPlantingSituation ? '种植情况分布' : '作物类型分布'
-    
-    // ✅ 使用完整的配置，确保饼图正确显示
-    const option = {
-      color: cropLegend.map(item => item.color),  // 全局颜色配置
-      tooltip: {
-        trigger: 'item',
-        formatter: '{b}: {c}个 ({d}%)'
-      },
-      legend: {
-        bottom: '0%',
-        left: 'center',
-        type: 'plain',
-        orient: 'horizontal',
-        textStyle: {
-          fontSize: 11
-        },
-        itemWidth: 12,
-        itemHeight: 12,
-        itemGap: 8
-      },
+    cropChart.setOption({
       series: [{
-        name: chartTitle,
-        type: 'pie',
-        radius: ['35%', '60%'],
-        center: ['50%', '42%'],
-        avoidLabelOverlap: false,
-        minAngle: 0,  // 确保所有扇区都显示
-        minShowLabelAngle: 0,  // 确保所有标签都能显示
-        itemStyle: {
-          borderRadius: 10,
-          borderColor: '#fff',
-          borderWidth: 2
-        },
-        label: {
-          show: false,
-          position: 'center'
-        },
-        emphasis: {
-          label: {
-            show: true,
-            fontSize: 16,
-            fontWeight: 'bold',
-            formatter: '{b}\n{c}个'
-          }
-        },
-        labelLine: {
-          show: false
-        },
+        name: '种植情况',
         data: chartData
+        // 不设置minAngle，让所有数据都能显示
       }]
-    }
-    
-    cropChart.setOption(option, true)  // 完全替换配置
-    
-    console.log('✅ 饼图已更新，数据项数:', chartData.length)
-    console.log('🎨 饼图配置:', isPlantingSituation ? '种植情况模式' : '作物识别模式')
+    }, true)  // 使用notMerge确保完全替换
   }
   
   console.log(`✅ 更新KMZ统计完成: 面积=${totalArea.toFixed(0)}亩, 地块=${plotCount}`)
@@ -2046,59 +1828,63 @@ const loadKmzLayer = async (filePath) => {
   }
 }
 
-// 🌍 计算面积（使用 Turf.js 测地线算法 - 与 ArcGIS Pro 一致）
+// 计算KMZ面积（粗略估算）
 const calculateKmzArea = (features) => {
-  let totalArea = 0
-  let successCount = 0
-  let errorCount = 0
+  let totalAreaMu = 0
+  let precalculatedCount = 0
+  let turfCalculatedCount = 0
   
-  console.log(`📐 开始计算面积（Turf.js 测地线算法），共 ${features.length} 个地块`)
+  console.log(`📐 开始计算面积，共 ${features.length} 个地块`)
   
   features.forEach((feature, idx) => {
-    const geom = feature.getGeometry()
+    const props = feature.getProperties()
     
-    if (geom && (geom.getType() === 'Polygon' || geom.getType() === 'MultiPolygon')) {
-      try {
-        // Step 1: 克隆几何体并转换到 WGS84（EPSG:4326）
-        // Turf.js 需要经纬度坐标
-        const geomClone = geom.clone()
-        geomClone.transform('EPSG:3857', 'EPSG:4326')
-        
-        // Step 2: 转换为 GeoJSON 格式（Turf.js 的输入格式）
-        const geojsonWriter = new GeoJSON()
-        const geojsonGeometry = geojsonWriter.writeGeometryObject(geomClone)
-        
-        // Step 3: 使用 Turf.js 计算测地线面积（平方米）
-        // 基于 WGS84 椭球体，与 ArcGIS Pro 的"计算几何"算法一致
-        const areaM2 = area(geojsonGeometry)
-        
-        // Step 4: 转换为亩（1亩 = 666.67平方米）
-        const areaMu = areaM2 / 666.67
-        
-        if (areaMu && !isNaN(areaMu) && areaMu > 0) {
-          totalArea += areaMu
-          successCount++
+    // 🆕 优先读取预计算的面积（从 GeoJSON properties 中）
+    if (props.area_mu && !isNaN(props.area_mu)) {
+      const areaMu = parseFloat(props.area_mu)
+      totalAreaMu += areaMu
+      precalculatedCount++
+      
+      if (idx < 3) {
+        console.log(`   地块${idx + 1}: ${areaMu.toFixed(2)} 亩 [预计算]`)
+      }
+    } 
+    // 如果没有预计算面积，使用 Turf.js 计算（回退方案）
+    else {
+      const geom = feature.getGeometry()
+      if (geom && (geom.getType() === 'Polygon' || geom.getType() === 'MultiPolygon')) {
+        try {
+          // 克隆几何体并转换到 WGS84 (EPSG:4326)
+          const geomClone = geom.clone()
+          geomClone.transform('EPSG:3857', 'EPSG:4326')
           
-          // 打印前3个地块的详细信息
+          // 转换为 GeoJSON 格式
+          const geojsonWriter = new GeoJSON()
+          const geojsonGeometry = geojsonWriter.writeGeometryObject(geomClone)
+          
+          // 使用 Turf.js 计算测地线面积
+          const areaM2 = area(geojsonGeometry)
+          const areaMu = areaM2 * 0.0015  // 精确转换（1 m² = 0.0015 亩）
+          
+          totalAreaMu += areaMu
+          turfCalculatedCount++
+          
           if (idx < 3) {
-            console.log(`   ✅ 地块${idx + 1}: ${areaMu.toFixed(2)} 亩 (${areaM2.toFixed(0)} m²)`)
+            console.log(`   地块${idx + 1}: ${areaMu.toFixed(2)} 亩 [Turf.js实时计算]`)
           }
-        } else {
-          console.warn(`   ⚠️ 地块${idx + 1}: 面积计算结果异常: ${areaMu}`)
-          errorCount++
+        } catch (error) {
+          console.error(`❌ 地块${idx + 1}面积计算失败:`, error)
         }
-      } catch (error) {
-        console.error(`   ❌ 地块${idx + 1}: 面积计算失败:`, error.message)
-        errorCount++
       }
     }
   })
   
-  console.log(`📐 面积计算完成: 成功${successCount}个, 失败${errorCount}个`)
-  console.log(`📐 总面积: ${totalArea.toFixed(2)} 亩 (${(totalArea * 666.67).toFixed(0)} m²)`)
-  console.log(`🌍 使用算法: Turf.js 测地线面积（WGS84椭球体）`)
+  console.log(`✅ 面积统计完成:`)
+  console.log(`   ✅ 预计算: ${precalculatedCount} 个地块`)
+  console.log(`   🔄 实时计算: ${turfCalculatedCount} 个地块`)
+  console.log(`   📊 总面积: ${totalAreaMu.toFixed(2)} 亩`)
   
-  return totalArea
+  return totalAreaMu
 }
 
 // 🆕 预览识别结果统计信息（在图层加载前显示基本信息）
