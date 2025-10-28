@@ -347,108 +347,249 @@
 
       <!-- 右侧图表 -->
       <el-col :xs="24" :lg="6">
-        <!-- 作物分布图 -->
-        <el-card class="chart-card" shadow="never">
-          <template #header>
-            <div style="display: flex; align-items: center; justify-content: space-between;">
-              <span><el-icon><PieChart /></el-icon> {{ getChartTitle() }}</span>
-              <!-- 切换按钮（多文件时显示） -->
-              <div v-if="(dataSource === 'image' && loadedImages.length > 1) || (dataSource === 'recognition' && loadedKmzFiles.length > 1)" 
-                   class="file-switch-controls">
-                <el-button 
-                  :icon="ArrowDown" 
-                  :disabled="dataSource === 'image' ? currentImageIndex <= 0 : currentKmzIndex <= 0"
-                  size="small" 
-                  circle
-                  @click="dataSource === 'image' ? switchImage(currentImageIndex - 1) : switchKmzFile(currentKmzIndex - 1)"
-                  style="transform: rotate(90deg);"
-                />
-                <span class="file-index">
-                  {{ dataSource === 'image' ? currentImageIndex + 1 : currentKmzIndex + 1 }} 
-                  / 
-                  {{ dataSource === 'image' ? loadedImages.length : loadedKmzFiles.length }}
-                </span>
-                <el-button 
-                  :icon="ArrowDown" 
-                  :disabled="dataSource === 'image' ? currentImageIndex >= loadedImages.length - 1 : currentKmzIndex >= loadedKmzFiles.length - 1"
-                  size="small" 
-                  circle
-                  @click="dataSource === 'image' ? switchImage(currentImageIndex + 1) : switchKmzFile(currentKmzIndex + 1)"
-                  style="transform: rotate(-90deg);"
-                />
+        <!-- 影像数据：显示影像信息卡片 -->
+        <template v-if="dataSource === 'image'">
+          <!-- 影像信息卡片 -->
+          <el-card class="image-info-card" shadow="never">
+            <template #header>
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <span><el-icon><PieChart /></el-icon> 影像信息</span>
+                <!-- 切换按钮（多文件时显示） -->
+                <div v-if="loadedImages.length > 1" class="file-switch-controls">
+                  <el-button 
+                    :icon="ArrowDown" 
+                    :disabled="currentImageIndex <= 0"
+                    size="small" 
+                    circle
+                    @click="switchImage(currentImageIndex - 1)"
+                    style="transform: rotate(90deg);"
+                  />
+                  <span class="file-index">
+                    {{ currentImageIndex + 1 }} / {{ loadedImages.length }}
+                  </span>
+                  <el-button 
+                    :icon="ArrowDown" 
+                    :disabled="currentImageIndex >= loadedImages.length - 1"
+                    size="small" 
+                    circle
+                    @click="switchImage(currentImageIndex + 1)"
+                    style="transform: rotate(-90deg);"
+                  />
+                </div>
               </div>
-            </div>
-          </template>
-          <div id="crop-chart" class="chart-container"></div>
-        </el-card>
-
-        <!-- 统计信息卡片 -->
-        <el-card class="stats-card" shadow="never" style="margin-top: 20px">
-          <template #header>
-              <div class="stats-header">
-                <span class="stats-title"><el-icon><DataAnalysis /></el-icon> 统计信息</span>
-              <!-- 切换按钮（多文件时显示） -->
-              <div v-if="(dataSource === 'image' && loadedImages.length > 1) || (dataSource === 'recognition' && loadedKmzFiles.length > 1)" 
-                   class="file-switch-controls">
-                <el-button 
-                  :icon="ArrowDown" 
-                  :disabled="dataSource === 'image' ? currentImageIndex <= 0 : currentKmzIndex <= 0"
-                  size="small" 
-                  circle
-                  @click="dataSource === 'image' ? switchImage(currentImageIndex - 1) : switchKmzFile(currentKmzIndex - 1)"
-                  style="transform: rotate(90deg);"
-                />
-                <span class="file-index">
-                  {{ dataSource === 'image' ? currentImageIndex + 1 : currentKmzIndex + 1 }} 
-                  / 
-                  {{ dataSource === 'image' ? loadedImages.length : loadedKmzFiles.length }}
-                </span>
-                <el-button 
-                  :icon="ArrowDown" 
-                  :disabled="dataSource === 'image' ? currentImageIndex >= loadedImages.length - 1 : currentKmzIndex >= loadedKmzFiles.length - 1"
-                  size="small" 
-                  circle
-                  @click="dataSource === 'image' ? switchImage(currentImageIndex + 1) : switchKmzFile(currentKmzIndex + 1)"
-                  style="transform: rotate(-90deg);"
-                />
-              </div>
-            </div>
-          </template>
-          <div v-if="kpiData.totalArea === '—'" class="stats-empty">
-            <el-empty description="暂无统计数据" :image-size="80" />
-          </div>
-          <div v-else class="stats-content">
-            <!-- 当前文件名 -->
-            <div v-if="dataSource === 'image' && currentImageData" class="current-file-name">
-              <el-icon><DocumentChecked /></el-icon>
-              <span>{{ currentImageData.name }}</span>
-            </div>
-            <div v-if="dataSource === 'recognition' && currentRecognitionData" class="current-file-name">
-              <el-icon><DocumentChecked /></el-icon>
-              <span>{{ currentRecognitionData.name }}</span>
+            </template>
+            
+            <!-- 暂无数据 -->
+            <div v-if="!currentImageData" class="stats-empty">
+              <el-empty description="请先查询影像" :image-size="80" />
             </div>
             
-            <div class="stat-item">
-              <div class="stat-icon">
-                <el-icon :size="24" color="#409EFF"><Grid /></el-icon>
+            <!-- 影像元数据信息 -->
+            <div v-else class="image-info-content">
+              <!-- 文件名 -->
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Document /></el-icon>
+                  <span>文件名</span>
+                </div>
+                <div class="info-value" :title="currentImageData.name">{{ currentImageData.name }}</div>
               </div>
-              <div class="stat-info">
-                <div class="stat-label">总监测面积</div>
-                <div class="stat-value">{{ kpiData.totalArea }} <span class="stat-unit">亩</span></div>
+              
+              <!-- 年份期次 -->
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Calendar /></el-icon>
+                  <span>年份期次</span>
+                </div>
+                <div class="info-value">{{ currentImageData.year }}年 第{{ currentImageData.period }}期</div>
+              </div>
+              
+              <!-- 区域 -->
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Location /></el-icon>
+                  <span>区域</span>
+                </div>
+                <div class="info-value">{{ currentImageData.region || '未知' }}</div>
+              </div>
+              
+              <!-- 传感器 -->
+              <div class="info-item" v-if="currentImageData.sensor">
+                <div class="info-label">
+                  <el-icon><Camera /></el-icon>
+                  <span>传感器</span>
+                </div>
+                <div class="info-value">{{ currentImageData.sensor }}</div>
+              </div>
+              
+              <!-- 云量 -->
+              <div class="info-item" v-if="currentImageData.cloudCover !== undefined">
+                <div class="info-label">
+                  <el-icon><Sunny /></el-icon>
+                  <span>云量</span>
+                </div>
+                <div class="info-value">{{ currentImageData.cloudCover }}%</div>
+              </div>
+              
+              <!-- 文件大小 -->
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Folder /></el-icon>
+                  <span>文件大小</span>
+                </div>
+                <div class="info-value">
+                  {{ currentImageData.size }}
+                  <el-tag v-if="currentImageData.isOptimized" size="small" type="success" style="margin-left: 6px">已优化</el-tag>
+                </div>
+              </div>
+              
+              <!-- 像元信息 -->
+              <div class="info-item" v-if="currentImageData.statistics">
+                <div class="info-label">
+                  <el-icon><Grid /></el-icon>
+                  <span>像元尺寸</span>
+                </div>
+                <div class="info-value">
+                  {{ currentImageData.statistics.pixelWidth }} × {{ currentImageData.statistics.pixelHeight }}
+                </div>
+              </div>
+              
+              <!-- 分辨率 -->
+              <div class="info-item" v-if="currentImageData.statistics">
+                <div class="info-label">
+                  <el-icon><ViewIcon /></el-icon>
+                  <span>空间分辨率</span>
+                </div>
+                <div class="info-value">
+                  {{ Math.abs(currentImageData.statistics.pixelSizeX).toFixed(1) }}m
+                </div>
+              </div>
+              
+              <!-- 总面积 -->
+              <div class="info-item" v-if="currentImageData.statistics">
+                <div class="info-label">
+                  <el-icon><DataLine /></el-icon>
+                  <span>总覆盖面积</span>
+                </div>
+                <div class="info-value">{{ formatNumber(currentImageData.statistics.totalAreaMu) }} 亩</div>
+              </div>
+              
+              <!-- 上传时间 -->
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Clock /></el-icon>
+                  <span>上传时间</span>
+                </div>
+                <div class="info-value">{{ formatDateTime(currentImageData.uploadTime) }}</div>
+              </div>
+              
+              <!-- 描述 -->
+              <div class="info-item" v-if="currentImageData.description">
+                <div class="info-label">
+                  <el-icon><Memo /></el-icon>
+                  <span>描述</span>
+                </div>
+                <div class="info-value">{{ currentImageData.description }}</div>
               </div>
             </div>
-            <!-- 地块总数（仅识别结果显示） -->
-            <div v-if="dataSource === 'recognition'" class="stat-item">
-              <div class="stat-icon">
-                <el-icon :size="24" color="#67C23A"><DocumentChecked /></el-icon>
+          </el-card>
+        </template>
+        
+        <!-- 识别结果：显示作物分布图和统计信息 -->
+        <template v-else>
+          <!-- 作物分布图 -->
+          <el-card class="chart-card" shadow="never">
+            <template #header>
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <span><el-icon><PieChart /></el-icon> {{ getChartTitle() }}</span>
+                <!-- 切换按钮（多文件时显示） -->
+                <div v-if="loadedKmzFiles.length > 1" class="file-switch-controls">
+                  <el-button 
+                    :icon="ArrowDown" 
+                    :disabled="currentKmzIndex <= 0"
+                    size="small" 
+                    circle
+                    @click="switchKmzFile(currentKmzIndex - 1)"
+                    style="transform: rotate(90deg);"
+                  />
+                  <span class="file-index">
+                    {{ currentKmzIndex + 1 }} / {{ loadedKmzFiles.length }}
+                  </span>
+                  <el-button 
+                    :icon="ArrowDown" 
+                    :disabled="currentKmzIndex >= loadedKmzFiles.length - 1"
+                    size="small" 
+                    circle
+                    @click="switchKmzFile(currentKmzIndex + 1)"
+                    style="transform: rotate(-90deg);"
+                  />
+                </div>
               </div>
-              <div class="stat-info">
-                <div class="stat-label">地块总数</div>
-                <div class="stat-value">{{ kpiData.plotCount }} <span class="stat-unit">块</span></div>
+            </template>
+            <div id="crop-chart" class="chart-container"></div>
+          </el-card>
+
+          <!-- 统计信息卡片 -->
+          <el-card class="stats-card" shadow="never" style="margin-top: 20px">
+            <template #header>
+                <div class="stats-header">
+                  <span class="stats-title"><el-icon><DataAnalysis /></el-icon> 统计信息</span>
+                <!-- 切换按钮（多文件时显示） -->
+                <div v-if="loadedKmzFiles.length > 1" class="file-switch-controls">
+                  <el-button 
+                    :icon="ArrowDown" 
+                    :disabled="currentKmzIndex <= 0"
+                    size="small" 
+                    circle
+                    @click="switchKmzFile(currentKmzIndex - 1)"
+                    style="transform: rotate(90deg);"
+                  />
+                  <span class="file-index">
+                    {{ currentKmzIndex + 1 }} / {{ loadedKmzFiles.length }}
+                  </span>
+                  <el-button 
+                    :icon="ArrowDown" 
+                    :disabled="currentKmzIndex >= loadedKmzFiles.length - 1"
+                    size="small" 
+                    circle
+                    @click="switchKmzFile(currentKmzIndex + 1)"
+                    style="transform: rotate(-90deg);"
+                  />
+                </div>
+              </div>
+            </template>
+            <div v-if="kpiData.totalArea === '—'" class="stats-empty">
+              <el-empty description="暂无统计数据" :image-size="80" />
+            </div>
+            <div v-else class="stats-content">
+              <!-- 当前文件名 -->
+              <div v-if="currentRecognitionData" class="current-file-name">
+                <el-icon><DocumentChecked /></el-icon>
+                <span>{{ currentRecognitionData.name }}</span>
+              </div>
+              
+              <div class="stat-item">
+                <div class="stat-icon">
+                  <el-icon :size="24" color="#409EFF"><Grid /></el-icon>
+                </div>
+                <div class="stat-info">
+                  <div class="stat-label">总监测面积</div>
+                  <div class="stat-value">{{ kpiData.totalArea }} <span class="stat-unit">亩</span></div>
+                </div>
+              </div>
+              <!-- 地块总数 -->
+              <div class="stat-item">
+                <div class="stat-icon">
+                  <el-icon :size="24" color="#67C23A"><DocumentChecked /></el-icon>
+                </div>
+                <div class="stat-info">
+                  <div class="stat-label">地块总数</div>
+                  <div class="stat-value">{{ kpiData.plotCount }} <span class="stat-unit">块</span></div>
+                </div>
               </div>
             </div>
-          </div>
-        </el-card>
+          </el-card>
+        </template>
       </el-col>
     </el-row>
   </div>
@@ -456,7 +597,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { Search, Refresh, Grid, SuccessFilled, WarningFilled, DocumentChecked, Location, ZoomIn, ZoomOut, Position, PieChart, DataLine, TrendCharts, ArrowDown, Loading, DataAnalysis } from '@element-plus/icons-vue'
+import { Search, Refresh, Grid, SuccessFilled, WarningFilled, DocumentChecked, Location, ZoomIn, ZoomOut, Position, PieChart, DataLine, TrendCharts, ArrowDown, Loading, DataAnalysis, Document, Calendar, Camera, Sunny, Folder, View as ViewIcon, Clock, Memo } from '@element-plus/icons-vue'
 import { RefreshCw } from 'lucide-vue-next'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
@@ -2630,6 +2771,22 @@ const formatNumber = (num) => {
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
+// 格式化日期时间
+const formatDateTime = (dateStr) => {
+  if (!dateStr) return '未知'
+  try {
+    const date = new Date(dateStr)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hour = String(date.getHours()).padStart(2, '0')
+    const minute = String(date.getMinutes()).padStart(2, '0')
+    return `${year}-${month}-${day} ${hour}:${minute}`
+  } catch (error) {
+    return '未知'
+  }
+}
+
 // 获取图例标题
 const getLegendTitle = () => {
   if (dataSource.value === 'image') {
@@ -2767,6 +2924,13 @@ const handleDataSourceChange = async () => {
     selectedCropTypes.value = []
     availableCropTypes.value = []
     await loadRecognitionResults()
+    
+    // 初始化cropChart（如果还没初始化）
+    setTimeout(() => {
+      if (!cropChart) {
+        initCropChart()
+      }
+    }, 100)
   }
 }
 
@@ -3172,6 +3336,10 @@ const handleBaseMapChange = (value) => {
 
 const initCropChart = () => {
   const chartDom = document.getElementById('crop-chart')
+  if (!chartDom) {
+    console.warn('⚠️ crop-chart DOM元素不存在，跳过初始化')
+    return
+  }
   cropChart = echarts.init(chartDom)
   
   const option = {
@@ -3309,9 +3477,12 @@ onMounted(() => {
   initMap()
   fetchImageData() // 获取影像数据列表
   
-  setTimeout(() => {
-    initCropChart()
-  }, 100)
+  // 只在识别结果模式下初始化图表
+  if (dataSource.value === 'recognition') {
+    setTimeout(() => {
+      initCropChart()
+    }, 100)
+  }
   
   window.addEventListener('resize', () => {
     cropChart?.resize()
@@ -3711,6 +3882,83 @@ onBeforeUnmount(() => {
               }
             }
           }
+        }
+      }
+    }
+  }
+  
+  // 影像信息卡片样式
+  .image-info-card {
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    transition: all 0.3s;
+    
+    &:hover {
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+      transform: translateY(-2px);
+    }
+    
+    :deep(.el-card__header) {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 16px 20px;
+      border-bottom: none;
+      
+      .el-icon {
+        color: white;
+      }
+    }
+    
+    .image-info-content {
+      padding: 8px 0;
+      max-height: 680px;
+      overflow-y: auto;
+      
+      &::-webkit-scrollbar {
+        width: 6px;
+      }
+      
+      &::-webkit-scrollbar-thumb {
+        background: #dcdfe6;
+        border-radius: 3px;
+      }
+      
+      .info-item {
+        padding: 12px 16px;
+        border-bottom: 1px solid #f0f2f5;
+        transition: all 0.2s;
+        
+        &:last-child {
+          border-bottom: none;
+        }
+        
+        &:hover {
+          background: #f8f9fc;
+        }
+        
+        .info-label {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 13px;
+          color: #909399;
+          margin-bottom: 6px;
+          font-weight: 500;
+          
+          .el-icon {
+            color: #409EFF;
+            font-size: 16px;
+          }
+        }
+        
+        .info-value {
+          font-size: 14px;
+          color: #303133;
+          font-weight: 500;
+          padding-left: 22px;
+          word-break: break-all;
+          line-height: 1.6;
         }
       }
     }

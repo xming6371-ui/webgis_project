@@ -17,6 +17,7 @@ const router = express.Router()
 
 // 数据目录
 const DATA_DIR = path.join(__dirname, '../../public/data')
+const TIF_DIR = path.join(DATA_DIR, 'data_tif')  // TIF文件专用目录
 const METADATA_FILE = path.join(DATA_DIR, 'imageData.json')
 
 // 优化任务进度追踪
@@ -42,7 +43,8 @@ let cachedCondaEnvPath = null
 // 配置文件上传
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, DATA_DIR)
+    // TIF文件上传到data_tif目录
+    cb(null, TIF_DIR)
   },
   filename: (req, file, cb) => {
     cb(null, file.originalname)
@@ -99,11 +101,11 @@ function parseImageInfo(filename) {
   }
 }
 
-// 扫描data目录，同步元数据（自动读取真实文件大小）
+// 扫描data_tif目录，同步元数据（自动读取真实文件大小）
 async function syncMetadata() {
   try {
     console.log('🔍 开始同步元数据...')
-    const files = fs.readdirSync(DATA_DIR)
+    const files = fs.readdirSync(TIF_DIR)
     console.log(`📁 找到 ${files.length} 个文件`)
     
     const tifFiles = files.filter(f => {
@@ -118,7 +120,7 @@ async function syncMetadata() {
   // 为每个TIF文件更新或创建记录（异步处理）
   const updatePromises = tifFiles.map(async (filename) => {
     try {
-      const filePath = path.join(DATA_DIR, filename)
+      const filePath = path.join(TIF_DIR, filename)
       const stats = fs.statSync(filePath)
       const fileSize = (stats.size / (1024 * 1024)).toFixed(2) + 'MB'
       
@@ -218,10 +220,10 @@ async function syncMetadata() {
         size: fileSize,
         originalSize: fileSize,  // 新文件的原始大小就是当前大小
         optimizedSize: null,
-        thumbnail: `/data/${filename}`,
-        preview: `/data/${filename}`,
-        filePath: `/data/${filename}`,
-        originalPath: `/data/${filename}`,
+        thumbnail: `/data/data_tif/${filename}`,
+        preview: `/data/data_tif/${filename}`,
+        filePath: `/data/data_tif/${filename}`,
+        originalPath: `/data/data_tif/${filename}`,
         optimizedPath: null,
         isOptimized: false,
         uploadTime: stats.mtime.toISOString(),
@@ -463,7 +465,7 @@ router.head('/file/:filename', (req, res) => {
   try {
     // 🔧 修复：解码URL编码的文件名（处理括号等特殊字符）
     const filename = decodeURIComponent(req.params.filename)
-    const filePath = path.join(DATA_DIR, filename)
+    const filePath = path.join(TIF_DIR, filename)
     
     if (!fs.existsSync(filePath)) {
       console.error(`❌ HEAD请求 - 文件不存在: ${filePath}`)
@@ -488,7 +490,7 @@ router.get('/file/:filename', (req, res) => {
   try {
     // 🔧 修复：解码URL编码的文件名（处理括号等特殊字符）
     const filename = decodeURIComponent(req.params.filename)
-    const filePath = path.join(DATA_DIR, filename)
+    const filePath = path.join(TIF_DIR, filename)
     
     console.log(`📥 文件请求: ${filename}`)
     console.log(`   完整路径: ${filePath}`)
@@ -596,6 +598,7 @@ router.post('/upload', upload.array('files'), async (req, res) => {
       month: req.body.month || String(new Date().getMonth() + 1).padStart(2, '0'),
       period: req.body.period || '1',
       region: req.body.region || '',
+      date: req.body.date || '',  // 🆕 采集日期
       sensor: req.body.sensor || '',
       description: req.body.description || ''
     }
@@ -617,7 +620,7 @@ router.post('/upload', upload.array('files'), async (req, res) => {
     
     for (let i = 0; i < uploadedFiles.length; i++) {
       const file = uploadedFiles[i]
-      const stats = fs.statSync(path.join(DATA_DIR, file.originalname))
+      const stats = fs.statSync(path.join(TIF_DIR, file.originalname))
       const fileSize = (stats.size / (1024 * 1024)).toFixed(2) + 'MB'
       
       // 获取该文件的元数据
@@ -649,15 +652,16 @@ router.post('/upload', upload.array('files'), async (req, res) => {
         month: fileMeta.month,
         period: fileMeta.period,
         region: fileMeta.region,
+        date: fileMeta.date || '',  // 🆕 采集日期
         sensor: fileMeta.sensor,
         description: fileMeta.description,
         size: fileSize,
         originalSize: fileSize,
         optimizedSize: null,
-        thumbnail: `/data/${file.originalname}`,
-        preview: `/data/${file.originalname}`,
-        filePath: `/data/${file.originalname}`,
-        originalPath: `/data/${file.originalname}`,
+        thumbnail: `/data/data_tif/${file.originalname}`,
+        preview: `/data/data_tif/${file.originalname}`,
+        filePath: `/data/data_tif/${file.originalname}`,
+        originalPath: `/data/data_tif/${file.originalname}`,
         optimizedPath: null,
         isOptimized: false,
         uploadTime: stats.mtime.toISOString(),
@@ -667,7 +671,7 @@ router.post('/upload', upload.array('files'), async (req, res) => {
       // ✅ 上传时立即进行统计分析
       try {
         console.log(`📊 正在分析上传的文件: ${file.originalname}`)
-        const filePath = path.join(DATA_DIR, file.originalname)
+        const filePath = path.join(TIF_DIR, file.originalname)
         const statistics = await analyzeTifFile(filePath)
         newImage.statistics = statistics
         console.log(`✅ 统计数据已保存`)
@@ -818,7 +822,7 @@ router.delete('/:id', (req, res) => {
     console.log(`🗑️ 删除影像: ${image.name}`)
     
     // 删除文件
-    const filePath = path.join(DATA_DIR, image.name)
+    const filePath = path.join(TIF_DIR, image.name)
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath)
       console.log(`   ✅ 文件已删除: ${filePath}`)
@@ -852,7 +856,7 @@ router.post('/batch-delete', (req, res) => {
     ids.forEach(id => {
       const image = metadata.images.find(img => img.id === id)
       if (image) {
-        const filePath = path.join(DATA_DIR, image.name)
+        const filePath = path.join(TIF_DIR, image.name)
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath)
         }
@@ -894,7 +898,7 @@ router.get('/download/:id', (req, res) => {
       })
     }
     
-    const filePath = path.join(DATA_DIR, image.name)
+    const filePath = path.join(TIF_DIR, image.name)
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({
         code: 404,
@@ -973,21 +977,31 @@ function buildGDALCommand(command) {
     
     // 构建完整命令（Windows）
     if (isWindows) {
-      return `set GDAL_DATA=${gdalData}& set PROJ_LIB=${projLib}& ${modifiedCmd}`
+      // 禁用.aux.xml文件的自动生成
+      return `set GDAL_DATA=${gdalData}& set PROJ_LIB=${projLib}& set GDAL_PAM_ENABLED=NO& ${modifiedCmd}`
     } else {
-      return `GDAL_DATA=${gdalData} PROJ_LIB=${projLib} ${modifiedCmd}`
+      return `GDAL_DATA=${gdalData} PROJ_LIB=${projLib} GDAL_PAM_ENABLED=NO ${modifiedCmd}`
     }
   }
   
   // 🐢 降级方案：每次都启动conda环境（慢，但更兼容）
   if (config.condaEnv) {
     const condaPath = process.env.CONDA_EXE || 'conda'
-    return `"${condaPath}" run -n ${config.condaEnv} ${command}`
+    // 禁用.aux.xml文件的自动生成
+    if (isWindows) {
+      return `"${condaPath}" run -n ${config.condaEnv} set GDAL_PAM_ENABLED=NO& ${command}`
+    } else {
+      return `"${condaPath}" run -n ${config.condaEnv} bash -c "GDAL_PAM_ENABLED=NO ${command}"`
+    }
   }
   
   // 假设GDAL在系统PATH中（Linux/Docker环境）
-  console.log(`📋 使用系统PATH中的GDAL命令: ${command}`)
-  return command
+  console.log(`📋 使用系统PATH中的GDAL命令（禁用.aux.xml）: GDAL_PAM_ENABLED=NO ${command}`)
+  if (isWindows) {
+    return `set GDAL_PAM_ENABLED=NO& ${command}`
+  } else {
+    return `GDAL_PAM_ENABLED=NO ${command}`
+  }
 }
 
 // 检查GDAL是否安装
@@ -1151,7 +1165,7 @@ async function optimizeTifFile(id, options = {}) {
     throw new Error('文件不存在')
   }
   
-  const inputPath = path.join(DATA_DIR, image.name)
+  const inputPath = path.join(TIF_DIR, image.name)
   if (!fs.existsSync(inputPath)) {
     throw new Error('文件不存在')
   }
@@ -1183,8 +1197,8 @@ async function optimizeTifFile(id, options = {}) {
   console.log(`📊 初始化进度追踪 [${id}]:`, initialProgress)
   
   // 3. 准备文件路径
-  const tempOutput = path.join(DATA_DIR, `temp_optimized_${Date.now()}.tif`)
-  const tempScaled = path.join(DATA_DIR, `temp_scaled_${Date.now()}.tif`) // 用于缩放后的临时文件
+  const tempOutput = path.join(TIF_DIR, `temp_optimized_${Date.now()}.tif`)
+  const tempScaled = path.join(TIF_DIR, `temp_scaled_${Date.now()}.tif`) // 用于缩放后的临时文件
   
   // 根据选项决定最终输出路径
   let optimizedPath
@@ -1198,11 +1212,11 @@ async function optimizeTifFile(id, options = {}) {
   } else if (customFileName) {
     // 使用自定义文件名
     finalFileName = `${customFileName}.tif`
-    optimizedPath = path.join(DATA_DIR, finalFileName)
+    optimizedPath = path.join(TIF_DIR, finalFileName)
   } else {
     // 默认添加_optimized后缀
     finalFileName = image.name.replace(/\.tif$/i, '_optimized.tif')
-    optimizedPath = path.join(DATA_DIR, finalFileName)
+    optimizedPath = path.join(TIF_DIR, finalFileName)
   }
   
   // ✅ 检查文件名冲突（不覆盖原文件模式下）
@@ -1363,8 +1377,8 @@ async function optimizeTifFile(id, options = {}) {
       // ========== 两步处理：Float RGB 影像 ==========
       console.log('\n🔄 开始两步处理流程:')
       
-      // 步骤0: 使用gdalinfo -stats检测值域
-      console.log('📊 步骤0: 检测影像值域范围...')
+      // 步骤0: 使用gdalinfo -stats检测值域并计算百分位数
+      console.log('📊 步骤0: 检测影像值域范围并计算2%百分位数拉伸...')
       const gdalinfoStatsCmd = buildGDALCommand(`gdalinfo -stats "${inputPath}"`)
       const { stdout: statsOutput } = await execAsync(gdalinfoStatsCmd)
       
@@ -1380,28 +1394,42 @@ async function optimizeTifFile(id, options = {}) {
         })
       }
       
-      console.log('   检测到各波段值域:')
+      console.log('   检测到各波段绝对值域:')
       bandStats.forEach(stat => {
         console.log(`   - Band ${stat.band}: ${stat.min.toFixed(2)} ~ ${stat.max.toFixed(2)}`)
       })
       
-      // ✅ 使用每个波段独立的最小最大值拉伸（类似ArcGIS Pro的"最小最大值拉伸"）
-      console.log(`   ✅ 策略：每个波段独立拉伸到0-255（保留真彩色）`)
+      // ✅ 使用2%线性拉伸（排除极值，增强对比度）
+      // 计算：min + (max - min) * 0.02 和 max - (max - min) * 0.02
+      console.log(`   ✅ 策略：2%线性拉伸（类似ArcGIS Pro的百分比裁剪）`)
       
       const band1 = bandStats.find(s => s.band === 1) || bandStats[0]
       const band2 = bandStats.find(s => s.band === 2) || bandStats[1]
       const band3 = bandStats.find(s => s.band === 3) || bandStats[2]
       
-      // 步骤1: gdal_translate 转换数据类型，每个波段使用独立的缩放范围
-      console.log('\n📋 步骤1/2: 数据类型转换 + 独立波段拉伸')
-      console.log(`   Band 1 (红): ${band1.min.toFixed(2)}-${band1.max.toFixed(2)} → 0-255`)
-      console.log(`   Band 2 (绿): ${band2.min.toFixed(2)}-${band2.max.toFixed(2)} → 0-255`)
-      console.log(`   Band 3 (蓝): ${band3.min.toFixed(2)}-${band3.max.toFixed(2)} → 0-255`)
+      // 应用2%裁剪
+      const clipPercent = 0.02
+      const b1Range = band1.max - band1.min
+      const b2Range = band2.max - band2.min
+      const b3Range = band3.max - band3.min
       
-      const translateCmd = `gdal_translate -ot Byte -scale_1 ${band1.min} ${band1.max} 0 255 -scale_2 ${band2.min} ${band2.max} 0 255 -scale_3 ${band3.min} ${band3.max} 0 255 -a_nodata 0 -of GTiff "${inputPath}" "${tempScaled}"`
+      const b1Min = band1.min + b1Range * clipPercent
+      const b1Max = band1.max - b1Range * clipPercent
+      const b2Min = band2.min + b2Range * clipPercent
+      const b2Max = band2.max - b2Range * clipPercent
+      const b3Min = band3.min + b3Range * clipPercent
+      const b3Max = band3.max - b3Range * clipPercent
+      
+      // 步骤1: gdal_translate 转换数据类型，每个波段使用2%裁剪后的范围
+      console.log('\n📋 步骤1/2: 数据类型转换 + 2%线性拉伸')
+      console.log(`   Band 1 (红): ${b1Min.toFixed(2)}-${b1Max.toFixed(2)} → 0-255`)
+      console.log(`   Band 2 (绿): ${b2Min.toFixed(2)}-${b2Max.toFixed(2)} → 0-255`)
+      console.log(`   Band 3 (蓝): ${b3Min.toFixed(2)}-${b3Max.toFixed(2)} → 0-255`)
+      
+      const translateCmd = `gdal_translate -ot Byte -scale_1 ${b1Min} ${b1Max} 0 255 -scale_2 ${b2Min} ${b2Max} 0 255 -scale_3 ${b3Min} ${b3Max} 0 255 -a_nodata 0 -of GTiff "${inputPath}" "${tempScaled}"`
       const fullTranslateCmd = buildGDALCommand(translateCmd)
       console.log(`   命令: ${fullTranslateCmd}`)
-      console.log(`   ⚠️ 每个波段独立拉伸（最小最大值拉伸）`)
+      console.log(`   ⚠️ 使用2%线性拉伸（增强对比度）`)
       
       optimizationProgress.set(id, {
         ...optimizationProgress.get(id),
@@ -1563,9 +1591,9 @@ async function optimizeTifFile(id, options = {}) {
       currentImage.size = optimizedSizeMB + 'MB'
       currentImage.originalSize = originalSizeMB + 'MB'
       currentImage.optimizedSize = optimizedSizeMB + 'MB'
-      currentImage.filePath = `/data/${image.name}`
-      currentImage.optimizedPath = `/data/${image.name}`
-      currentImage.originalPath = `/data/${image.name}`
+      currentImage.filePath = `/data/data_tif/${image.name}`
+      currentImage.optimizedPath = `/data/data_tif/${image.name}`
+      currentImage.originalPath = `/data/data_tif/${image.name}`
       currentImage.name = image.name
       
       // 📊 分析优化后的TIF文件
@@ -1614,11 +1642,11 @@ async function optimizeTifFile(id, options = {}) {
         size: optimizedSizeMB + 'MB',
         originalSize: originalSizeMB + 'MB',
         optimizedSize: optimizedSizeMB + 'MB',
-        thumbnail: `/data/${finalFileName}`,
-        preview: `/data/${finalFileName}`,
-        filePath: `/data/${finalFileName}`,
-        optimizedPath: `/data/${finalFileName}`,
-        originalPath: `/data/${image.name}`,
+        thumbnail: `/data/data_tif/${finalFileName}`,
+        preview: `/data/data_tif/${finalFileName}`,
+        filePath: `/data/data_tif/${finalFileName}`,
+        optimizedPath: `/data/data_tif/${finalFileName}`,
+        originalPath: `/data/data_tif/${image.name}`,
         isOptimized: true,
         isOptimizedResult: true,  // 标记为优化结果文件
         sourceFileId: id,  // 记录源文件ID
@@ -1691,11 +1719,11 @@ router.post('/optimize/:id', async (req, res) => {
     
     // 清理旧的临时文件（超过1小时的）
     try {
-      const files = fs.readdirSync(DATA_DIR)
-      const tempFiles = files.filter(f => f.startsWith('temp_optimized_'))
+      const files = fs.readdirSync(TIF_DIR)
+      const tempFiles = files.filter(f => f.startsWith('temp_optimized_') || f.startsWith('temp_scaled_'))
       const now = Date.now()
       tempFiles.forEach(file => {
-        const filePath = path.join(DATA_DIR, file)
+        const filePath = path.join(TIF_DIR, file)
         const stats = fs.statSync(filePath)
         const fileAge = now - stats.mtimeMs
         if (fileAge > 3600000) {
@@ -1796,5 +1824,50 @@ router.get('/optimize-progress/:id', (req, res) => {
 
 // 注意：TIF统计功能已改为纯前端实现（使用geotiff.js）
 // 不再需要后端API
+
+// 清理.aux.xml文件
+router.delete('/cleanup-aux-files', (req, res) => {
+  try {
+    console.log('🧹 开始清理.aux.xml文件...')
+    
+    // 扫描data_tif目录中的所有.aux.xml文件
+    const files = fs.readdirSync(TIF_DIR)
+    const auxFiles = files.filter(f => f.endsWith('.aux.xml'))
+    
+    let deletedCount = 0
+    let failedCount = 0
+    const deletedFiles = []
+    
+    auxFiles.forEach(file => {
+      const filePath = path.join(TIF_DIR, file)
+      try {
+        fs.unlinkSync(filePath)
+        deletedFiles.push(file)
+        deletedCount++
+      } catch (err) {
+        console.error(`删除失败: ${file}`, err.message)
+        failedCount++
+      }
+    })
+    
+    console.log(`✅ 清理完成: 删除${deletedCount}个文件，失败${failedCount}个`)
+    
+    res.json({
+      code: 200,
+      message: `成功删除${deletedCount}个.aux.xml文件`,
+      data: {
+        deletedCount,
+        failedCount,
+        deletedFiles
+      }
+    })
+  } catch (error) {
+    console.error('❌ 清理.aux.xml文件失败:', error.message)
+    res.status(500).json({
+      code: 500,
+      message: '清理失败: ' + error.message
+    })
+  }
+})
 
 export default router
