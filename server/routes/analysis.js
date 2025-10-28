@@ -37,7 +37,8 @@ try {
 const router = express.Router()
 
 // 数据目录
-const DATA_DIR = path.join(__dirname, '../../public/data')
+const PUBLIC_DIR = path.join(__dirname, '../../public')
+const DATA_DIR = path.join(PUBLIC_DIR, 'data')
 const SHP_DIR = path.join(DATA_DIR, 'data_shp')
 const GEOJSON_DIR = path.join(DATA_DIR, 'data_geojson')
 const KMZ_DIR = path.join(DATA_DIR, 'data_kmz')
@@ -101,21 +102,33 @@ const storage = multer.diskStorage({
       targetDir = KMZ_DIR
     }
     
-    // ZIP文件使用临时文件名（稍后会删除）
-    if (extLower === '.zip') {
-      cb(null, originalName)
-      return
+    // 🆕 修复：直接使用原文件名，不自动重命名
+    // 因为前端已经有冲突检测和确认对话框，用户选择"覆盖"后应该直接覆盖文件
+    
+    // 对于GeoJSON和KMZ，如果文件已存在，先删除
+    if (extLower === '.geojson' || extLower === '.json') {
+      const existingFile = path.join(targetDir, originalName)
+      if (fs.existsSync(existingFile)) {
+        console.log(`   ⚠️ GeoJSON文件已存在，将被覆盖: ${originalName}`)
+        fs.unlinkSync(existingFile)
+      }
+    } else if (extLower === '.kmz') {
+      // KMZ文件需要删除对应的文件夹
+      const kmzBasename = path.basename(originalName, '.kmz')
+      const kmzFolder = path.join(targetDir, 'planting_situation', kmzBasename)
+      if (fs.existsSync(kmzFolder)) {
+        console.log(`   ⚠️ KMZ文件夹已存在，将被覆盖: ${kmzBasename}`)
+        fs.rmSync(kmzFolder, { recursive: true, force: true })
+      }
+      // 同时删除KMZ_DIR根目录下的KMZ文件（如果存在）
+      const existingKmz = path.join(targetDir, originalName)
+      if (fs.existsSync(existingKmz)) {
+        fs.unlinkSync(existingKmz)
+      }
     }
     
-    // 检查文件是否已存在，如果存在则添加序号
-    let finalName = originalName
-    let counter = 1
-    while (fs.existsSync(path.join(targetDir, finalName))) {
-      finalName = `${basename}(${counter})${ext}`
-      counter++
-    }
-    
-    cb(null, finalName)
+    // 使用原文件名（覆盖模式）
+    cb(null, originalName)
   }
 })
 
@@ -162,6 +175,221 @@ function findShpFile(dirPath, filename) {
     console.error(`递归查找失败: ${dirPath}`, error)
     return null
   }
+}
+
+// 递归查找KMZ文件
+function findKmzFile(dirPath, filename) {
+  try {
+    const items = fs.readdirSync(dirPath)
+    
+    for (const item of items) {
+      const itemPath = path.join(dirPath, item)
+      const stats = fs.statSync(itemPath)
+      
+      if (stats.isDirectory()) {
+        // 递归查找子目录
+        const found = findKmzFile(itemPath, filename)
+        if (found) {
+          return found
+        }
+      } else if (item === filename) {
+        // 找到文件
+        return itemPath
+      }
+    }
+    
+    return null
+  } catch (error) {
+    console.error(`递归查找KMZ失败: ${dirPath}`, error)
+    return null
+  }
+}
+
+// 手动生成KML（更可靠，避免tokml的问题）
+function generateKMLFromGeoJSON(geojson, documentName, description) {
+  const escapeXml = (str) => {
+    if (!str) return ''
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
+  }
+  
+  const isValidCoordinate = (coord) => {
+    return Array.isArray(coord) && 
+           coord.length >= 2 && 
+           typeof coord[0] === 'number' && 
+           typeof coord[1] === 'number' &&
+           !isNaN(coord[0]) && 
+           !isNaN(coord[1]) &&
+           Math.abs(coord[0]) <= 180 && 
+           Math.abs(coord[1]) <= 90
+  }
+  
+  const coordinatesToKML = (coordinates, geometryType) => {
+    try {
+      if (geometryType === 'Point') {
+        if (!isValidCoordinate(coordinates)) return ''
+        return `${coordinates[0]},${coordinates[1]},0`
+      } else if (geometryType === 'LineString') {
+        const validCoords = coordinates.filter(isValidCoordinate)
+        if (validCoords.length < 2) return ''
+        return validCoords.map(coord => `${coord[0]},${coord[1]},0`).join('\n          ')
+      } else if (geometryType === 'Polygon') {
+        // Polygon的第一个环是外环
+        const outerRing = coordinates[0]
+        if (!outerRing || outerRing.length === 0) return ''
+        
+        const validCoords = outerRing.filter(isValidCoordinate)
+        if (validCoords.length < 3) return '' // 多边形至少需要3个点
+        
+        // 确保多边形闭合
+        const first = validCoords[0]
+        const last = validCoords[validCoords.length - 1]
+        if (first[0] !== last[0] || first[1] !== last[1]) {
+          validCoords.push([first[0], first[1]])
+        }
+        return validCoords.map(coord => `${coord[0]},${coord[1]},0`).join('\n          ')
+      } else if (geometryType === 'MultiPolygon') {
+        // 只处理第一个多边形的外环
+        if (coordinates[0] && coordinates[0][0]) {
+          const outerRing = coordinates[0][0]
+          const validCoords = outerRing.filter(isValidCoordinate)
+          if (validCoords.length < 3) return ''
+          // 确保多边形闭合
+          const first = validCoords[0]
+          const last = validCoords[validCoords.length - 1]
+          if (first[0] !== last[0] || first[1] !== last[1]) {
+            validCoords.push([first[0], first[1]])
+          }
+          return validCoords.map(coord => `${coord[0]},${coord[1]},0`).join('\n          ')
+        }
+      }
+      return ''
+    } catch (error) {
+      console.warn(`坐标转换失败:`, error.message)
+      return ''
+    }
+  }
+  
+  const generatePlacemark = (feature, index) => {
+    const props = feature.properties || {}
+    const geom = feature.geometry
+    
+    if (!geom || !geom.type || !geom.coordinates) {
+      return '' // 跳过无效几何
+    }
+    
+    const name = escapeXml(props.name || props.Name || `地块${index + 1}`)
+    const desc = escapeXml(props.description || props.Description || '')
+    
+    const coords = coordinatesToKML(geom.coordinates, geom.type)
+    if (!coords) {
+      return '' // 坐标无效，跳过
+    }
+    
+    // 🆕 生成ExtendedData（存储面积、class等字段）
+    let extendedDataXml = ''
+    const dataFields = []
+    
+    // 添加面积数据
+    if (props.area_m2 !== undefined && props.area_m2 !== null) {
+      dataFields.push(`<Data name="area_m2"><value>${props.area_m2}</value></Data>`)
+    }
+    if (props.area_mu !== undefined && props.area_mu !== null) {
+      dataFields.push(`<Data name="area_mu"><value>${props.area_mu}</value></Data>`)
+    }
+    
+    // 添加class字段（种植情况）
+    if (props.class !== undefined && props.class !== null) {
+      dataFields.push(`<Data name="class"><value>${props.class}</value></Data>`)
+    }
+    
+    // 添加其他可能有用的字段
+    if (props.kNDVI !== undefined && props.kNDVI !== null) {
+      dataFields.push(`<Data name="kNDVI"><value>${props.kNDVI}</value></Data>`)
+    }
+    if (props.Id !== undefined && props.Id !== null) {
+      dataFields.push(`<Data name="Id"><value>${props.Id}</value></Data>`)
+    }
+    
+    if (dataFields.length > 0) {
+      extendedDataXml = `
+      <ExtendedData>
+        ${dataFields.join('\n        ')}
+      </ExtendedData>`
+    }
+    
+    let geometryXml = ''
+    if (geom.type === 'Point') {
+      geometryXml = `
+        <Point>
+          <coordinates>${coords}</coordinates>
+        </Point>`
+    } else if (geom.type === 'LineString') {
+      geometryXml = `
+        <LineString>
+          <tessellate>1</tessellate>
+          <coordinates>${coords}</coordinates>
+        </LineString>`
+    } else if (geom.type === 'Polygon' || geom.type === 'MultiPolygon') {
+      geometryXml = `
+        <Polygon>
+          <extrude>0</extrude>
+          <altitudeMode>clampToGround</altitudeMode>
+          <outerBoundaryIs>
+            <LinearRing>
+              <coordinates>${coords}</coordinates>
+            </LinearRing>
+          </outerBoundaryIs>
+        </Polygon>`
+    } else {
+      return '' // 不支持的几何类型
+    }
+    
+    return `
+    <Placemark>
+      <name>${name}</name>
+      ${desc ? `<description>${desc}</description>` : ''}${extendedDataXml}
+      ${geometryXml}
+    </Placemark>`
+  }
+  
+  const placemarks = geojson.features
+    .map((feature, index) => generatePlacemark(feature, index))
+    .filter(p => p) // 过滤掉空的placemark
+    .join('\n')
+  
+  const validCount = placemarks.split('<Placemark>').length - 1
+  const invalidCount = geojson.features.length - validCount
+  
+  if (invalidCount > 0) {
+    console.log(`   📊 KML生成统计: ${validCount}个有效, ${invalidCount}个无效`)
+  } else {
+    console.log(`   📊 KML生成统计: ${validCount}个Placemark`)
+  }
+  
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>${escapeXml(documentName)}</name>
+    <description>${escapeXml(description)}</description>
+    <Style id="defaultStyle">
+      <LineStyle>
+        <color>ff0000ff</color>
+        <width>2</width>
+      </LineStyle>
+      <PolyStyle>
+        <color>7f00ff00</color>
+        <fill>1</fill>
+        <outline>1</outline>
+      </PolyStyle>
+    </Style>
+${placemarks}
+  </Document>
+</kml>`
 }
 
 /**
@@ -235,6 +463,142 @@ async function calculateAreasWithGeopandas(geojson) {
 }
 
 console.log('✅ 分析结果管理模块已加载')
+
+// 获取KMZ文件的面积数据
+router.post('/get-kmz-areas', async (req, res) => {
+  try {
+    const { kmzFilename, relativePath } = req.body
+    
+    console.log(`📐 收到KMZ面积计算请求: ${kmzFilename}`)
+    console.log(`   相对路径: ${relativePath || '根目录'}`)
+    
+    const basename = path.basename(kmzFilename, '.kmz')
+    
+    // 1. 先查找是否有对应的GeoJSON文件（在GEOJSON_DIR根目录）
+    let geojsonPath = path.join(GEOJSON_DIR, `${basename}.geojson`)
+    let geojson
+    
+    console.log(`   🔍 查找GeoJSON: ${geojsonPath}`)
+    
+    if (fs.existsSync(geojsonPath)) {
+      console.log(`   ✅ 找到对应的GeoJSON文件: ${basename}.geojson`)
+      geojson = JSON.parse(fs.readFileSync(geojsonPath, 'utf-8'))
+      
+      // 检查是否已有面积数据
+      const hasAreaData = geojson.features.length > 0 && 
+                          geojson.features.some(f => f.properties && f.properties.area_mu > 0)
+      
+      if (hasAreaData) {
+        console.log(`   ✅ GeoJSON已包含面积数据，直接返回`)
+        const areas = geojson.features.map(f => ({
+          area_m2: f.properties.area_m2 || 0,
+          area_mu: f.properties.area_mu || 0
+        }))
+        
+        const totalAreaMu = areas.reduce((sum, a) => sum + a.area_mu, 0)
+        console.log(`   📊 总面积: ${totalAreaMu.toFixed(2)} 亩`)
+        
+        return res.json({
+          code: 200,
+          message: '面积数据获取成功',
+          data: {
+            areas,
+            totalAreaMu: totalAreaMu,
+            source: 'geojson'
+          }
+        })
+      } else {
+        console.log(`   ⚠️ GeoJSON存在但没有面积数据`)
+      }
+    } else {
+      console.log(`   ⚠️ 未找到对应的GeoJSON文件: ${basename}.geojson`)
+      
+      // 2. 如果没有GeoJSON，从KMZ转换
+      let kmzPath
+      if (relativePath) {
+        kmzPath = path.join(KMZ_DIR, relativePath, kmzFilename)
+      } else {
+        kmzPath = path.join(KMZ_DIR, kmzFilename)
+      }
+      
+      // 如果根目录不存在，递归查找
+      if (!fs.existsSync(kmzPath)) {
+        console.log(`   递归查找KMZ文件...`)
+        kmzPath = findKmzFile(KMZ_DIR, kmzFilename)
+        if (!kmzPath) {
+          return res.status(404).json({
+            code: 404,
+            message: `KMZ文件不存在: ${kmzFilename}`
+          })
+        }
+      }
+      
+      console.log(`   找到KMZ文件: ${kmzPath}`)
+      
+      // 导入必要的库
+      let JSZip, tokml
+      try {
+        const JSZipModule = await import('jszip')
+        JSZip = JSZipModule.default || JSZipModule
+        const tokmModule = await import('tokml')
+        tokml = tokmModule.default || tokmModule
+      } catch (error) {
+        return res.status(503).json({
+          code: 503,
+          message: '缺少必要的库，请运行: npm install jszip tokml --save'
+        })
+      }
+      
+      // 读取KMZ文件
+      const kmzBuffer = fs.readFileSync(kmzPath)
+      const zip = new JSZip()
+      const unzipped = await zip.loadAsync(kmzBuffer)
+      
+      // 查找KML文件
+      let kmlContent
+      for (const filename in unzipped.files) {
+        if (filename.endsWith('.kml')) {
+          kmlContent = await unzipped.files[filename].async('string')
+          break
+        }
+      }
+      
+      if (!kmlContent) {
+        return res.status(400).json({
+          code: 400,
+          message: 'KMZ文件中未找到KML数据'
+        })
+      }
+      
+      console.log(`   ✅ 提取KML内容成功`)
+      
+      // 暂不支持从KMZ转换
+      return res.status(404).json({
+        code: 404,
+        message: `未找到对应的GeoJSON文件: ${basename}.geojson，请先转换SHP为KMZ（会自动生成GeoJSON）`
+      })
+    }
+    
+    // 如果GeoJSON存在但没有面积数据，返回空数据
+    console.log(`   ⚠️ GeoJSON文件存在但没有面积数据，返回空结果`)
+    return res.json({
+      code: 200,
+      message: '未找到面积数据',
+      data: {
+        areas: [],
+        totalAreaMu: 0,
+        source: 'none'
+      }
+    })
+    
+  } catch (error) {
+    console.error('❌ 获取KMZ面积失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '获取面积失败: ' + error.message
+    })
+  }
+})
 
 // 获取识别结果列表（扫描SHP和GeoJSON文件）
 router.get('/results', (req, res) => {
@@ -366,23 +730,40 @@ router.get('/results', (req, res) => {
     
     // 2. 扫描GeoJSON文件
     if (fs.existsSync(GEOJSON_DIR)) {
-      const geojsonFiles = fs.readdirSync(GEOJSON_DIR).filter(f => f.endsWith('.geojson') || f.endsWith('.json'))
+      const geojsonFiles = fs.readdirSync(GEOJSON_DIR).filter(f => f.endsWith('.geojson'))
       geojsonFiles.forEach((filename) => {
         const geojsonPath = path.join(GEOJSON_DIR, filename)
         const stats = fs.statSync(geojsonPath)
         const ext = path.extname(filename)
         const basename = path.basename(filename, ext)
         
+        // 🆕 读取GeoJSON文件的metadata字段
+        let metadata = {}
+        try {
+          const geojsonContent = JSON.parse(fs.readFileSync(geojsonPath, 'utf-8'))
+          if (geojsonContent.metadata) {
+            metadata = geojsonContent.metadata
+          }
+        } catch (error) {
+          console.warn(`读取GeoJSON元数据失败: ${filename}`, error.message)
+        }
+        
         results.push({
           id: `geojson_${basename}_${stats.mtimeMs}`,
           name: filename,
           type: 'GeoJSON',
           format: 'geojson',
-          taskName: basename,
+          taskName: metadata.taskName || basename,
           analysisType: 'recognition',
+          recognitionType: metadata.recognitionType || 'crop_recognition',
           size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
           createTime: stats.mtime.toLocaleString('zh-CN'),
-          timestamp: stats.mtimeMs
+          timestamp: stats.mtimeMs,
+          regionCode: metadata.regionCode || '',
+          regionName: metadata.regionName || '未知任务',
+          year: metadata.year || '',
+          period: metadata.period || '',
+          source: metadata.source || '未知任务'
         })
       })
     }
@@ -651,6 +1032,898 @@ router.post('/convert-to-geojson', async (req, res) => {
     })
   } catch (error) {
     console.error('转换失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '转换失败: ' + error.message
+    })
+  }
+})
+
+// 🆕 SHP临时转换为GeoJSON（带缓存，不保存到磁盘，只返回数据）
+router.post('/convert-shp-temp', async (req, res) => {
+  try {
+    const { shpFilename, relativePath } = req.body
+    
+    if (!shpFilename) {
+      return res.status(400).json({
+        code: 400,
+        message: '请提供SHP文件名'
+      })
+    }
+    
+    // 查找SHP文件路径
+    let shpPath
+    if (relativePath) {
+      shpPath = path.join(SHP_DIR, relativePath, shpFilename)
+    } else {
+      shpPath = path.join(SHP_DIR, shpFilename)
+      if (!fs.existsSync(shpPath)) {
+        console.log(`⚠️ 根目录未找到文件，开始递归查找: ${shpFilename}`)
+        shpPath = findShpFile(SHP_DIR, shpFilename)
+      }
+    }
+    
+    if (!shpPath || !fs.existsSync(shpPath)) {
+      return res.status(404).json({
+        code: 404,
+        message: `SHP文件不存在: ${shpFilename}`
+      })
+    }
+    
+    console.log(`📍 找到SHP文件: ${shpPath}`)
+    const basename = path.basename(shpFilename, '.shp')
+    
+    // 🔧 方案1：缓存机制
+    // 缓存文件路径
+    const CACHE_DIR = path.join(PUBLIC_DIR, 'data', 'data_geojson_cache')
+    if (!fs.existsSync(CACHE_DIR)) {
+      fs.mkdirSync(CACHE_DIR, { recursive: true })
+      console.log(`📁 创建缓存目录: ${CACHE_DIR}`)
+    }
+    
+    const cacheFilePath = path.join(CACHE_DIR, `${basename}.geojson`)
+    const shpStats = fs.statSync(shpPath)
+    const shpMtime = shpStats.mtime.getTime()
+    
+    // 检查缓存是否有效
+    let useCache = false
+    if (fs.existsSync(cacheFilePath)) {
+      const cacheStats = fs.statSync(cacheFilePath)
+      const cacheMtime = cacheStats.mtime.getTime()
+      
+      // 如果缓存文件的修改时间晚于SHP文件，则使用缓存
+      if (cacheMtime >= shpMtime) {
+        useCache = true
+        console.log(`✅ 使用缓存: ${basename}.geojson (缓存时间: ${new Date(cacheMtime).toLocaleString()})`)
+      } else {
+        console.log(`⚠️ 缓存过期（SHP已更新），重新计算`)
+      }
+    }
+    
+    if (useCache) {
+      // 从缓存读取
+      const geojson = JSON.parse(fs.readFileSync(cacheFilePath, 'utf-8'))
+      console.log(`📦 从缓存加载完成，共 ${geojson.features.length} 个要素`)
+      
+      return res.json({
+        code: 200,
+        message: '从缓存加载成功',
+        data: {
+          geojson: geojson,
+          featureCount: geojson.features.length,
+          hasAreaData: geojson.features.some(f => f.properties && f.properties.area_mu),
+          filename: `${basename}.geojson`,
+          fromCache: true
+        }
+      })
+    }
+    
+    console.log(`🔄 开始临时转换: ${shpFilename} -> GeoJSON (内存)`)
+    
+    // 🔧 使用GeoPandas读取并转换坐标系
+    let geojson
+    try {
+      const { spawn } = await import('child_process');
+      geojson = await new Promise((resolve, reject) => {
+        const pythonScript = `
+import geopandas as gpd
+import json
+import sys
+from pyproj import Geod
+
+try:
+    # 读取SHP文件
+    gdf = gpd.read_file(r'${shpPath}')
+    original_crs = str(gdf.crs) if gdf.crs else 'Unknown'
+    print(f'   📍 原始坐标系: {original_crs}', file=sys.stderr)
+    
+    # 转换坐标系为WGS84
+    if gdf.crs and gdf.crs.to_epsg() != 4326:
+        print(f'   🔄 转换坐标系: {original_crs} -> EPSG:4326 (WGS84)', file=sys.stderr)
+        gdf = gdf.to_crs(epsg=4326)
+    else:
+        print(f'   ✅ 坐标系已是WGS84，无需转换', file=sys.stderr)
+    
+    # 计算测地线面积
+    print(f'   📐 计算测地线面积...', file=sys.stderr)
+    geod = Geod(ellps='WGS84')
+    areas_m2 = []
+    for geom in gdf.geometry:
+        try:
+            area, _ = geod.geometry_area_perimeter(geom)
+            areas_m2.append(abs(area))
+        except Exception as e:
+            print(f'   ⚠️ 某个地块面积计算失败: {str(e)}', file=sys.stderr)
+            areas_m2.append(0)
+    
+    # 添加面积字段到GeoDataFrame
+    gdf['area_m2'] = areas_m2
+    gdf['area_mu'] = [a * 0.0015 for a in areas_m2]
+    
+    print(f'   ✅ 面积计算完成', file=sys.stderr)
+    
+    # 转换为GeoJSON
+    geojson_str = gdf.to_json()
+    print(geojson_str)
+    
+except Exception as e:
+    print(f'Error: {str(e)}', file=sys.stderr)
+    sys.exit(1)
+`;
+        
+        const python = spawn('python', ['-c', pythonScript]);
+        let stdout = '';
+        let stderr = '';
+        
+        python.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+        
+        python.stderr.on('data', (data) => {
+          stderr += data.toString();
+          console.log(data.toString().trim());
+        });
+        
+        python.on('close', (code) => {
+          if (code !== 0) {
+            reject(new Error(`GeoPandas转换失败: ${stderr}`));
+          } else {
+            try {
+              const geojsonData = JSON.parse(stdout);
+              resolve(geojsonData);
+            } catch (e) {
+              reject(new Error(`解析GeoJSON失败: ${e.message}`));
+            }
+          }
+        });
+      });
+      
+      console.log(`✅ 临时转换完成，共 ${geojson.features.length} 个要素`)
+      
+    } catch (geopandasError) {
+      console.warn(`⚠️ GeoPandas转换失败，使用备用方法: ${geopandasError.message}`);
+      
+      // 回退到shapefile库
+      const shapefile = await import('shapefile')
+      const source = await shapefile.open(shpPath)
+      
+      geojson = {
+        type: 'FeatureCollection',
+        features: []
+      }
+      
+      let result = await source.read()
+      while (!result.done) {
+        if (result.value) {
+          geojson.features.push(result.value)
+        }
+        result = await source.read()
+      }
+      
+      console.warn(`⚠️ 使用shapefile库转换，坐标系可能不正确，面积计算可能不准确`)
+      console.log(`✅ 临时转换完成（备用方法），共 ${geojson.features.length} 个要素`)
+    }
+    
+    // 读取SHP的元数据（如果存在）
+    const shpMetadataPath = path.join(path.dirname(shpPath), `${basename}.json`)
+    if (fs.existsSync(shpMetadataPath)) {
+      const shpMetadata = JSON.parse(fs.readFileSync(shpMetadataPath, 'utf-8'))
+      geojson.metadata = {
+        year: shpMetadata.year,
+        period: shpMetadata.period,
+        regionCode: shpMetadata.regionCode,
+        regionName: shpMetadata.regionName,
+        recognitionType: shpMetadata.recognitionType,
+        taskName: shpMetadata.taskName || basename,
+        source: shpMetadata.source || '作物识别',
+        createdAt: shpMetadata.createdAt,
+        updatedAt: new Date().toISOString()
+      }
+      console.log(`📋 已读取SHP元数据`)
+    }
+    
+    // 🔧 方案1：保存到缓存
+    try {
+      fs.writeFileSync(cacheFilePath, JSON.stringify(geojson, null, 2), 'utf-8')
+      console.log(`💾 已保存到缓存: ${cacheFilePath}`)
+    } catch (cacheError) {
+      console.warn(`⚠️ 缓存保存失败: ${cacheError.message}`)
+    }
+    
+    // 返回GeoJSON数据
+    res.json({
+      code: 200,
+      message: '转换成功',
+      data: {
+        geojson: geojson,
+        featureCount: geojson.features.length,
+        hasAreaData: geojson.features.some(f => f.properties && f.properties.area_mu),
+        filename: `${basename}.geojson`,
+        fromCache: false
+      }
+    })
+  } catch (error) {
+    console.error('临时转换失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '临时转换失败: ' + error.message
+    })
+  }
+})
+
+// 🆕 检测文件冲突（上传前检查）- 简化版：只检测文件名是否存在
+router.post('/check-file-conflict', async (req, res) => {
+  try {
+    const { filename } = req.body
+    
+    if (!filename) {
+      return res.status(400).json({
+        code: 400,
+        message: '请提供文件名'
+      })
+    }
+    
+    console.log(`🔍 检查文件是否存在: ${filename}`)
+    
+    // 获取文件类型
+    const ext = path.extname(filename).toLowerCase()
+    let fileExists = false
+    
+    if (ext === '.zip') {
+      // SHP文件（ZIP压缩包）
+      const basename = path.basename(filename, '.zip')
+      const targetDir = path.join(SHP_DIR, basename)
+      fileExists = fs.existsSync(targetDir)
+    } else if (ext === '.geojson' || ext === '.json') {
+      // GeoJSON文件
+      const targetPath = path.join(GEOJSON_DIR, filename)
+      fileExists = fs.existsSync(targetPath)
+    } else if (ext === '.kmz') {
+      // KMZ文件
+      const basename = path.basename(filename, '.kmz')
+      // 查找KMZ文件夹
+      const kmzFolder = path.join(KMZ_DIR, 'planting_situation', basename)
+      fileExists = fs.existsSync(kmzFolder)
+    }
+    
+    console.log(`📋 文件${fileExists ? '已存在' : '不存在'}: ${filename}`)
+    
+    res.json({
+      code: 200,
+      message: fileExists ? '文件已存在' : '文件不存在，可以上传',
+      data: {
+        conflict: fileExists
+      }
+    })
+    
+  } catch (error) {
+    console.error('冲突检测失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '冲突检测失败: ' + error.message
+    })
+  }
+})
+
+// 🆕 方案2：快速加载SHP（不计算面积，只转换坐标系）
+router.post('/convert-shp-fast', async (req, res) => {
+  try {
+    const { shpFilename, relativePath } = req.body
+    
+    if (!shpFilename) {
+      return res.status(400).json({
+        code: 400,
+        message: '请提供SHP文件名'
+      })
+    }
+    
+    // 查找SHP文件路径
+    let shpPath
+    if (relativePath) {
+      shpPath = path.join(SHP_DIR, relativePath, shpFilename)
+    } else {
+      shpPath = path.join(SHP_DIR, shpFilename)
+      if (!fs.existsSync(shpPath)) {
+        shpPath = findShpFile(SHP_DIR, shpFilename)
+      }
+    }
+    
+    if (!shpPath || !fs.existsSync(shpPath)) {
+      return res.status(404).json({
+        code: 404,
+        message: `SHP文件不存在: ${shpFilename}`
+      })
+    }
+    
+    console.log(`⚡ 快速加载SHP文件: ${shpPath}`)
+    const basename = path.basename(shpFilename, '.shp')
+    
+    // 使用GeoPandas读取并转换坐标系（不计算面积）
+    let geojson
+    try {
+      const { spawn } = await import('child_process');
+      geojson = await new Promise((resolve, reject) => {
+        const pythonScript = `
+import geopandas as gpd
+import json
+import sys
+
+try:
+    # 读取SHP文件
+    gdf = gpd.read_file(r'${shpPath}')
+    original_crs = str(gdf.crs) if gdf.crs else 'Unknown'
+    print(f'   📍 原始坐标系: {original_crs}', file=sys.stderr)
+    
+    # 转换坐标系为WGS84
+    if gdf.crs and gdf.crs.to_epsg() != 4326:
+        print(f'   🔄 转换坐标系: {original_crs} -> EPSG:4326 (WGS84)', file=sys.stderr)
+        gdf = gdf.to_crs(epsg=4326)
+    else:
+        print(f'   ✅ 坐标系已是WGS84，无需转换', file=sys.stderr)
+    
+    print(f'   ⚡ 快速加载完成（不计算面积）', file=sys.stderr)
+    
+    # 转换为GeoJSON
+    geojson_str = gdf.to_json()
+    print(geojson_str)
+    
+except Exception as e:
+    print(f'Error: {str(e)}', file=sys.stderr)
+    sys.exit(1)
+`;
+        
+        const python = spawn('python', ['-c', pythonScript]);
+        let stdout = '';
+        let stderr = '';
+        
+        python.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+        
+        python.stderr.on('data', (data) => {
+          stderr += data.toString();
+          console.log(data.toString().trim());
+        });
+        
+        python.on('close', (code) => {
+          if (code !== 0) {
+            reject(new Error(`GeoPandas转换失败: ${stderr}`));
+          } else {
+            try {
+              const geojsonData = JSON.parse(stdout);
+              resolve(geojsonData);
+            } catch (e) {
+              reject(new Error(`解析GeoJSON失败: ${e.message}`));
+            }
+          }
+        });
+      });
+      
+      console.log(`⚡ 快速加载完成，共 ${geojson.features.length} 个要素`)
+      
+    } catch (geopandasError) {
+      console.warn(`⚠️ GeoPandas转换失败: ${geopandasError.message}`);
+      return res.status(500).json({
+        code: 500,
+        message: 'GeoPandas转换失败: ' + geopandasError.message
+      })
+    }
+    
+    // 读取SHP的元数据
+    const shpMetadataPath = path.join(path.dirname(shpPath), `${basename}.json`)
+    if (fs.existsSync(shpMetadataPath)) {
+      const shpMetadata = JSON.parse(fs.readFileSync(shpMetadataPath, 'utf-8'))
+      geojson.metadata = {
+        year: shpMetadata.year,
+        period: shpMetadata.period,
+        regionCode: shpMetadata.regionCode,
+        regionName: shpMetadata.regionName,
+        recognitionType: shpMetadata.recognitionType,
+        taskName: shpMetadata.taskName || basename,
+        source: shpMetadata.source || '作物识别',
+        createdAt: shpMetadata.createdAt,
+        updatedAt: new Date().toISOString()
+      }
+    }
+    
+    res.json({
+      code: 200,
+      message: '快速加载成功',
+      data: {
+        geojson: geojson,
+        featureCount: geojson.features.length,
+        hasAreaData: false,
+        filename: `${basename}.geojson`
+      }
+    })
+  } catch (error) {
+    console.error('快速加载失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '快速加载失败: ' + error.message
+    })
+  }
+})
+
+// 🆕 方案2：异步计算SHP面积
+router.post('/calculate-shp-areas', async (req, res) => {
+  try {
+    const { shpFilename, relativePath } = req.body
+    
+    if (!shpFilename) {
+      return res.status(400).json({
+        code: 400,
+        message: '请提供SHP文件名'
+      })
+    }
+    
+    // 查找SHP文件路径
+    let shpPath
+    if (relativePath) {
+      shpPath = path.join(SHP_DIR, relativePath, shpFilename)
+    } else {
+      shpPath = path.join(SHP_DIR, shpFilename)
+      if (!fs.existsSync(shpPath)) {
+        shpPath = findShpFile(SHP_DIR, shpFilename)
+      }
+    }
+    
+    if (!shpPath || !fs.existsSync(shpPath)) {
+      return res.status(404).json({
+        code: 404,
+        message: `SHP文件不存在: ${shpFilename}`
+      })
+    }
+    
+    console.log(`📐 开始计算面积: ${shpPath}`)
+    const basename = path.basename(shpFilename, '.shp')
+    
+    // 检查缓存
+    const CACHE_DIR = path.join(PUBLIC_DIR, 'data', 'data_geojson_cache')
+    const cacheFilePath = path.join(CACHE_DIR, `${basename}.geojson`)
+    
+    if (fs.existsSync(cacheFilePath)) {
+      const shpStats = fs.statSync(shpPath)
+      const cacheStats = fs.statSync(cacheFilePath)
+      
+      if (cacheStats.mtime.getTime() >= shpStats.mtime.getTime()) {
+        const geojson = JSON.parse(fs.readFileSync(cacheFilePath, 'utf-8'))
+        console.log(`✅ 从缓存读取面积数据`)
+        
+        // 提取面积数据
+        const areas = geojson.features.map(f => ({
+          area_m2: f.properties.area_m2 || 0,
+          area_mu: f.properties.area_mu || 0
+        }))
+        
+        return res.json({
+          code: 200,
+          message: '面积计算完成（从缓存）',
+          data: {
+            areas: areas,
+            totalAreaMu: areas.reduce((sum, a) => sum + a.area_mu, 0),
+            fromCache: true
+          }
+        })
+      }
+    }
+    
+    // 使用GeoPandas计算面积
+    try {
+      const { spawn } = await import('child_process');
+      const result = await new Promise((resolve, reject) => {
+        const pythonScript = `
+import geopandas as gpd
+import json
+import sys
+from pyproj import Geod
+
+try:
+    # 读取SHP文件
+    gdf = gpd.read_file(r'${shpPath}')
+    
+    # 转换坐标系为WGS84
+    if gdf.crs and gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+    
+    # 计算测地线面积
+    print(f'   📐 计算测地线面积...', file=sys.stderr)
+    geod = Geod(ellps='WGS84')
+    areas = []
+    for geom in gdf.geometry:
+        try:
+            area, _ = geod.geometry_area_perimeter(geom)
+            area_m2 = abs(area)
+            area_mu = area_m2 * 0.0015
+            areas.append({'area_m2': round(area_m2, 6), 'area_mu': round(area_mu, 2)})
+        except Exception as e:
+            areas.append({'area_m2': 0, 'area_mu': 0})
+    
+    print(f'   ✅ 面积计算完成', file=sys.stderr)
+    print(json.dumps({'areas': areas}))
+    
+except Exception as e:
+    print(f'Error: {str(e)}', file=sys.stderr)
+    sys.exit(1)
+`;
+        
+        const python = spawn('python', ['-c', pythonScript]);
+        let stdout = '';
+        let stderr = '';
+        
+        python.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+        
+        python.stderr.on('data', (data) => {
+          stderr += data.toString();
+          console.log(data.toString().trim());
+        });
+        
+        python.on('close', (code) => {
+          if (code !== 0) {
+            reject(new Error(`GeoPandas计算失败: ${stderr}`));
+          } else {
+            try {
+              const resultData = JSON.parse(stdout);
+              resolve(resultData);
+            } catch (e) {
+              reject(new Error(`解析结果失败: ${e.message}`));
+            }
+          }
+        });
+      });
+      
+      const areas = result.areas
+      const totalAreaMu = areas.reduce((sum, a) => sum + a.area_mu, 0)
+      
+      console.log(`✅ 面积计算完成，总面积: ${totalAreaMu.toFixed(2)} 亩`)
+      
+      res.json({
+        code: 200,
+        message: '面积计算完成',
+        data: {
+          areas: areas,
+          totalAreaMu: totalAreaMu,
+          fromCache: false
+        }
+      })
+      
+    } catch (error) {
+      console.error('面积计算失败:', error)
+      res.status(500).json({
+        code: 500,
+        message: '面积计算失败: ' + error.message
+      })
+    }
+  } catch (error) {
+    console.error('面积计算失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: '面积计算失败: ' + error.message
+    })
+  }
+})
+
+// SHP转换为KMZ（不保留中间文件）
+router.post('/convert-shp-to-kmz', async (req, res) => {
+  try {
+    const { shpFilename, relativePath } = req.body
+    
+    if (!shpFilename) {
+      return res.status(400).json({
+        code: 400,
+        message: '请提供SHP文件名'
+      })
+    }
+    
+    // 查找SHP文件路径
+    let shpPath
+    if (relativePath) {
+      shpPath = path.join(SHP_DIR, relativePath, shpFilename)
+    } else {
+      shpPath = path.join(SHP_DIR, shpFilename)
+      if (!fs.existsSync(shpPath)) {
+        console.log(`⚠️ 根目录未找到文件，开始递归查找: ${shpFilename}`)
+        shpPath = findShpFile(SHP_DIR, shpFilename)
+      }
+    }
+    
+    if (!shpPath || !fs.existsSync(shpPath)) {
+      return res.status(404).json({
+        code: 404,
+        message: `SHP文件不存在: ${shpFilename}`
+      })
+    }
+    
+    console.log(`📍 找到SHP文件: ${shpPath}`)
+    
+    // 生成文件名
+    const basename = path.basename(shpFilename, '.shp')
+    const kmzFilename = `${basename}.kmz`
+    
+    // 🆕 在planting_situation下创建以SHP文件名命名的文件夹
+    const kmzSubDir = path.join(KMZ_DIR, 'planting_situation', basename)
+    if (!fs.existsSync(kmzSubDir)) {
+      fs.mkdirSync(kmzSubDir, { recursive: true })
+      console.log(`   📁 创建文件夹: ${kmzSubDir}`)
+    }
+    const kmzPath = path.join(kmzSubDir, kmzFilename)
+    
+    if (fs.existsSync(kmzPath)) {
+      const stats = fs.statSync(kmzPath)
+      console.log(`⚠️ KMZ文件已存在，跳过转换: ${kmzFilename}`)
+      return res.json({
+        code: 400,
+        message: '该文件已经转换过了，请不要重复转换！如需重新转换，请先删除原文件。',
+        data: {
+          kmzFilename: kmzFilename,
+          size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
+          existed: true
+        }
+      })
+    }
+    
+    // 导入需要的库
+    let shapefile, JSZip
+    try {
+      shapefile = await import('shapefile')
+      const JSZipModule = await import('jszip')
+      JSZip = JSZipModule.default || JSZipModule
+    } catch (error) {
+      return res.status(503).json({
+        code: 503,
+        message: '缺少必要的库，请运行: npm install shapefile jszip --save',
+        error: error.message
+      })
+    }
+    
+    console.log(`🔄 开始转换: ${shpFilename} -> KMZ`)
+    
+    // 步骤1: 使用GeoPandas读取SHP并转换为WGS84 (EPSG:4326)
+    console.log(`   1️⃣ 读取SHP文件并转换坐标系...`)
+    
+    let geojson
+    try {
+      // 使用GeoPandas读取并转换坐标系
+      const { spawn } = await import('child_process')
+      
+      geojson = await new Promise((resolve, reject) => {
+        const pythonScript = `
+import geopandas as gpd
+import json
+import sys
+
+try:
+    # 读取SHP文件
+    gdf = gpd.read_file(r'${shpPath}')
+    
+    # 检查当前坐标系
+    original_crs = str(gdf.crs) if gdf.crs else 'Unknown'
+    print(f'   📍 原始坐标系: {original_crs}', file=sys.stderr)
+    
+    # 如果不是EPSG:4326，转换为WGS84
+    if gdf.crs and gdf.crs.to_epsg() != 4326:
+        print(f'   🔄 转换坐标系: {original_crs} -> EPSG:4326 (WGS84)', file=sys.stderr)
+        gdf = gdf.to_crs(epsg=4326)
+    else:
+        print(f'   ✅ 坐标系已是WGS84，无需转换', file=sys.stderr)
+    
+    # 转换为GeoJSON
+    geojson_str = gdf.to_json()
+    print(geojson_str)
+    
+except Exception as e:
+    print(f'Error: {str(e)}', file=sys.stderr)
+    sys.exit(1)
+`
+        
+        const python = spawn('python', ['-c', pythonScript])
+        
+        let stdout = ''
+        let stderr = ''
+        
+        python.stdout.on('data', (data) => {
+          stdout += data.toString()
+        })
+        
+        python.stderr.on('data', (data) => {
+          const msg = data.toString()
+          stderr += msg
+          // 输出GeoPandas的日志
+          if (msg.includes('📍') || msg.includes('🔄') || msg.includes('✅')) {
+            console.log(msg.trim())
+          }
+        })
+        
+        python.on('close', (code) => {
+          if (code !== 0) {
+            reject(new Error(`GeoPandas处理失败: ${stderr}`))
+          } else {
+            try {
+              const result = JSON.parse(stdout)
+              resolve(result)
+            } catch (parseError) {
+              reject(new Error(`解析GeoJSON失败: ${parseError.message}`))
+            }
+          }
+        })
+      })
+      
+      console.log(`   ✅ 读取完成，共 ${geojson.features.length} 个要素`)
+      
+    } catch (geopandasError) {
+      // 如果GeoPandas失败，回退到shapefile库（但可能坐标系不对）
+      console.warn(`   ⚠️ GeoPandas转换失败，使用备用方法: ${geopandasError.message}`)
+      console.log(`   📖 正在使用shapefile库读取...`)
+      
+      const source = await shapefile.open(shpPath)
+      geojson = {
+        type: 'FeatureCollection',
+        features: []
+      }
+      
+      let result = await source.read()
+      let invalidCount = 0
+      while (!result.done) {
+        if (result.value) {
+          const geom = result.value.geometry
+          if (geom && geom.coordinates && geom.coordinates.length > 0) {
+            geojson.features.push(result.value)
+          } else {
+            invalidCount++
+          }
+        }
+        result = await source.read()
+      }
+      console.log(`   ✅ 读取完成，共 ${geojson.features.length} 个有效要素${invalidCount > 0 ? ` (跳过${invalidCount}个无效要素)` : ''}`)
+      console.warn(`   ⚠️ 注意: 坐标系可能不是WGS84，KMZ可能无法在Google Earth中正确显示`)
+    }
+    
+    // 步骤2: 使用GeoPandas计算面积并保存GeoJSON
+    console.log(`   2️⃣ 使用GeoPandas计算面积...`)
+    let hasAreaData = false
+    try {
+      const areas = await calculateAreasWithGeopandas(geojson)
+      
+      // 将面积添加到每个 feature 的 properties 中
+      geojson.features.forEach((feature, idx) => {
+        if (areas[idx]) {
+          if (!feature.properties) {
+            feature.properties = {}
+          }
+          feature.properties.area_m2 = areas[idx].area_m2
+          feature.properties.area_mu = areas[idx].area_mu
+          
+          // 如果计算出错，标记错误
+          if (areas[idx].error) {
+            feature.properties.area_error = true
+          }
+        }
+      })
+      
+      hasAreaData = true
+      console.log(`   ✅ 面积计算完成`)
+      
+    } catch (areaError) {
+      console.warn(`   ⚠️ 面积计算失败: ${areaError.message}`)
+      console.warn(`   ⚠️ 将继续转换但不包含面积数据`)
+    }
+    
+    // 🆕 读取SHP的元数据（如果存在）
+    const shpMetadataPath = path.join(path.dirname(shpPath), `${basename}.json`)
+    let shpMetadata = null
+    
+    if (fs.existsSync(shpMetadataPath)) {
+      shpMetadata = JSON.parse(fs.readFileSync(shpMetadataPath, 'utf-8'))
+      console.log(`   📋 找到SHP元数据文件（年份: ${shpMetadata.year}, 期次: ${shpMetadata.period}, 区域: ${shpMetadata.regionName || '未指定'}）`)
+      
+      // 🆕 将元数据保存到GeoJSON的根级别（方便前端读取）
+      geojson.metadata = {
+        year: shpMetadata.year,
+        period: shpMetadata.period,
+        regionCode: shpMetadata.regionCode,
+        regionName: shpMetadata.regionName,
+        recognitionType: shpMetadata.recognitionType,
+        taskName: shpMetadata.taskName || basename,
+        source: shpMetadata.source || '作物识别',
+        createdAt: shpMetadata.createdAt,
+        updatedAt: new Date().toISOString()
+      }
+      console.log(`   📋 已将元数据添加到GeoJSON根级别`)
+    } else {
+      console.log(`   ⚠️ SHP元数据文件不存在`)
+    }
+    
+    // 保存GeoJSON文件（带面积数据和元数据）
+    console.log(`   💾 保存GeoJSON文件...`)
+    const geojsonFilename = `${basename}.geojson`
+    const geojsonPath = path.join(GEOJSON_DIR, geojsonFilename)
+    fs.writeFileSync(geojsonPath, JSON.stringify(geojson, null, 2))
+    const geojsonStats = fs.statSync(geojsonPath)
+    console.log(`   ✅ 已保存GeoJSON: ${geojsonFilename} (${(geojsonStats.size / (1024 * 1024)).toFixed(2)} MB)`)
+    
+    // 步骤3: GeoJSON → KML（手动生成，更可靠）
+    console.log(`   3️⃣ 转换为KML...`)
+    const kml = generateKMLFromGeoJSON(geojson, basename, `Converted from ${shpFilename}`)
+    console.log(`   ✅ KML转换完成`)
+    
+    // 步骤4: KML → KMZ（压缩）
+    console.log(`   4️⃣ 压缩为KMZ...`)
+    const zip = new JSZip()
+    zip.file('doc.kml', kml)
+    const kmzBuffer = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 9 }
+    })
+    
+    // 写入KMZ文件
+    fs.writeFileSync(kmzPath, kmzBuffer)
+    const stats = fs.statSync(kmzPath)
+    
+    // 🆕 复制或创建元数据JSON文件到KMZ文件夹
+    const kmzMetadataPath = path.join(kmzSubDir, `${basename}.json`)
+    
+    if (shpMetadata) {
+      // 如果SHP文件夹有元数据，复制过来（继承所有字段）
+      const kmzMeta = { ...shpMetadata, updatedAt: new Date().toISOString() }
+      fs.writeFileSync(kmzMetadataPath, JSON.stringify(kmzMeta, null, 2))
+      console.log(`   📋 已复制SHP元数据到KMZ文件夹（年份: ${kmzMeta.year}, 期次: ${kmzMeta.period}, 区域: ${kmzMeta.regionName || '未指定'}）`)
+    } else {
+      // 创建默认元数据
+      console.log(`   ⚠️ SHP元数据文件不存在，创建默认元数据`)
+      const metadata = {
+        year: 2024,
+        period: 1,
+        regionCode: '',
+        regionName: '',
+        recognitionType: 'planting_situation',
+        taskName: basename,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+      fs.writeFileSync(kmzMetadataPath, JSON.stringify(metadata, null, 2))
+      console.log(`   📋 已创建默认元数据文件`)
+    }
+    
+    console.log(`✅ 转换完成: ${kmzFilename} (${(stats.size / (1024 * 1024)).toFixed(2)} MB)`)
+    
+    res.json({
+      code: 200,
+      message: hasAreaData ? '转换成功（已生成GeoJSON和KMZ，包含面积数据）' : '转换成功（已生成GeoJSON和KMZ）',
+      data: {
+        kmzFilename: kmzFilename,
+        geojsonFilename: geojsonFilename,
+        kmzSize: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
+        geojsonSize: `${(geojsonStats.size / (1024 * 1024)).toFixed(2)} MB`,
+        featureCount: geojson.features.length,
+        relativePath: `planting_situation/${basename}`,
+        hasAreaData: hasAreaData
+      }
+    })
+  } catch (error) {
+    console.error('❌ 转换失败:', error)
     res.status(500).json({
       code: 500,
       message: '转换失败: ' + error.message
@@ -983,7 +2256,7 @@ router.post('/upload', upload.single('file'), (req, res) => {
 })
 
 // 删除文件
-router.delete('/delete/:type/:filename', (req, res) => {
+router.delete('/delete/:type/:filename', async (req, res) => {
   try {
     const { type, filename } = req.params
     
@@ -993,14 +2266,29 @@ router.delete('/delete/:type/:filename', (req, res) => {
     const deletedFiles = []
     
     if (type === 'shp') {
-      // 🔧 修复：删除整个SHP文件夹
+      // 🔧 修复：先查找SHP文件，然后删除文件所在的整个文件夹
       const basename = path.basename(filename, '.shp')
-      const folderPath = path.join(SHP_DIR, basename)
       
-      // 先检查是否存在文件夹
-      if (fs.existsSync(folderPath) && fs.statSync(folderPath).isDirectory()) {
-        console.log(`   找到SHP文件夹: ${folderPath}`)
-        
+      // 先尝试直接查找文件
+      filePath = path.join(SHP_DIR, filename)
+      if (!fs.existsSync(filePath)) {
+        console.log(`   根目录未找到，开始递归查找: ${filename}`)
+        filePath = findShpFile(SHP_DIR, filename)
+        if (!filePath) {
+          return res.status(404).json({
+            code: 404,
+            message: `SHP文件不存在: ${filename}`
+          })
+        }
+      }
+      console.log(`   找到SHP文件: ${filePath}`)
+      
+      // 🔧 获取SHP文件所在的文件夹路径（父目录）
+      const folderPath = path.dirname(filePath)
+      console.log(`   SHP文件所在文件夹: ${folderPath}`)
+      
+      // 🔧 确保是子文件夹（不是根目录data_shp）
+      if (folderPath !== SHP_DIR && fs.existsSync(folderPath) && fs.statSync(folderPath).isDirectory()) {
         // 递归获取文件夹中的所有文件
         const getAllFiles = (dir) => {
           const files = []
@@ -1020,26 +2308,52 @@ router.delete('/delete/:type/:filename', (req, res) => {
         const files = getAllFiles(folderPath)
         deletedFiles.push(...files)
         
-        // 删除整个文件夹
-        fs.rmSync(folderPath, { recursive: true, force: true })
-        console.log(`   ✅ 已删除SHP文件夹: ${basename} (包含 ${files.length} 个文件)`)
+        // 🔧 删除整个文件夹（包括文件夹本身）
+        console.log(`   🗑️ 正在删除整个文件夹: ${folderPath}`)
+        console.log(`   📋 删除前文件夹状态: 存在=${fs.existsSync(folderPath)}`)
+        console.log(`   📋 文件夹中的文件数: ${files.length}`)
+        
+        // 使用同步方法删除，确保删除完成
+        try {
+          fs.rmSync(folderPath, { recursive: true, force: true })
+          console.log(`   🔄 rmSync执行完成`)
+        } catch (rmError) {
+          console.error(`   ❌ rmSync执行失败:`, rmError)
+          return res.status(500).json({
+            code: 500,
+            message: `删除失败: ${rmError.message}`
+          })
+        }
+        
+        // 等待一小段时间，确保文件系统操作完成（Windows可能需要）
+        await new Promise(resolve => setTimeout(resolve, 100))
+        
+        // 验证删除是否成功
+        const stillExists = fs.existsSync(folderPath)
+        console.log(`   📋 删除后文件夹状态: 存在=${stillExists}`)
+        
+        if (stillExists) {
+          console.error(`   ❌ 删除失败！文件夹仍然存在: ${folderPath}`)
+          console.error(`   💡 可能原因: 文件被占用、权限不足、或文件系统延迟`)
+          
+          // 尝试列出文件夹内容，帮助诊断
+          try {
+            const remainingFiles = fs.readdirSync(folderPath)
+            console.error(`   📂 文件夹中剩余文件:`, remainingFiles)
+          } catch (listError) {
+            console.error(`   ⚠️ 无法列出文件夹内容:`, listError.message)
+          }
+          
+          return res.status(500).json({
+            code: 500,
+            message: `删除失败：文件夹可能被占用或没有权限。请关闭所有打开该文件的程序后重试。`
+          })
+        }
+        
+        console.log(`   ✅ 已完全删除SHP文件夹: ${path.basename(folderPath)} (包含 ${files.length} 个文件，文件夹已删除)`)
         
       } else {
-        // 如果不存在文件夹，尝试查找单独的SHP文件（兼容旧数据）
-        filePath = path.join(SHP_DIR, filename)
-        if (!fs.existsSync(filePath)) {
-          console.log(`   根目录未找到，开始递归查找: ${filename}`)
-          filePath = findShpFile(SHP_DIR, filename)
-          if (!filePath) {
-            return res.status(404).json({
-              code: 404,
-              message: `SHP文件或文件夹不存在: ${filename}`
-            })
-          }
-        }
-        console.log(`   找到SHP文件: ${filePath}`)
-        
-        // 删除所有相关的SHP文件
+        // 如果SHP文件直接在根目录，只删除相关文件（不删除data_shp文件夹）
         const dirPath = path.dirname(filePath)
         const relatedExtensions = ['.shp', '.dbf', '.shx', '.prj', '.cpg', '.sbn', '.sbx', '.shp.xml', '.qpj']
         
@@ -1069,6 +2383,15 @@ router.delete('/delete/:type/:filename', (req, res) => {
         console.log(`   ✅ 已删除GeoJSON: ${basename}.geojson`)
       }
       
+      // 🆕 同时删除对应的GeoJSON缓存（如果存在）
+      const GEOJSON_CACHE_DIR = path.join(PUBLIC_DIR, 'data', 'data_geojson_cache')
+      const cachedGeojsonFile = path.join(GEOJSON_CACHE_DIR, basename + '.geojson')
+      if (fs.existsSync(cachedGeojsonFile)) {
+        fs.unlinkSync(cachedGeojsonFile)
+        deletedFiles.push('cache/' + basename + '.geojson')
+        console.log(`   ✅ 已删除GeoJSON缓存: ${basename}.geojson`)
+      }
+      
     } else if (type === 'geojson') {
       filePath = path.join(GEOJSON_DIR, filename)
       if (!fs.existsSync(filePath)) {
@@ -1082,16 +2405,57 @@ router.delete('/delete/:type/:filename', (req, res) => {
       console.log(`   ✅ 已删除: ${filename}`)
       
     } else if (type === 'kmz') {
-      filePath = path.join(KMZ_DIR, filename)
-      if (!fs.existsSync(filePath)) {
-        return res.status(404).json({
-          code: 404,
-          message: `KMZ文件不存在: ${filename}`
-        })
+      // 🔧 修复：删除整个KMZ文件夹（包括元数据）
+      const basename = path.basename(filename, '.kmz')
+      
+      // 尝试在planting_situation下查找文件夹
+      let kmzFolder = path.join(KMZ_DIR, 'planting_situation', basename)
+      
+      if (!fs.existsSync(kmzFolder)) {
+        // 如果不存在，尝试根目录
+        kmzFolder = path.join(KMZ_DIR, basename)
       }
-      fs.unlinkSync(filePath)
-      deletedFiles.push(filename)
-      console.log(`   ✅ 已删除: ${filename}`)
+      
+      if (!fs.existsSync(kmzFolder)) {
+        // 递归查找KMZ文件
+        const kmzFilePath = findKmzFile(KMZ_DIR, filename)
+        if (!kmzFilePath) {
+          return res.status(404).json({
+            code: 404,
+            message: `KMZ文件或文件夹不存在: ${filename}`
+          })
+        }
+        kmzFolder = path.dirname(kmzFilePath)
+      }
+      
+      console.log(`   找到KMZ文件夹: ${kmzFolder}`)
+      
+      // 获取文件夹中的所有文件
+      const getAllFiles = (dir) => {
+        const files = []
+        try {
+          const items = fs.readdirSync(dir)
+          items.forEach(item => {
+            const itemPath = path.join(dir, item)
+            const stats = fs.statSync(itemPath)
+            if (stats.isDirectory()) {
+              files.push(...getAllFiles(itemPath))
+            } else {
+              files.push(item)
+            }
+          })
+        } catch (error) {
+          console.error(`读取文件夹失败: ${dir}`, error)
+        }
+        return files
+      }
+      
+      const files = getAllFiles(kmzFolder)
+      deletedFiles.push(...files)
+      
+      // 删除整个文件夹
+      fs.rmSync(kmzFolder, { recursive: true, force: true })
+      console.log(`   ✅ 已删除KMZ文件夹: ${basename} (包含 ${files.length} 个文件)`)
       
     } else {
       return res.status(400).json({

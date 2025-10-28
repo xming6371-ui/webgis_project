@@ -679,6 +679,17 @@
           </el-col>
         </el-row>
 
+        <el-form-item label="识别任务" required>
+          <el-select 
+            v-model="taskInfoForm.recognitionType" 
+            placeholder="请选择识别任务类型"
+            style="width: 100%;"
+          >
+            <el-option label="作物识别" value="作物识别" />
+            <el-option label="种植情况识别" value="种植情况识别" />
+          </el-select>
+        </el-form-item>
+
         <el-form-item label="备注">
           <el-input 
             v-model="taskInfoForm.notes" 
@@ -801,6 +812,7 @@ const taskInfoForm = ref({
   taskName: '',
   year: new Date().getFullYear(),
   period: 1,
+  recognitionType: '作物识别',  // 默认为作物识别
   notes: ''
 })
 
@@ -1164,6 +1176,7 @@ const handleOpenTaskInfoDialog = () => {
     taskName: '',
     year: new Date().getFullYear(),
     period: 1,
+    recognitionType: '作物识别',
     notes: ''
   }
   
@@ -1192,6 +1205,7 @@ const handleOpenLibraryTaskInfoDialog = () => {
     taskName: '',
     year: new Date().getFullYear(),
     period: 1,
+    recognitionType: '作物识别',
     notes: ''
   }
   
@@ -1242,11 +1256,12 @@ const handleConfirmTaskInfo = () => {
     // 继续下一个任务
     currentBatchIndex.value++
     
-    // 重置表单（保留年份期次）
+    // 重置表单（保留年份期次和识别任务）
     taskInfoForm.value = {
       taskName: '',
       year: taskInfoForm.value.year,
       period: taskInfoForm.value.period,
+      recognitionType: taskInfoForm.value.recognitionType,
       notes: ''
     }
   } else {

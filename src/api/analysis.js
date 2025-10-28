@@ -13,6 +13,14 @@ export const convertShpToGeojson = (shpFilename, relativePath = null) => {
   })
 }
 
+// SHP转换为KMZ（中间文件不保留）
+export const convertShpToKmz = (shpFilename, relativePath) => {
+  return request.post('/analysis/convert-shp-to-kmz', {
+    shpFilename,
+    relativePath
+  })
+}
+
 // 下载文件
 export const downloadAnalysisFile = (type, filename) => {
   return request.get(`/analysis/download/${type}/${filename}`, {
@@ -127,6 +135,46 @@ export const saveRecognitionMetadata = (filename, relativePath, metadata) => {
   return request.post('/analysis/save-recognition-metadata', {
     filename,
     relativePath,
+    metadata
+  })
+}
+
+// 获取KMZ文件的面积数据（使用后端GeoPandas计算）
+export const getKmzAreas = (kmzFilename, relativePath) => {
+  return request.post('/analysis/get-kmz-areas', {
+    kmzFilename,
+    relativePath
+  })
+}
+
+// 🆕 SHP临时转换为GeoJSON（带缓存，用于直接显示）
+export const convertShpTemp = (shpFilename, relativePath) => {
+  return request.post('/analysis/convert-shp-temp', {
+    shpFilename,
+    relativePath
+  })
+}
+
+// 🆕 快速加载SHP（不计算面积，只转换坐标系）
+export const convertShpFast = (shpFilename, relativePath) => {
+  return request.post('/analysis/convert-shp-fast', {
+    shpFilename,
+    relativePath
+  })
+}
+
+// 🆕 异步计算SHP面积
+export const calculateShpAreas = (shpFilename, relativePath) => {
+  return request.post('/analysis/calculate-shp-areas', {
+    shpFilename,
+    relativePath
+  })
+}
+
+// 🆕 检测文件冲突（上传前检查）
+export const checkFileConflict = (filename, metadata) => {
+  return request.post('/analysis/check-file-conflict', {
+    filename,
     metadata
   })
 }

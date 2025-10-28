@@ -302,8 +302,8 @@
                           :class="{ active: index === currentKmzIndex }"
                         >
                           <el-checkbox 
-                            :model-value="isKmzLayerVisible(file.name)"
-                            @change="(val) => toggleKmzLayerVisibility(file.name, val)"
+                            :model-value="isKmzLayerVisible(file.id)"
+                            @change="(val) => toggleKmzLayerVisibility(file.id, val)"
                             @click.stop
                           />
                           <span @click="switchKmzFile(index)" style="flex: 1; cursor: pointer;">{{ file.name }}</span>
@@ -311,12 +311,22 @@
                         <el-divider style="margin: 8px 0" />
                 </div>
                       
-                      <!-- 当前文件信息 -->
-                      <div v-if="currentRecognitionData" class="legend-info">
-                        <div class="legend-item-text">
-                          <span class="legend-label-bold">文件名：</span>
-                          <span>{{ currentRecognitionData.name }}</span>
-              </div>
+                      <!-- 种植情况图例 -->
+                      <div class="legend-colors">
+                        <div class="legend-section-title" style="margin-bottom: 8px;">种植情况图例</div>
+                        <div class="legend-item">
+                          <div class="legend-color" style="background-color: rgba(64, 158, 255, 0.6);"></div>
+                          <span class="legend-label">已种植</span>
+                        </div>
+                        <div class="legend-item">
+                          <div class="legend-color" style="background-color: rgba(245, 108, 108, 0.6);"></div>
+                          <span class="legend-label">未种植</span>
+                        </div>
+                      </div>
+                      
+                      <!-- 当前文件元数据 -->
+                      <div v-if="currentRecognitionData && (currentRecognitionData.regionName || currentRecognitionData.year)" class="legend-info">
+                        <el-divider style="margin: 12px 0" />
                         <div class="legend-item-text" v-if="currentRecognitionData.regionName">
                           <span class="legend-label-bold">区域：</span>
                           <span>{{ currentRecognitionData.regionName }}</span>
@@ -439,32 +449,6 @@
             </div>
           </div>
         </el-card>
-
-        <!-- 文件切换卡片（识别结果多文件时显示） -->
-        <el-card v-if="dataSource === 'recognition' && loadedKmzFiles.length > 1" class="file-switch-card" shadow="never" style="margin-top: 15px">
-          <template #header>
-            <span><el-icon><FolderOpened /></el-icon> 已加载文件 ({{ loadedKmzFiles.length }})</span>
-          </template>
-          <div class="file-list">
-            <div 
-              v-for="(file, index) in loadedKmzFiles" 
-              :key="file.id"
-              class="file-item"
-              :class="{ active: currentKmzIndex === index }"
-              @click="switchKmzFile(index)"
-            >
-              <div class="file-number">{{ index + 1 }}</div>
-              <div class="file-info">
-                <div class="file-name">{{ file.name }}</div>
-                <div class="file-meta">
-                  <el-tag size="small" type="success">{{ file.regionName }}</el-tag>
-                  <span class="file-date">{{ file.year }}年 第{{ file.period }}期</span>
-                </div>
-              </div>
-              <el-icon v-if="currentKmzIndex === index" class="check-icon" color="#67C23A"><Check /></el-icon>
-            </div>
-          </div>
-        </el-card>
       </el-col>
     </el-row>
   </div>
@@ -472,7 +456,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { Search, Refresh, Grid, SuccessFilled, WarningFilled, DocumentChecked, Location, ZoomIn, ZoomOut, Position, PieChart, DataLine, TrendCharts, ArrowDown, Loading, DataAnalysis, FolderOpened, Check } from '@element-plus/icons-vue'
+import { Search, Refresh, Grid, SuccessFilled, WarningFilled, DocumentChecked, Location, ZoomIn, ZoomOut, Position, PieChart, DataLine, TrendCharts, ArrowDown, Loading, DataAnalysis } from '@element-plus/icons-vue'
 import { RefreshCw } from 'lucide-vue-next'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
@@ -495,6 +479,7 @@ import axios from 'axios'
 import { fromUrl } from 'geotiff'  // 用于前端读取和分析TIF文件
 import JSZip from 'jszip'  // 用于解压KMZ文件
 import GeoJSON from 'ol/format/GeoJSON'  // 用于KMZ转GeoJSON
+import { getKmzAreas } from '@/api/analysis'  // 用于获取KMZ面积数据（后端GeoPandas计算）
 
 // 数据源选择
 const dataSource = ref('image') // 'image' 或 'recognition'
@@ -655,10 +640,12 @@ const fetchImageData = async () => {
     const years = [...new Set(imageData.value.map(img => img.year))]
     availableYears.value = years.sort((a, b) => b - a)
     
-    // 不再设置默认年份，让用户主动选择
+    // 🔧 修复：初始化时显示所有影像（不需要先选年份期次）
+    updateAvailableImages()
+    
     // 更新可用期次
     if (filterForm.value.year) {
-    updateAvailablePeriods()
+      updateAvailablePeriods()
     }
     
     // 不再自动加载数据，等待用户点击查询按钮
@@ -689,10 +676,22 @@ const updateAvailablePeriods = () => {
 
 // 更新可用影像列表（根据年份和期次）
 const updateAvailableImages = () => {
-  availableImages.value = imageData.value.filter(img => 
-    img.year === filterForm.value.year &&
-    img.period === filterForm.value.period
-  )
+  // 🔧 修复：如果没有选择年份期次，显示所有影像；否则根据年份期次筛选
+  if (filterForm.value.year && filterForm.value.period) {
+    // 有年份和期次，进行筛选
+    availableImages.value = imageData.value.filter(img => 
+      img.year === filterForm.value.year &&
+      img.period === filterForm.value.period
+    )
+  } else if (filterForm.value.year) {
+    // 只有年份，按年份筛选
+    availableImages.value = imageData.value.filter(img => 
+      img.year === filterForm.value.year
+    )
+  } else {
+    // 没有选择年份期次，显示所有影像
+    availableImages.value = imageData.value
+  }
   
   // 如果当前选择的影像名称不在列表中，清空选择
   if (filterForm.value.imageNames && filterForm.value.imageNames.length > 0) {
@@ -962,45 +961,31 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
               features: features
             })
             
+            // 🎨 使用动态样式函数（根据class字段显示不同颜色）
             const newLayer = new VectorLayer({
               source: geojsonSource,
-              style: new Style({
-                fill: new Fill({
-                  color: 'rgba(67, 160, 71, 0.5)'
-                }),
-                stroke: new Stroke({
-                  color: '#2E7D32',
-                  width: 2
-                }),
-                image: new Circle({
-                  radius: 7,
-                  fill: new Fill({
-                    color: '#43A047'
-                  })
-                })
-              }),
+              style: getFeatureStyle,  // 使用动态样式函数
               zIndex: 100 + layerIndex,
               visible: true
             })
             
             // 保存文件名到图层（用于增量加载判断）
             newLayer.set('fileName', file.name)
+            newLayer.set('fileId', file.id)  // 🔧 修复：添加唯一ID
             newLayer.set('fileData', file)
             
             map.addLayer(newLayer)
             kmzLayers.push(newLayer)
             
-            // 🔧 修复：初始化响应式可见性状态
-            kmzLayerVisibility.value[file.name] = true
+            // 🔧 修复：使用文件ID初始化可见性状态
+            kmzLayerVisibility.value[file.id] = true
             
             console.log(`✅ [${i + 1}/${newFiles.length}] 加载成功: ${file.name} (${features.length}个要素)`)
             
-            // 如果是第一个加载的文件，更新统计信息
-            if (kmzLayers.length === 1) {
-              currentKmzIndex.value = 0
-              currentRecognitionData.value = file
-              updateKmzStatistics(file, kmzLayers.length - 1)
-            }
+            // 🔧 修复：加载新文件后，自动切换到最新加载的文件并更新统计
+            currentKmzIndex.value = kmzLayers.length - 1
+            currentRecognitionData.value = file
+            await updateKmzStatistics(file, kmzLayers.length - 1)
           } else {
             console.warn(`⚠️ ${file.name} 解析后无要素`)
           }
@@ -1103,41 +1088,34 @@ const loadShpFilesIncremental = async (selectedFiles) => {
         console.log(`🔄 [${i + 1}/${newFiles.length}] 加载SHP: ${file.name}`)
         
         try {
-          // 🔧 修复：使用封装好的API函数，通过Vite代理访问后端
-          // 🔧 修复：传递relativePath参数以支持子文件夹
-          const response = await axios.post('/api/analysis/convert-to-geojson', {
+          // 🆕 方案1+2：优先使用缓存，否则先快速加载再异步计算面积
+          // Step 1: 尝试从缓存加载（带面积数据）
+          let response = await axios.post('/api/analysis/convert-shp-temp', {
             shpFilename: file.name,
             relativePath: file.relativePath || ''
           })
           
           let geojsonData = null
-          let geojsonFilename = null
+          let fromCache = false
           
-          // 🔧 修复：后端转换成功或文件已存在，都需要再读取GeoJSON文件
           if (response.data.code === 200) {
-            // 转换成功，获取GeoJSON文件名
-            geojsonFilename = response.data.data.geojsonFilename
-            console.log(`✅ 转换成功: ${file.name} -> ${geojsonFilename}`)
-          } else if (response.data.code === 400 && response.data.data?.existed) {
-            // 文件已存在
-            geojsonFilename = response.data.data.geojsonFilename
-            console.log(`ℹ️ 文件已存在，跳过转换: ${geojsonFilename}`)
-          }
-          
-          // 读取GeoJSON文件内容
-          if (geojsonFilename) {
-            const geojsonResponse = await axios.get(`/api/analysis/read-geojson/${geojsonFilename}`)
-            if (geojsonResponse.data.code === 200) {
-              geojsonData = geojsonResponse.data.data
+            geojsonData = response.data.data.geojson
+            fromCache = response.data.data.fromCache
+            
+            if (fromCache) {
+              console.log(`✅ 从缓存加载: ${file.name} (${response.data.data.featureCount}个要素)`)
+            } else {
+              console.log(`✅ 首次计算完成: ${file.name} (${response.data.data.featureCount}个要素)`)
             }
+          } else {
+            console.error(`❌ ${file.name} 转换失败: ${response.data.message}`)
           }
           
           if (geojsonData) {
             // 将GeoJSON转换为OL features
-            // 🔧 修复：指定 dataProjection，避免二次投影导致坐标异常
             const features = new GeoJSON().readFeatures(geojsonData, {
-              dataProjection: 'EPSG:3857',    // 数据本身就是 Web Mercator
-              featureProjection: 'EPSG:3857'  // 目标投影也是 Web Mercator（不转换）
+              dataProjection: 'EPSG:4326',
+              featureProjection: 'EPSG:3857'
             })
             
             if (features && features.length > 0) {
@@ -1148,42 +1126,27 @@ const loadShpFilesIncremental = async (selectedFiles) => {
               
               const newLayer = new VectorLayer({
                 source: geojsonSource,
-                style: new Style({
-                  fill: new Fill({
-                    color: 'rgba(67, 160, 71, 0.5)'
-                  }),
-                  stroke: new Stroke({
-                    color: '#2E7D32',
-                    width: 2
-                  }),
-                  image: new Circle({
-                    radius: 7,
-                    fill: new Fill({
-                      color: '#43A047'
-                    })
-                  })
-                }),
+                style: getFeatureStyle,
                 zIndex: 100 + layerIndex,
                 visible: true
               })
               
               newLayer.set('fileName', file.name)
+              newLayer.set('fileId', file.id)  // 🔧 修复：添加唯一ID
               newLayer.set('fileData', file)
               newLayer.set('fileType', 'SHP')
               
               map.addLayer(newLayer)
               kmzLayers.push(newLayer)
               
-              kmzLayerVisibility.value[file.name] = true
+              kmzLayerVisibility.value[file.id] = true  // 🔧 修复：使用文件ID
               
               console.log(`✅ [${i + 1}/${newFiles.length}] SHP加载成功: ${file.name} (${features.length}个要素)`)
               
-              // 如果是第一个文件，更新统计信息
-              if (kmzLayers.length === 1) {
-                currentKmzIndex.value = 0
-                currentRecognitionData.value = file
-                updateGeoJsonStatistics(file, features)
-              }
+              // 切换到最新加载的文件并更新统计
+              currentKmzIndex.value = kmzLayers.length - 1
+              currentRecognitionData.value = file
+              updateGeoJsonStatistics(file, features)
             } else {
               console.warn(`⚠️ ${file.name} 转换后无要素`)
             }
@@ -1252,10 +1215,10 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
             const geojsonData = response.data.data
             
             // 将GeoJSON转换为OL features
-            // 🔧 修复：指定 dataProjection，避免二次投影导致坐标异常
+            // 🔧 修复：GeoJSON数据是WGS84（EPSG:4326），需要转换为地图投影（EPSG:3857）
             const features = new GeoJSON().readFeatures(geojsonData, {
-              dataProjection: 'EPSG:3857',    // 数据本身就是 Web Mercator
-              featureProjection: 'EPSG:3857'  // 目标投影也是 Web Mercator（不转换）
+              dataProjection: 'EPSG:4326',    // GeoJSON数据是WGS84
+              featureProjection: 'EPSG:3857'  // 地图使用Web Mercator，自动转换
             })
             
             if (features && features.length > 0) {
@@ -1263,43 +1226,30 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
                 features: features
               })
               
+              // 🎨 使用动态样式函数（根据class字段显示不同颜色）
               const newLayer = new VectorLayer({
                 source: geojsonSource,
-                style: new Style({
-                  fill: new Fill({
-                    color: 'rgba(67, 160, 71, 0.5)'
-                  }),
-                  stroke: new Stroke({
-                    color: '#2E7D32',
-                    width: 2
-                  }),
-                  image: new Circle({
-                    radius: 7,
-                    fill: new Fill({
-                      color: '#43A047'
-                    })
-                  })
-                }),
+                style: getFeatureStyle,  // 使用动态样式函数
                 zIndex: 100 + layerIndex,
                 visible: true
               })
               
               newLayer.set('fileName', file.name)
+              newLayer.set('fileId', file.id)  // 🔧 修复：添加唯一ID
               newLayer.set('fileData', file)
               newLayer.set('fileType', 'GeoJSON')
               
               map.addLayer(newLayer)
               kmzLayers.push(newLayer)
               
-              kmzLayerVisibility.value[file.name] = true
+              kmzLayerVisibility.value[file.id] = true  // 🔧 修复：使用文件ID
               
               console.log(`✅ [${i + 1}/${newFiles.length}] GeoJSON加载成功: ${file.name} (${features.length}个要素)`)
               
-              if (kmzLayers.length === 1) {
-                currentKmzIndex.value = 0
-                currentRecognitionData.value = file
-                updateGeoJsonStatistics(file, features)
-              }
+              // 🔧 修复：加载新文件后，自动切换到最新加载的文件并更新统计
+              currentKmzIndex.value = kmzLayers.length - 1
+              currentRecognitionData.value = file
+              updateGeoJsonStatistics(file, features)
             }
           }
         } catch (error) {
@@ -1409,36 +1359,34 @@ const updateGeoJsonStatistics = (fileData, features) => {
     diffCount: '—'   // SHP/GeoJSON文件没有差异数
   }
   
-  // 更新饼图
+  // 🆕 更新饼图（使用与图层一致的颜色）
   if (cropChart) {
     const chartData = Object.entries(typeCounts).map(([name, value]) => ({
       name: name,
-      value: value
+      value: value,
+      itemStyle: {
+        color: plantingStatusColors[name] || plantingStatusColors['未知']
+      }
     }))
     
     console.log('📊 准备更新饼图，数据:', chartData)
+    
+    // 🔧 修复：按数量排序（与KMZ饼图一致）
+    chartData.sort((a, b) => b.value - a.value)
     
     const chartTitle = fileData.recognitionType === 'planting_situation' ? '种植情况分布' : '作物类型分布'
     
     // ✅ 使用完整的配置，确保饼图正确显示
     const option = {
-      title: {
-        text: chartTitle,
-        left: 'center',
-        top: 10,
-        textStyle: {
-          fontSize: 16,
-          fontWeight: 600
-        }
-      },
       tooltip: {
         trigger: 'item',
         formatter: '{b}: {c}个 ({d}%)'
       },
       legend: {
-        orient: 'vertical',
-        left: 'left',
-        top: 'middle',
+        bottom: '5%',
+        left: 'center',
+        type: 'plain',
+        orient: 'horizontal',
         textStyle: {
           fontSize: 12
         }
@@ -1447,8 +1395,8 @@ const updateGeoJsonStatistics = (fileData, features) => {
         name: chartTitle,
         type: 'pie',
         radius: ['40%', '70%'],
-        center: ['60%', '50%'],
-        avoidLabelOverlap: true,
+        center: ['50%', '45%'],  // 🆕 稍微上移，为下方图例留空间
+        avoidLabelOverlap: true,  // 启用标签防重叠
         itemStyle: {
           borderRadius: 8,
           borderColor: '#fff',
@@ -1456,12 +1404,22 @@ const updateGeoJsonStatistics = (fileData, features) => {
         },
         label: {
           show: true,
-          formatter: '{b}: {d}%'
+          position: 'outside',  // 🆕 标签显示在扇形外部，避免遮挡
+          fontSize: 14,
+          fontWeight: 'bold',
+          formatter: '{b}\n{c}个',
+          distanceToLabelLine: 5  // 🆕 标签与引导线的距离
+        },
+        labelLine: {
+          show: true,
+          length: 15,  // 🆕 增加第一段引导线长度
+          length2: 30,  // 🆕 增加第二段引导线长度，让标签更分散
+          smooth: true  // 🆕 平滑引导线
         },
         emphasis: {
           label: {
             show: true,
-            fontSize: 14,
+            fontSize: 16,  // 🆕 悬停时略大
             fontWeight: 'bold'
           }
         },
@@ -1477,8 +1435,46 @@ const updateGeoJsonStatistics = (fileData, features) => {
   }
 }
 
+// 🎨 定义种植情况颜色映射（与饼图颜色一致）
+const plantingStatusColors = {
+  '已种植': '#409EFF',    // 蓝色
+  '未种植': '#F56C6C',    // 红色
+  '未知': '#909399'        // 灰色
+}
+
+// 🎨 根据class字段返回动态样式函数
+const getFeatureStyle = (feature) => {
+  const props = feature.getProperties()
+  let status = '未知'
+  
+  // 从class字段读取种植状态
+  if (props.class !== undefined && props.class !== null) {
+    status = (props.class === 1 || props.class === '1') ? '已种植' : '未种植'
+  }
+  // 备用：从其他字段读取
+  else if (props.planted === 1 || props.planted === '1') {
+    status = '已种植'
+  } else if (props.planted === 0 || props.planted === '0') {
+    status = '未种植'
+  } else if (props.name) {
+    status = (props.name === '0') ? '未种植' : (props.name === '1') ? '已种植' : '未知'
+  }
+  
+  const color = plantingStatusColors[status] || plantingStatusColors['未知']
+  
+  return new Style({
+    fill: new Fill({
+      color: color + '80'  // 添加透明度（80 = 50%透明）
+    }),
+    stroke: new Stroke({
+      color: color,
+      width: 2
+    })
+  })
+}
+
 // 更新KMZ统计信息
-const updateKmzStatistics = (fileData, index) => {
+const updateKmzStatistics = async (fileData, index) => {
   if (!fileData || !kmzLayers[index]) {
     console.log('没有KMZ数据')
     return
@@ -1495,6 +1491,63 @@ const updateKmzStatistics = (fileData, index) => {
   
   console.log(`📊 开始统计KMZ数据，共 ${features.length} 个要素`)
   
+  // 🆕 检查KMZ的ExtendedData是否已包含面积和class
+  // OpenLayers的KML解析器会自动将ExtendedData中的Data元素转换为properties
+  const firstFeature = features[0]
+  const hasExtendedData = firstFeature && 
+                         firstFeature.getProperties().area_mu !== undefined &&
+                         firstFeature.getProperties().class !== undefined
+  
+  if (hasExtendedData) {
+    console.log(`✅ KMZ的ExtendedData已包含面积和class字段，直接使用`)
+    
+    // 打印前几个features的properties以验证
+    if (features.length > 0) {
+      console.log(`📋 前3个要素的properties:`)
+      features.slice(0, 3).forEach((feature, idx) => {
+        const props = feature.getProperties()
+        console.log(`   要素${idx + 1}:`, {
+          area_m2: props.area_m2,
+          area_mu: props.area_mu,
+          class: props.class,
+          name: props.name
+        })
+      })
+    }
+  } else {
+    // 如果KMZ没有ExtendedData（旧文件），尝试从后端获取
+    console.log(`⚠️ KMZ缺少ExtendedData，尝试从后端获取面积数据...`)
+    try {
+      const kmzFilename = fileData.name
+      const relativePath = fileData.relativePath || ''
+      
+      const response = await getKmzAreas(kmzFilename, relativePath)
+      
+      if (response.code === 200) {
+        const { areas, totalAreaMu, source: dataSource } = response.data
+        console.log(`✅ 从后端获取面积数据成功 (来源: ${dataSource})，总面积: ${totalAreaMu.toFixed(2)} 亩`)
+        
+        // 设置面积数据到features
+        features.forEach((feature, idx) => {
+          if (areas[idx]) {
+            const props = feature.getProperties()
+            props.area_m2 = areas[idx].area_m2
+            props.area_mu = areas[idx].area_mu
+            feature.setProperties(props)
+          }
+        })
+      } else {
+        console.warn(`⚠️ 无法获取面积数据: ${response.message}`)
+      }
+    } catch (error) {
+      console.error(`❌ 获取面积数据失败:`, error)
+    }
+  }
+  
+  // 🆕 更新KMZ图层样式（根据class字段显示不同颜色）
+  kmzLayers[index].setStyle(getFeatureStyle)
+  console.log('🎨 已更新KMZ图层样式（根据class字段）')
+  
   // 打印第一个feature的所有属性，帮助调试
   if (features.length > 0) {
     const firstFeature = features[0]
@@ -1503,11 +1556,11 @@ const updateKmzStatistics = (fileData, index) => {
     console.log('📋 属性字段名:', Object.keys(firstProps).filter(k => k !== 'geometry'))
   }
   
-  // 计算统计信息
+  // 计算统计信息（从properties读取面积）
   const totalArea = calculateKmzArea(features)
   const plotCount = features.length
   
-  // 统计种植情况分布（从description字段解析）
+  // 统计种植情况分布（从GeoJSON的class字段读取）
   const statusCounts = {}
   
   features.forEach((feature, idx) => {
@@ -1524,13 +1577,19 @@ const updateKmzStatistics = (fileData, index) => {
     // 尝试多种可能的字段名来确定种植状态
     let status = '未知'
     
-    // 优先从description字段解析
-    if (props.description) {
+    // 🆕 优先从class字段读取（从GeoJSON获取）
+    if (props.class !== undefined && props.class !== null) {
+      status = (props.class === 1 || props.class === '1') ? '已种植' : '未种植'
+      if (idx < 3) {
+        console.log(`   class字段: ${props.class} => ${status}`)
+      }
+    }
+    // 备用方案：从description字段解析
+    else if (props.description) {
       // description是HTML格式，需要解析
       const desc = props.description
       
       // 尝试匹配"种植情况"相关的内容
-      // 例如: <td>已种植</td> 或 <td>未种植</td>
       const plantedMatch = desc.match(/种植情况.*?<td>([^<]+)<\/td>/i) ||
                           desc.match(/<td>(已种植|未种植)<\/td>/i) ||
                           desc.match(/>(已种植|未种植)</i)
@@ -1539,38 +1598,16 @@ const updateKmzStatistics = (fileData, index) => {
         status = plantedMatch[1].trim()
       }
       
-      // 输出第一个要素的完整description用于调试
-      if (idx === 0) {
-        console.log('📝 第一个要素的description完整内容:')
-        console.log(desc.substring(0, 1000))  // 输出前1000字符
-      }
-      
       // 如果上面没匹配到，尝试从name字段
       if (status === '未知' && props.name) {
-        // name字段可能是 '0' 或 '1'
-        if (props.name === '0') {
-          status = '未种植'
-        } else if (props.name === '1') {
-          status = '已种植'
-        }
+        status = (props.name === '0') ? '未种植' : (props.name === '1') ? '已种植' : '未知'
       }
     } else if (props.planted === 1 || props.planted === '1') {
       status = '已种植'
     } else if (props.planted === 0 || props.planted === '0') {
       status = '未种植'
-    } else if (props.status) {
-      status = props.status
-    } else if (props.planting_status) {
-      status = props.planting_status === 'planted' ? '已种植' : '未种植'
-    } else if (props.type) {
-      status = props.type
     } else if (props.name) {
-      // name字段是 '0' 或 '1'
-      if (props.name === '0') {
-        status = '未种植'
-      } else if (props.name === '1') {
-        status = '已种植'
-      }
+      status = (props.name === '0') ? '未种植' : (props.name === '1') ? '已种植' : '未知'
     }
     
     statusCounts[status] = (statusCounts[status] || 0) + 1
@@ -1580,17 +1617,20 @@ const updateKmzStatistics = (fileData, index) => {
   
   // 更新统计数据
   kpiData.value = {
-    totalArea: formatNumber(totalArea.toFixed(0)),
+    totalArea: totalArea.toFixed(2),  // 🆕 保留两位小数
     matchRate: '0',
     diffCount: '0',
     plotCount: formatNumber(plotCount)
   }
   
-  // 更新饼图
+  // 🆕 更新饼图（使用与图层一致的颜色）
   if (cropChart) {
     const chartData = Object.entries(statusCounts).map(([status, count]) => ({
       value: count,
-      name: status
+      name: status,
+      itemStyle: {
+        color: plantingStatusColors[status] || plantingStatusColors['未知']
+      }
     }))
     
     // 按数量排序
@@ -1599,15 +1639,44 @@ const updateKmzStatistics = (fileData, index) => {
     console.log('📊 饼图数据:', chartData)
     
     cropChart.setOption({
+      tooltip: {
+        trigger: 'item',
+        formatter: '{b}: {c}个 ({d}%)'
+      },
+      legend: {
+        bottom: '5%',
+        left: 'center',
+        type: 'plain',
+        orient: 'horizontal'
+      },
       series: [{
         name: '种植情况',
+        type: 'pie',
+        radius: ['40%', '70%'],
+        center: ['50%', '45%'],  // 稍微上移，为下方图例留空间
+        avoidLabelOverlap: true,  // 🆕 启用标签防重叠
+        label: {
+          show: true,
+          position: 'outside',  // 🆕 标签显示在扇形外部，避免遮挡
+          fontSize: 14,
+          fontWeight: 'bold',
+          formatter: '{b}\n{c}个',
+          distanceToLabelLine: 5  // 🆕 标签与引导线的距离
+        },
+        labelLine: {
+          show: true,
+          length: 15,  // 🆕 增加第一段引导线长度
+          length2: 30,  // 🆕 增加第二段引导线长度，让标签更分散
+          smooth: true  // 🆕 平滑引导线
+        },
         data: chartData
-        // 不设置minAngle，让所有数据都能显示
       }]
     }, true)  // 使用notMerge确保完全替换
+    
+    console.log('✅ 饼图已更新')
   }
   
-  console.log(`✅ 更新KMZ统计完成: 面积=${totalArea.toFixed(0)}亩, 地块=${plotCount}`)
+  console.log(`✅ 更新KMZ统计完成: 面积=${totalArea.toFixed(2)}亩, 地块=${plotCount}`)
 }
 
 // 切换显示不同的影像统计
@@ -1625,20 +1694,22 @@ const switchImage = async (index) => {
   console.log(`✅ 已切换到: ${loadedImages.value[index].name}`)
 }
 
-// 检查KMZ图层是否可见（使用响应式状态）
-const isKmzLayerVisible = (fileName) => {
-  // 🔧 修复：使用响应式状态，而不是直接查询图层
-  return kmzLayerVisibility.value[fileName] ?? false
+// 检查KMZ图层是否可见（使用唯一ID）
+const isKmzLayerVisible = (fileId) => {
+  // 🔧 修复：使用文件的唯一ID而不是文件名，避免同名文件冲突
+  return kmzLayerVisibility.value[fileId] ?? false
 }
 
 // 切换KMZ图层可见性（支持多选）
-const toggleKmzLayerVisibility = (fileName, visible) => {
-  const layer = kmzLayers.find(layer => layer.get('fileName') === fileName)
+const toggleKmzLayerVisibility = (fileId, visible) => {
+  // 🔧 修复：使用文件ID查找图层
+  const layer = kmzLayers.find(layer => layer.get('fileId') === fileId)
   if (layer) {
     layer.setVisible(visible)
-    // 🔧 修复：更新响应式状态，确保checkbox同步
-    kmzLayerVisibility.value[fileName] = visible
-    console.log(`${visible ? '✅ 显示' : '⭕ 隐藏'} KMZ图层: ${fileName}`)
+    // 🔧 修复：使用文件ID更新响应式状态
+    kmzLayerVisibility.value[fileId] = visible
+    const fileName = layer.get('fileName')
+    console.log(`${visible ? '✅ 显示' : '⭕ 隐藏'} KMZ图层: ${fileName} (ID: ${fileId})`)
   }
 }
 
@@ -1698,14 +1769,14 @@ const switchKmzFile = async (index) => {
   
   // ⚡ 优化3：延迟更新统计信息（避免阻塞UI，使用requestAnimationFrame）
   switchKmzFileTimer = setTimeout(() => {
-    requestAnimationFrame(() => {
+    requestAnimationFrame(async () => {
       const fileType = layer.get('fileType') || file.type
       
       if (fileType === 'SHP' || fileType === 'GeoJSON') {
         const features = source.getFeatures()
         updateGeoJsonStatistics(file, features)
       } else {
-        updateKmzStatistics(file, layerIndex)
+        await updateKmzStatistics(file, layerIndex)
       }
       
       console.log(`📊 统计信息已更新 (类型: ${fileType})`)
@@ -1743,28 +1814,10 @@ const loadKmzLayer = async (filePath) => {
       })
     })
     
-    // 创建矢量图层
+    // 🎨 创建矢量图层（使用动态样式函数）
     const newKmzLayer = new VectorLayer({
       source: kmzSource,
-      style: new Style({
-        fill: new Fill({
-          color: 'rgba(67, 160, 71, 0.5)'
-        }),
-        stroke: new Stroke({
-          color: '#2E7D32',
-          width: 2
-        }),
-        image: new Circle({
-          radius: 5,
-          fill: new Fill({
-            color: '#43A047'
-          }),
-          stroke: new Stroke({
-            color: '#FFFFFF',
-            width: 1
-          })
-        })
-      }),
+      style: getFeatureStyle,  // 使用动态样式函数（根据class字段显示不同颜色）
       zIndex: 100,
       visible: false  // 默认不可见，等待用户勾选
     })
@@ -1788,8 +1841,51 @@ const loadKmzLayer = async (filePath) => {
         console.log('KMZ features数量:', features.length)
         
         if (features.length > 0) {
-          // 使用统一的统计函数
-          updateKmzStatistics(currentRecognitionData.value, 0)
+          // 🆕 从filePath提取文件名和relativePath
+          const pathParts = filePath.split('/')
+          const kmzFilename = pathParts[pathParts.length - 1]
+          
+          // 尝试提取relativePath（如果是子文件夹）
+          // 例如: /data/data_kmz/planting_situation/YZC/YZC.kmz
+          // -> relativePath = planting_situation/YZC
+          let relativePath = ''
+          const kmzIndex = pathParts.findIndex(p => p === 'data_kmz')
+          if (kmzIndex >= 0 && kmzIndex + 1 < pathParts.length - 1) {
+            relativePath = pathParts.slice(kmzIndex + 1, pathParts.length - 1).join('/')
+          }
+          
+          console.log(`📐 准备获取面积数据: ${kmzFilename}, relativePath: ${relativePath}`)
+          
+          // 🆕 调用后端API获取面积数据
+          getKmzAreas(kmzFilename, relativePath)
+            .then(response => {
+              if (response.code === 200) {
+                const { areas, totalAreaMu, source } = response.data
+                console.log(`✅ 获取面积数据成功 (来源: ${source})，总面积: ${totalAreaMu.toFixed(2)} 亩`)
+                
+                // 将面积数据设置到features的properties中
+                features.forEach((feature, idx) => {
+                  if (areas[idx]) {
+                    const props = feature.getProperties()
+                    props.area_m2 = areas[idx].area_m2
+                    props.area_mu = areas[idx].area_mu
+                    feature.setProperties(props)
+                  }
+                })
+                
+                // 使用统一的统计函数
+                updateKmzStatistics(currentRecognitionData.value, 0)
+              } else {
+                console.warn(`⚠️ 无法获取面积数据: ${response.message}`)
+                // 即使无法获取面积，也继续显示图层
+                updateKmzStatistics(currentRecognitionData.value, 0)
+              }
+            })
+            .catch(error => {
+              console.error(`❌ 获取面积数据失败:`, error)
+              // 即使失败，也继续显示图层
+              updateKmzStatistics(currentRecognitionData.value, 0)
+            })
           
           // 缩放到范围
           const extent = kmzSource.getExtent()
@@ -1832,9 +1928,8 @@ const loadKmzLayer = async (filePath) => {
 const calculateKmzArea = (features) => {
   let totalAreaMu = 0
   let precalculatedCount = 0
-  let turfCalculatedCount = 0
   
-  console.log(`📐 开始计算面积，共 ${features.length} 个地块`)
+  console.log(`📐 开始统计面积，共 ${features.length} 个地块`)
   
   features.forEach((feature, idx) => {
     const props = feature.getProperties()
@@ -1848,41 +1943,20 @@ const calculateKmzArea = (features) => {
       if (idx < 3) {
         console.log(`   地块${idx + 1}: ${areaMu.toFixed(2)} 亩 [预计算]`)
       }
-    } 
-    // 如果没有预计算面积，使用 Turf.js 计算（回退方案）
-    else {
-      const geom = feature.getGeometry()
-      if (geom && (geom.getType() === 'Polygon' || geom.getType() === 'MultiPolygon')) {
-        try {
-          // 克隆几何体并转换到 WGS84 (EPSG:4326)
-          const geomClone = geom.clone()
-          geomClone.transform('EPSG:3857', 'EPSG:4326')
-          
-          // 转换为 GeoJSON 格式
-          const geojsonWriter = new GeoJSON()
-          const geojsonGeometry = geojsonWriter.writeGeometryObject(geomClone)
-          
-          // 使用 Turf.js 计算测地线面积
-          const areaM2 = area(geojsonGeometry)
-          const areaMu = areaM2 * 0.0015  // 精确转换（1 m² = 0.0015 亩）
-          
-          totalAreaMu += areaMu
-          turfCalculatedCount++
-          
-          if (idx < 3) {
-            console.log(`   地块${idx + 1}: ${areaMu.toFixed(2)} 亩 [Turf.js实时计算]`)
-          }
-        } catch (error) {
-          console.error(`❌ 地块${idx + 1}面积计算失败:`, error)
-        }
+    } else {
+      // 没有预计算面积数据
+      if (idx < 3) {
+        console.warn(`   ⚠️ 地块${idx + 1}缺少面积数据`)
       }
     }
   })
   
-  console.log(`✅ 面积统计完成:`)
-  console.log(`   ✅ 预计算: ${precalculatedCount} 个地块`)
-  console.log(`   🔄 实时计算: ${turfCalculatedCount} 个地块`)
-  console.log(`   📊 总面积: ${totalAreaMu.toFixed(2)} 亩`)
+  if (precalculatedCount > 0) {
+    console.log(`✅ 面积统计完成: ${precalculatedCount}/${features.length} 个地块`)
+    console.log(`   📊 总面积: ${totalAreaMu.toFixed(2)} 亩`)
+  } else {
+    console.warn(`⚠️ 没有可用的面积数据，请先将SHP转换为GeoJSON或等待后端计算`)
+  }
   
   return totalAreaMu
 }
@@ -2038,8 +2112,6 @@ const hexToRgb = (hex) => {
 // 重新加载多个 TIF 图层
 const reloadMultipleTiffLayers = async (images) => {
   try {
-    ElMessage.info(`正在加载 ${images.length} 个影像...`)
-    
     // 移除所有旧图层
     tiffLayers.forEach(layer => {
       if (layer && map) {
@@ -2051,29 +2123,66 @@ const reloadMultipleTiffLayers = async (images) => {
     // 为每个影像创建图层
     for (let i = 0; i < images.length; i++) {
       const image = images[i]
-      const pathToLoad = image.optimizedPath || image.filePath || image.originalPath
+      // 🔧 优先使用优化后的路径，其次使用原始路径
+      let pathToLoad = image.optimizedPath || image.filePath || image.originalPath
       
-      console.log(`加载第 ${i + 1}/${images.length} 个影像:`, image.name)
+      // 🔧 修复：将 /data/ 路径转换为 /api/image/file/ API路径
+      if (pathToLoad && pathToLoad.startsWith('/data/')) {
+        const filename = pathToLoad.replace('/data/', '')
+        pathToLoad = `/api/image/file/${encodeURIComponent(filename)}`
+      }
+      
+      // 🎨 检测是否为 RGB 影像（根据文件名）
+      const isRGB = image.name.toUpperCase().includes('RGB')
+      
+      console.log(`📂 加载第 ${i + 1}/${images.length} 个影像:`)
+      console.log(`   文件名: ${image.name}`)
+      console.log(`   影像类型: ${isRGB ? 'RGB影像' : '单波段影像'}`)
+      console.log(`   是否已优化: ${image.isOptimized}`)
+      console.log(`   优化路径: ${image.optimizedPath}`)
+      console.log(`   文件路径: ${image.filePath}`)
+      console.log(`   原始路径: ${image.originalPath}`)
+      console.log(`   ✅ 转换后使用路径: ${pathToLoad}`)
       
       // 创建 GeoTIFF 数据源
       const source = new GeoTIFF({
         sources: [{
           url: pathToLoad
         }],
-        normalize: false,
+        normalize: isRGB ? false : false,  // RGB影像不需要归一化
         interpolate: false,
         transition: 0,
         wrapX: false
       })
       
+      // 🎨 根据影像类型选择不同的样式
+      let layerStyle
+      if (isRGB) {
+        // RGB 影像：直接显示 RGB 三个波段
+        layerStyle = {
+          color: [
+            'array',
+            ['band', 1],  // Red
+            ['band', 2],  // Green
+            ['band', 3],  // Blue
+            1             // Alpha (完全不透明)
+          ]
+        }
+        console.log('   🎨 使用 RGB 样式')
+      } else {
+        // 单波段影像：使用作物分类颜色映射
+        layerStyle = {
+          color: generateColorStyle()
+        }
+        console.log('   📊 使用作物分类样式')
+      }
+      
       // 创建 WebGL Tile 图层
       const layer = new WebGLTile({
         source: source,
         visible: true,
-        style: {
-          color: generateColorStyle()
-        },
-        opacity: 0.85 / (i + 1), // 多图层时降低透明度避免重叠
+        style: layerStyle,
+        opacity: isRGB ? 1.0 : (0.85 / (i + 1)), // RGB影像使用完全不透明
         zIndex: 10 + i
       })
       
@@ -2270,7 +2379,7 @@ const updateStatistics = async (imageData) => {
     console.log('   分析时间:', stats.analyzedAt || '未知')
     // 显示快速加载提示
     ElMessage.success({
-      message: '✅ 已加载预分析数据（快速模式）',
+      message: '查询成功，请打开图例查询影像',
       duration: 2000
     })
   } else {
@@ -2578,30 +2687,48 @@ const handleRefreshOptions = async () => {
     // 🔧 修复：刷新前先清空所有地图图层
     clearMapLayers()
     
+    // 🆕 关闭图例显示
+    tiffLayerVisible.value = false
+    legendCollapsed.value = false
+    
+    // 🆕 恢复地图到初始状态（新疆中心，缩放级别6）
+    if (map) {
+      const view = map.getView()
+      view.animate({
+        center: fromLonLat([87.6, 43.8]), // 新疆中心
+        zoom: 6,
+        duration: 500
+      })
+    }
+    
     // 重新加载数据
     if (dataSource.value === 'image') {
       await fetchImageData()
-      // 重置影像筛选条件
+      // 🔧 修复：重置影像筛选条件（年份期次都为空）
       filterForm.value = {
-        year: availableYears.value[0] || '2024',
-        period: '1',
+        year: '',  // 不自动选择年份
+        period: '',  // 不自动选择期次
         imageNames: [],
         region: [],
         keyword: ''
       }
       selectedCropTypes.value = []
-      updateAvailablePeriods()
+      availablePeriods.value = []  // 清空可用期次
+      loadedImages.value = []  // 清空已加载的影像
+      currentImageData.value = null  // 清空当前影像数据
     } else {
       await loadRecognitionResults()
       // 重置识别结果筛选条件
       recognitionFilter.value = {
-        year: '',  // 🔧 修复：默认为空（全部年份）
+        year: '',  // 默认为空（全部年份）
         period: '',
         region: '',
         recognitionType: '',
         fileFormat: '',
         fileNames: []
       }
+      loadedKmzFiles.value = []  // 清空已加载的识别结果
+      currentRecognitionData.value = null  // 清空当前识别数据
     }
     
     // 重置统计信息
@@ -2888,7 +3015,8 @@ const toggleTiffLayer = async () => {
     } else {
         // 显示已有图层
         tiffLayers.forEach(layer => layer.setVisible(true))
-      ElMessage.success('已显示作物分类图层')
+      const count = loadedImages.value.length
+      ElMessage.success(`${count} 个影像加载成功`)
     }
     } else {
       // 识别结果（KMZ、SHP、GeoJSON）
@@ -2911,10 +3039,10 @@ const toggleTiffLayer = async () => {
       kmzLayers.forEach(layer => {
         if (layer) {
           layer.setVisible(false)
-          // 🔧 修复：更新响应式状态
-          const fileName = layer.get('fileName')
-          if (fileName) {
-            kmzLayerVisibility.value[fileName] = false
+          // 🔧 修复：使用文件ID更新响应式状态
+          const fileId = layer.get('fileId')
+          if (fileId) {
+            kmzLayerVisibility.value[fileId] = false
           }
         }
       })

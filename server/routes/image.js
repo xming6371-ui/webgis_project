@@ -772,7 +772,7 @@ router.put('/:id', (req, res) => {
     }
     
     // 更新允许修改的字段
-    const allowedFields = ['year', 'period', 'cropType', 'region', 'sensor', 'date', 'cloudCover', 'description']
+    const allowedFields = ['year', 'month', 'period', 'region', 'sensor', 'date', 'description']
     allowedFields.forEach(field => {
       if (updates[field] !== undefined) {
         image[field] = updates[field]
@@ -1184,6 +1184,7 @@ async function optimizeTifFile(id, options = {}) {
   
   // 3. 准备文件路径
   const tempOutput = path.join(DATA_DIR, `temp_optimized_${Date.now()}.tif`)
+  const tempScaled = path.join(DATA_DIR, `temp_scaled_${Date.now()}.tif`) // 用于缩放后的临时文件
   
   // 根据选项决定最终输出路径
   let optimizedPath
@@ -1230,6 +1231,69 @@ async function optimizeTifFile(id, options = {}) {
     startTime: Date.now()
   })
   
+  // 🔍 步骤4：判断是否为 RGB 影像 + 自动检测源坐标系
+  let isRGB = false
+  let sourceSRS = 'EPSG:32645' // 默认值
+  let dataType = 'Unknown' // 数据类型
+  
+  console.log('🔍 使用 gdalinfo 检测影像类型和坐标系...')
+  try {
+    const gdalinfoCmd = buildGDALCommand(`gdalinfo "${inputPath}"`)
+    console.log(`   执行命令: ${gdalinfoCmd}`)
+    const { stdout: gdalinfo } = await execAsync(gdalinfoCmd)
+    
+    // 🌐 自动检测源坐标系（尝试多种匹配方式）
+    // 方式1: 匹配 AUTHORITY["EPSG","32645"]
+    let srsMatch = gdalinfo.match(/AUTHORITY\["EPSG","(\d+)"\]/)
+    
+    // 方式2: 匹配 PROJCS["WGS 84 / UTM zone 45N"... 
+    if (!srsMatch) {
+      if (gdalinfo.includes('UTM zone 45N') || gdalinfo.includes('UTM Zone 45N')) {
+        sourceSRS = 'EPSG:32645'
+        console.log(`🌐 检测到UTM Zone 45N，使用: ${sourceSRS}`)
+      }
+    } else {
+      sourceSRS = `EPSG:${srsMatch[1]}`
+      console.log(`🌐 检测到源坐标系: ${sourceSRS}`)
+    }
+    
+    if (!srsMatch && !gdalinfo.includes('UTM')) {
+      console.log(`⚠️ 无法检测坐标系，使用默认值: ${sourceSRS}`)
+      console.log('--- gdalinfo 输出（前500字符）---')
+      console.log(gdalinfo.substring(0, 500))
+      console.log('--------------------------------')
+    }
+    
+    // 🎨 检测是否为 RGB 影像 + 数据类型
+    const bandMatches = gdalinfo.match(/Band \d+/g)
+    const bandCount = bandMatches ? bandMatches.length : 1
+    
+    const dataTypeMatch = gdalinfo.match(/Type=(\w+)/)
+    dataType = dataTypeMatch ? dataTypeMatch[1] : 'Unknown'  // 赋值给外层变量
+    
+    console.log(`   波段数: ${bandCount}`)
+    console.log(`   数据类型: ${dataType}`)
+    
+    // 方法1：检查文件名是否包含 "RGB"（不区分大小写）
+    if (image.name.toUpperCase().includes('RGB')) {
+      isRGB = true
+      console.log('🎨 检测到RGB影像（文件名包含RGB）')
+    } 
+    // 方法2：检测波段数和数据类型
+    else if (bandCount === 3 && (dataType === 'Byte' || dataType === 'UInt16')) {
+      isRGB = true
+      console.log('🎨 检测到RGB影像（3波段 + RGB数据类型）')
+    } else {
+      console.log('📊 检测到普通TIF影像（KNDVI等）')
+    }
+  } catch (err) {
+    console.warn('⚠️ 无法检测影像类型和坐标系，使用默认参数')
+    console.warn(`   错误信息: ${err.message}`)
+    if (err.stderr) {
+      console.warn(`   stderr: ${err.stderr}`)
+    }
+  }
+  
   // 5. 直接执行投影转换和COG转换（COG格式自带金字塔，无需手动添加）
   console.log('⏳ 投影转换 + COG格式转换（包含自动生成金字塔）...')
   
@@ -1239,18 +1303,150 @@ async function optimizeTifFile(id, options = {}) {
     step: '投影转换 + COG转换 + 金字塔生成（最耗时）...'
   })
   
-  // ✅ 修复：COG格式在转换时自动生成内部金字塔，无需再用gdaladdo添加外部金字塔
-  // 添加 -co OVERVIEW_RESAMPLING=NEAREST 参数指定金字塔重采样方法
-  // 添加 -co NUM_THREADS=ALL_CPUS 参数启用多线程加速
-  const gdalwarpCmd = `gdalwarp -s_srs EPSG:32645 -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co TILED=YES -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -r near "${inputPath}" "${tempOutput}"`
-  const gdalCommand = buildGDALCommand(gdalwarpCmd)
+  // 根据影像类型选择不同的优化参数
+  let gdalwarpCmd
+  
+  if (isRGB) {
+    // 🎨 RGB 影像优化参数
+    console.log('📋 使用 RGB 影像优化参数:')
+    console.log(`   - 源坐标系: ${sourceSRS}`)
+    console.log(`   - 数据类型: ${dataType}`)
+    console.log('   - 目标坐标系: EPSG:3857 (Web Mercator)')
+    
+    // 根据数据类型选择压缩方式和处理策略
+    if (dataType === 'Byte') {
+      // 8位RGB：使用JPEG压缩（高压缩率）
+      console.log('   - 压缩方式: JPEG (质量85，适用于8位RGB)')
+      console.log('   - 不转换数据类型（已是Byte）')
+      console.log('   - 重采样方法: cubic（更适合RGB影像）')
+      gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=JPEG -co QUALITY=85 -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+    } else if (dataType === 'UInt16') {
+      // 16位RGB：使用LZW压缩（JPEG不支持16位）
+      console.log('   - 压缩方式: LZW（UInt16类型不支持JPEG）')
+      console.log('   - 保持UInt16数据类型')
+      console.log('   - 重采样方法: cubic（更适合RGB影像）')
+      gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+    } else if (dataType === 'Float32' || dataType === 'Float64') {
+      // 浮点RGB：需要两步处理
+      // 步骤1: gdal_translate 转换为Byte + 缩放
+      // 步骤2: gdalwarp 投影转换 + COG优化
+      console.log(`   - ⚠️ 检测到浮点类型 (${dataType})，需要两步处理`)
+      console.log('   - 步骤1: 转换为Byte类型并缩放到0-255')
+      console.log('   - 步骤2: 投影转换 + COG优化')
+      console.log('   - 压缩方式: JPEG (质量85)')
+      console.log('   - 重采样方法: cubic')
+      
+      // 标记需要两步处理
+      gdalwarpCmd = 'TWO_STEP_FLOAT_RGB'
+    } else {
+      // 其他类型：保守处理，使用LZW
+      console.log(`   - 压缩方式: LZW（${dataType}类型使用保守策略）`)
+      console.log('   - 重采样方法: cubic')
+      gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+    }
+  } else {
+    // 📊 普通 TIF 影像优化参数（KNDVI 等单波段浮点数据）
+    console.log('📋 使用普通 TIF 影像优化参数（KNDVI等）:')
+    console.log(`   - 源坐标系: ${sourceSRS}`)
+    console.log('   - 目标坐标系: EPSG:3857')
+    console.log('   - 压缩方式: LZW')
+    console.log('   - NoData: NaN → 255')
+    console.log('   - 重采样方法: near（保持原始像素值）')
+    
+    gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -r near "${inputPath}" "${tempOutput}"`
+  }
+  
+  // 判断是否需要两步处理（Float类型RGB影像）
+  const needTwoStepProcessing = (gdalwarpCmd === 'TWO_STEP_FLOAT_RGB')
   
   let startTime = Date.now()
   try {
-    await execAsync(gdalCommand)
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
-    console.log(`✅ 投影转换 + COG转换 + 金字塔生成完成 (耗时: ${elapsed}秒)`)
-    console.log(`   COG格式已包含内部金字塔，无需额外添加`)
+    if (needTwoStepProcessing) {
+      // ========== 两步处理：Float RGB 影像 ==========
+      console.log('\n🔄 开始两步处理流程:')
+      
+      // 步骤1: gdal_translate 转换数据类型并缩放
+      console.log('📋 步骤1/2: 数据类型转换 + 缩放')
+      const translateCmd = `gdal_translate -ot Byte -scale -of GTiff "${inputPath}" "${tempScaled}"`
+      const fullTranslateCmd = buildGDALCommand(translateCmd)
+      console.log(`   命令: ${fullTranslateCmd}`)
+      
+      optimizationProgress.set(id, {
+        ...optimizationProgress.get(id),
+        progress: 40,
+        status: 'converting',
+        step: '步骤1/2: Float→Byte转换 + 缩放...'
+      })
+      
+      const { stdout: stdout1, stderr: stderr1 } = await execAsync(fullTranslateCmd)
+      const elapsed1 = ((Date.now() - startTime) / 1000).toFixed(2)
+      
+      if (!fs.existsSync(tempScaled)) {
+        throw new Error('步骤1失败：未生成缩放后的文件')
+      }
+      
+      const scaledStats = fs.statSync(tempScaled)
+      console.log(`✅ 步骤1完成 (耗时: ${elapsed1}秒)`)
+      console.log(`   缩放后文件大小: ${(scaledStats.size / (1024 * 1024)).toFixed(2)}MB`)
+      if (stderr1 && stderr1.trim()) console.log(`   stderr: ${stderr1}`)
+      
+      // 步骤2: gdalwarp 投影转换 + COG优化
+      console.log('\n📋 步骤2/2: 投影转换 + COG优化')
+      const warpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=JPEG -co QUALITY=85 -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${tempScaled}" "${tempOutput}"`
+      const fullWarpCmd = buildGDALCommand(warpCmd)
+      console.log(`   命令: ${fullWarpCmd}`)
+      
+      optimizationProgress.set(id, {
+        ...optimizationProgress.get(id),
+        progress: 60,
+        status: 'reprojecting',
+        step: '步骤2/2: 投影转换 + COG优化...'
+      })
+      
+      const startTime2 = Date.now()
+      const { stdout: stdout2, stderr: stderr2 } = await execAsync(fullWarpCmd)
+      const elapsed2 = ((Date.now() - startTime2) / 1000).toFixed(2)
+      
+      console.log(`✅ 步骤2完成 (耗时: ${elapsed2}秒)`)
+      const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(2)
+      console.log(`✅ 两步处理总耗时: ${totalElapsed}秒`)
+      if (stderr2 && stderr2.trim()) console.log(`   stderr: ${stderr2}`)
+      
+      // 清理中间文件
+      if (fs.existsSync(tempScaled)) {
+        fs.unlinkSync(tempScaled)
+        console.log('🗑️ 已清理中间临时文件')
+      }
+      
+    } else {
+      // ========== 单步处理：标准流程 ==========
+      const gdalCommand = buildGDALCommand(gdalwarpCmd)
+      console.log('📋 完整GDAL命令:')
+      console.log(`   ${gdalCommand}`)
+      
+      const { stdout, stderr } = await execAsync(gdalCommand)
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
+      console.log(`✅ 投影转换 + COG转换 + 金字塔生成完成 (耗时: ${elapsed}秒)`)
+      if (stderr && stderr.trim()) console.log(`   GDAL stderr: ${stderr}`)
+    }
+    
+    // ========== 检查最终输出文件 ==========
+    if (!fs.existsSync(tempOutput)) {
+      console.error('❌ GDAL命令执行后，临时文件未生成！')
+      console.error(`   期望路径: ${tempOutput}`)
+      throw new Error('GDAL未生成输出文件')
+    }
+    
+    const tempStats = fs.statSync(tempOutput)
+    const tempSizeMB = (tempStats.size / (1024 * 1024)).toFixed(2)
+    console.log(`✅ 最终优化文件大小: ${tempSizeMB}MB (${tempStats.size} 字节)`)
+    console.log(`   COG格式已包含内部金字塔`)
+    
+    // 如果文件太小（<1KB），可能是失败了
+    if (tempStats.size < 1024) {
+      console.error(`❌ 警告：生成的文件太小 (${tempStats.size} 字节)，可能优化失败！`)
+      throw new Error(`GDAL生成的文件异常小 (${tempStats.size} 字节)`)
+    }
     
     optimizationProgress.set(id, {
       ...optimizationProgress.get(id),
@@ -1259,7 +1455,19 @@ async function optimizeTifFile(id, options = {}) {
       step: '优化完成（COG格式 + 内部金字塔）'
     })
   } catch (error) {
-    if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput)
+    console.error('❌ GDAL执行失败:')
+    console.error(`   错误: ${error.message}`)
+    if (error.stderr) console.error(`   stderr: ${error.stderr}`)
+    if (error.stdout) console.log(`   stdout: ${error.stdout}`)
+    // 清理所有临时文件
+    if (fs.existsSync(tempOutput)) {
+      console.log(`   清理临时文件: ${tempOutput}`)
+      fs.unlinkSync(tempOutput)
+    }
+    if (fs.existsSync(tempScaled)) {
+      console.log(`   清理临时文件: ${tempScaled}`)
+      fs.unlinkSync(tempScaled)
+    }
     optimizationProgress.delete(id)
     throw new Error('GDAL转换失败: ' + error.message)
   }

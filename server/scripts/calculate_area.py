@@ -39,17 +39,14 @@ def calculate_areas(geojson_data):
                 geometries.append(None)
                 print(f"警告: 几何体解析失败: {str(e)}", file=sys.stderr)
         
-        # 创建GeoDataFrame（假设原始坐标系是 EPSG:3857）
-        gdf = gpd.GeoDataFrame(geometry=geometries, crs='EPSG:3857')
+        # 创建GeoDataFrame（输入已经是WGS84坐标系）
+        gdf = gpd.GeoDataFrame(geometry=geometries, crs='EPSG:4326')
         
-        # 转换到WGS84用于测地线计算
-        gdf_wgs84 = gdf.to_crs('EPSG:4326')
-        
-        # 使用WGS84椭球体计算测地线面积
+        # 使用WGS84椭球体计算测地线面积（基于椭球体的精确计算）
         geod = Geod(ellps='WGS84')
         
         areas = []
-        for idx, geom in enumerate(gdf_wgs84.geometry):
+        for idx, geom in enumerate(gdf.geometry):
             if geom is None or geom.is_empty:
                 # 无效几何体
                 areas.append({

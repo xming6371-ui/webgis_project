@@ -376,7 +376,12 @@
               @selection-change="handleResultSelectionChange"
             >
               <el-table-column type="selection" width="55" />
-              <el-table-column type="index" label="序号" width="60" align="center" />
+              <el-table-column label="序号" width="60" align="center">
+                <template #default="scope">
+                  {{ (recognitionCurrentPage - 1) * recognitionPageSize + scope.$index + 1 }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="createTime" label="创建时间" width="180" align="center" />
               <el-table-column prop="name" label="文件名称" min-width="280" show-overflow-tooltip />
               <el-table-column prop="type" label="格式" width="80" align="center">
                 <template #default="scope">
@@ -414,7 +419,6 @@
                 </template>
               </el-table-column>
               <el-table-column prop="size" label="大小" width="100" align="center" />
-              <el-table-column prop="createTime" label="创建时间" width="180" align="center" />
               <el-table-column label="操作" min-width="320" fixed="right" align="center">
                 <template #default="scope">
                   <div style="display: flex; gap: 5px; flex-wrap: wrap; justify-content: center;">
@@ -448,16 +452,16 @@
                       删除
                     </el-button>
                     
-                    <!-- SHP文件显示转换GeoJSON按钮 -->
+                    <!-- SHP文件显示转换为KMZ按钮 -->
                     <el-button 
                       v-if="scope.row.type === 'SHP'" 
                       size="small" 
                       type="warning" 
-                      @click="handleConvertToGeojson(scope.row)"
+                      @click="handleConvertToKmz(scope.row)"
                       :loading="convertingFiles.has(scope.row.name)"
                     >
                       <RefreshCw :size="14" style="margin-right: 4px" />
-                      转GeoJSON
+                      转换为KMZ
                     </el-button>
                   </div>
                 </template>
@@ -685,7 +689,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="区域">
-          <el-select v-model="uploadForm.region" placeholder="选择区域" style="width: 100%" clearable>
+          <el-select v-model="uploadForm.region" placeholder="选择区域（自动识别）" style="width: 100%" clearable>
             <el-option label="包头湖" value="包头湖" />
             <el-option label="经济牧场" value="经济牧场" />
             <el-option label="库尔楚" value="库尔楚" />
@@ -693,6 +697,20 @@
             <el-option label="普惠农场" value="普惠农场" />
             <el-option label="原种场" value="原种场" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="采集日期">
+          <el-date-picker
+            v-model="uploadForm.date"
+            type="date"
+            placeholder="选择采集日期（自动识别）"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DD"
+            style="width: 100%"
+            clearable
+          />
+          <div style="color: #999; font-size: 12px; margin-top: 5px">
+            💡 此日期将显示在影像目录的"采集日期"列
+          </div>
         </el-form-item>
         <el-form-item label="传感器">
           <el-input v-model="uploadForm.sensor" placeholder="如: Sentinel-2, Landsat-8" />
@@ -791,7 +809,7 @@
                 </el-select>
               </el-form-item>
               <el-form-item label="区域">
-                <el-select v-model="fileMetadataList[index].region" placeholder="选择区域" style="width: 100%" clearable>
+                <el-select v-model="fileMetadataList[index].region" placeholder="选择区域（自动识别）" style="width: 100%" clearable>
                   <el-option label="包头湖" value="包头湖" />
                   <el-option label="经济牧场" value="经济牧场" />
                   <el-option label="库尔楚" value="库尔楚" />
@@ -799,6 +817,17 @@
                   <el-option label="普惠农场" value="普惠农场" />
                   <el-option label="原种场" value="原种场" />
                 </el-select>
+              </el-form-item>
+              <el-form-item label="采集日期">
+                <el-date-picker
+                  v-model="fileMetadataList[index].date"
+                  type="date"
+                  placeholder="选择采集日期（自动识别）"
+                  format="YYYY-MM-DD"
+                  value-format="YYYY-MM-DD"
+                  style="width: 100%"
+                  clearable
+                />
               </el-form-item>
               <el-form-item label="传感器">
                 <el-input v-model="fileMetadataList[index].sensor" placeholder="如: Sentinel-2, Landsat-8" />
@@ -1046,17 +1075,6 @@
               :label="`第${period}期`"
               :value="period.toString()"
             />
-          </el-select>
-        </el-form-item>
-        
-        <el-form-item label="作物类型">
-          <el-select v-model="editForm.cropType" placeholder="请选择作物类型" style="width: 100%">
-            <el-option label="全部作物" value="all" />
-            <el-option label="棉花" value="cotton" />
-            <el-option label="小麦" value="wheat" />
-            <el-option label="玉米" value="corn" />
-            <el-option label="番茄" value="tomato" />
-            <el-option label="其他" value="other" />
           </el-select>
         </el-form-item>
         
@@ -1345,6 +1363,37 @@
           </div>
         </el-alert>
       </div>
+      
+      <!-- 🆕 模式切换（只在有多个文件时显示） -->
+      <el-alert 
+        v-if="resultFileList.length > 1"
+        title="多文件上传"
+        type="info"
+        :closable="false"
+        style="margin-top: 15px;"
+      >
+        <div style="display: flex; align-items: center; gap: 15px; margin-top: 10px;">
+          <span style="font-weight: 600;">填写模式：</span>
+          <el-radio-group v-model="resultUploadMode" size="default">
+            <el-radio label="batch">
+              <span style="display: flex; align-items: center; gap: 5px;">
+                批量填写
+                <el-tooltip content="所有文件使用相同的元数据（推荐，快速）" placement="top">
+                  <el-icon><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
+            </el-radio>
+            <el-radio label="individual">
+              <span style="display: flex; align-items: center; gap: 5px;">
+                逐个填写
+                <el-tooltip content="为每个文件单独填写不同的元数据" placement="top">
+                  <el-icon><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </span>
+            </el-radio>
+          </el-radio-group>
+        </div>
+      </el-alert>
         
       <!-- 🆕 元数据填写表单 - 始终显示，不管是否选择文件 -->
       <el-divider content-position="left" style="margin-top: 20px;">
@@ -1353,7 +1402,8 @@
         </span>
       </el-divider>
       
-      <el-form :model="uploadMetadataForm" label-width="90px" size="default">
+      <!-- 批量模式：单个表单 -->
+      <el-form v-if="resultUploadMode === 'batch' || resultFileList.length <= 1" :model="uploadMetadataForm" label-width="90px" size="default">
         <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="年份">
@@ -1420,10 +1470,117 @@
           style="margin-top: 10px;"
         >
           <div style="font-size: 12px; color: #666;">
-            以上信息为可选项，填写后会随文件一起保存，便于在监测主控台进行筛选和管理。如果不填写，系统会使用默认值。
+            以上信息为可选项，填写后会随文件一起保存，便于在监测主控台进行筛选和管理。如果不填写，系统会尝试从文件名自动识别。
           </div>
         </el-alert>
       </el-form>
+      
+      <!-- 逐个模式：Tab切换每个文件 -->
+      <div v-else-if="resultUploadMode === 'individual' && resultFileList.length > 0">
+        <el-tabs v-model="currentResultFileIndex" type="card" style="margin-bottom: 20px;">
+          <el-tab-pane 
+            v-for="(file, index) in resultFileList" 
+            :key="index" 
+            :name="index"
+          >
+            <template #label>
+              <span style="display: flex; align-items: center; gap: 8px;">
+                <el-icon><Document /></el-icon>
+                文件 {{ index + 1 }}
+                <el-tag size="small" type="info">{{ file.name }}</el-tag>
+              </span>
+            </template>
+            
+            <el-form :model="resultFileMetadataList[index]" label-width="90px" size="default">
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item label="年份">
+                    <el-select v-model="resultFileMetadataList[index].year" placeholder="选择年份" clearable style="width: 100%">
+                      <el-option
+                        v-for="year in [2020, 2021, 2022, 2023, 2024, 2025]"
+                        :key="year"
+                        :label="`${year}年`"
+                        :value="year"
+                      />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="期次">
+                    <el-select v-model="resultFileMetadataList[index].period" placeholder="选择期次" clearable style="width: 100%">
+                      <el-option
+                        v-for="period in [1, 2, 3, 4, 5, 6]"
+                        :key="period"
+                        :label="`第${period}期`"
+                        :value="period"
+                      />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              
+              <el-row :gutter="20">
+                <el-col :span="12">
+                  <el-form-item label="区域">
+                    <el-select v-model="resultFileMetadataList[index].regionCode" placeholder="选择区域" clearable style="width: 100%">
+                      <el-option label="包头湖" value="BTH" />
+                      <el-option label="经济牧场" value="JJMC" />
+                      <el-option label="库尔楚" value="KEC" />
+                      <el-option label="普惠牧场" value="PHMC" />
+                      <el-option label="普惠农场" value="PHNC" />
+                      <el-option label="原种场" value="YZC" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="来源任务">
+                    <el-select v-model="resultFileMetadataList[index].recognitionType" placeholder="选择任务" clearable style="width: 100%">
+                      <el-option label="作物识别" value="crop_recognition" />
+                      <el-option label="种植情况识别" value="planting_situation" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              
+              <el-form-item label="任务名称">
+                <el-input 
+                  v-model="resultFileMetadataList[index].taskName" 
+                  placeholder="输入任务名称（可选）" 
+                  maxlength="100" 
+                  clearable
+                />
+              </el-form-item>
+            </el-form>
+            
+            <el-divider />
+            
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div style="color: #999; font-size: 12px;">
+                💡 信息会从文件名自动识别，您可以手动修改
+              </div>
+              <div style="display: flex; gap: 10px;">
+                <el-button 
+                  v-if="index > 0"
+                  size="small"
+                  @click="currentResultFileIndex = index - 1"
+                >
+                  <el-icon><ArrowLeft /></el-icon>
+                  上一个
+                </el-button>
+                <el-button 
+                  v-if="index < resultFileList.length - 1"
+                  size="small"
+                  type="primary"
+                  @click="currentResultFileIndex = index + 1"
+                >
+                  下一个
+                  <el-icon><ArrowRight /></el-icon>
+                </el-button>
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
 
       <template #footer>
         <el-button @click="cancelUpload">取消</el-button>
@@ -1444,22 +1601,25 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, X, Edit, Settings, FileArchive, RefreshCw, Eye, Zap } from 'lucide-vue-next'
-import { Picture, DataAnalysis, SuccessFilled, InfoFilled, Check, Clock, Warning, QuestionFilled, Document, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
+import { Upload, Download, Trash2, Search, Image, List, Grid3X3, Upload as UploadIcon, File, Files, X, Edit, Settings, FileArchive, RefreshCw, Eye, Zap } from 'lucide-vue-next'
+import { Picture, DataAnalysis, SuccessFilled, InfoFilled, Check, Clock, Warning, QuestionFilled, Document, ArrowLeft, ArrowRight, Position } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useAnalysisStore } from '@/stores/analysis'
 import { getImageList, refreshImageList, uploadImage, updateImage, deleteImage, batchDeleteImage, optimizeImage } from '@/api/image'
 import { 
   getRecognitionResults, 
-  convertShpToGeojson, 
+  convertShpToGeojson,
+  convertShpToKmz,
   downloadAnalysisFile, 
   deleteAnalysisFile,
   getSavedAnalysisResults,
   loadAnalysisResult,
   downloadReport,
   deleteAnalysisResult,
-  saveRecognitionMetadata
+  saveRecognitionMetadata,
+  checkFileConflict
 } from '@/api/analysis'
+import { autoDetectMetadata } from '@/config/regionMapping'
 import * as GeoTIFF from 'geotiff'
 
 const router = useRouter()
@@ -1606,6 +1766,11 @@ const uploadMetadataForm = ref({
   taskName: ''
 })
 
+// 🆕 识别结果批量上传模式
+const resultUploadMode = ref('batch') // 'batch': 批量填写, 'individual': 逐个填写
+const currentResultFileIndex = ref(0) // 当前正在编辑的文件索引（逐个模式）
+const resultFileMetadataList = ref([]) // 每个文件的元数据列表
+
 // 编辑识别结果相关
 const showEditRecognitionDialog = ref(false)
 const savingRecognitionEdit = ref(false)
@@ -1620,11 +1785,18 @@ const editRecognitionForm = ref({
   relativePath: ''
 })
 
-// 分页后的识别结果（支持搜索过滤）
+// 分页后的识别结果（支持搜索过滤，按创建时间排序）
 const paginatedRecognitionResults = computed(() => {
+  // 先按创建时间排序（最早的在前）
+  const sorted = [...filteredRecognitionResults.value].sort((a, b) => {
+    const timeA = new Date(a.createTime || 0).getTime()
+    const timeB = new Date(b.createTime || 0).getTime()
+    return timeA - timeB  // 升序：最早的在前
+  })
+  
   const start = (recognitionCurrentPage.value - 1) * recognitionPageSize.value
   const end = start + recognitionPageSize.value
-  return filteredRecognitionResults.value.slice(start, end)
+  return sorted.slice(start, end)
 })
 
 // 分页后的分析结果（支持搜索过滤）
@@ -1698,21 +1870,37 @@ const getFileTypeTagType = (type) => {
   return map[type] || 'info'
 }
 
-// 转换SHP为GeoJSON
+// SHP转换为KMZ相关状态
 const convertingFiles = ref(new Set())
 
-const handleConvertToGeojson = async (row) => {
+// SHP转换为KMZ
+const handleConvertToKmz = async (row) => {
   convertingFiles.value.add(row.name)
+  
   try {
-    const response = await convertShpToGeojson(row.name)
+    ElMessage.info('🔄 开始转换为KMZ格式...')
+    
+    const response = await convertShpToKmz(row.name, row.relativePath)
     
     if (response.code === 200) {
+      const { kmzFilename, geojsonFilename, kmzSize, geojsonSize, featureCount, hasAreaData } = response.data
+      
+      // 构建详细的成功消息
+      let message = `已生成文件：\n• KMZ: ${kmzFilename} (${kmzSize})\n• GeoJSON: ${geojsonFilename} (${geojsonSize})`
+      if (featureCount) {
+        message += `\n\n要素数量：${featureCount}`
+      }
+      if (hasAreaData) {
+        message += `\n✅ 包含面积数据（可在主控台查看）`
+      }
+      
       ElNotification({
-        title: '转换成功',
-        message: '✅ GeoJSON文件已生成，可以在识别结果中查看',
+        title: response.message || '✅ 转换成功',
+        message: message,
         type: 'success',
-        duration: 3000
+        duration: 6000
       })
+      
       // 重新加载结果列表
       await loadAllResults()
     } else if (response.code === 400 && response.data?.existed) {
@@ -1722,7 +1910,7 @@ const handleConvertToGeojson = async (row) => {
       ElMessage.error('转换失败: ' + (response.message || '未知错误'))
     }
   } catch (error) {
-    console.error('转换失败:', error)
+    console.error('❌ 转换失败:', error)
     ElMessage.error('转换失败: ' + (error.message || '网络错误'))
   } finally {
     convertingFiles.value.delete(row.name)
@@ -1992,11 +2180,51 @@ const handleResultFileChange = (file, fileList) => {
   }
   
   resultFileList.value = fileList
+  
+  // 🆕 文件名自动识别：初始化元数据列表
+  // 为新添加的文件自动识别元数据
+  if (fileList.length > resultFileMetadataList.value.length) {
+    // 有新文件添加
+    const newFilesCount = fileList.length - resultFileMetadataList.value.length
+    for (let i = 0; i < newFilesCount; i++) {
+      const fileIndex = fileList.length - newFilesCount + i
+      const targetFile = fileList[fileIndex]
+      
+      // 使用自动识别函数
+      const detected = autoDetectMetadata(targetFile.name)
+      
+      resultFileMetadataList.value.push({
+        year: detected.year,
+        period: detected.period,
+        regionCode: detected.regionCode,
+        recognitionType: '',  // 无法从文件名自动识别
+        taskName: ''
+      })
+      
+      console.log(`🔍 自动识别文件 "${targetFile.name}":`, detected)
+    }
+  } else if (fileList.length < resultFileMetadataList.value.length) {
+    // 有文件被删除
+    resultFileMetadataList.value = resultFileMetadataList.value.slice(0, fileList.length)
+  }
+  
+  // 🆕 批量模式：如果是第一个文件，自动填充到批量表单
+  if (fileList.length === 1 && resultFileMetadataList.value.length === 1) {
+    const detected = resultFileMetadataList.value[0]
+    uploadMetadataForm.value.year = detected.year
+    uploadMetadataForm.value.period = detected.period
+    uploadMetadataForm.value.regionCode = detected.regionCode
+  }
 }
 
 // 移除文件回调
 const handleResultFileRemove = (file, fileList) => {
   resultFileList.value = fileList
+  
+  // 🆕 同步移除对应的元数据
+  if (resultFileMetadataList.value.length > fileList.length) {
+    resultFileMetadataList.value = resultFileMetadataList.value.slice(0, fileList.length)
+  }
 }
 
 // 计算总大小
@@ -2021,6 +2249,10 @@ const cancelUpload = () => {
     recognitionType: '',
     taskName: ''
   }
+  // 🆕 重置元数据列表
+  resultFileMetadataList.value = []
+  currentResultFileIndex.value = 0
+  resultUploadMode.value = 'batch'
 }
 
 // 开始上传
@@ -2033,40 +2265,105 @@ const startUpload = async () => {
   let successCount = 0
   let failCount = 0
   
+  // 区域代码到名称的映射
+  const regionCodeToName = {
+    'BTH': '包头湖',
+    'JJMC': '经济牧场',
+    'KEC': '库尔楚',
+    'PHMC': '普惠牧场',
+    'PHNC': '普惠农场',
+    'YZC': '原种场'
+  }
+  
   try {
-    for (const fileItem of resultFileList.value) {
+    for (let i = 0; i < resultFileList.value.length; i++) {
+      const fileItem = resultFileList.value[i]
+      
       try {
+        // 🆕 根据上传模式获取元数据
+        let metadata = null
+        
+        if (resultUploadMode.value === 'batch' || resultFileList.value.length === 1) {
+          // 批量模式：所有文件使用相同的元数据
+          const hasMetadata = uploadMetadataForm.value.year || 
+                            uploadMetadataForm.value.period || 
+                            uploadMetadataForm.value.regionCode || 
+                            uploadMetadataForm.value.recognitionType || 
+                            uploadMetadataForm.value.taskName
+          
+          if (hasMetadata) {
+            metadata = {
+              year: uploadMetadataForm.value.year,
+              period: uploadMetadataForm.value.period,
+              regionCode: uploadMetadataForm.value.regionCode,
+              regionName: regionCodeToName[uploadMetadataForm.value.regionCode],
+              recognitionType: uploadMetadataForm.value.recognitionType,
+              taskName: uploadMetadataForm.value.taskName
+            }
+          }
+        } else {
+          // 逐个模式：每个文件使用各自的元数据
+          const fileMetadata = resultFileMetadataList.value[i]
+          if (fileMetadata) {
+            const hasMetadata = fileMetadata.year || 
+                              fileMetadata.period || 
+                              fileMetadata.regionCode || 
+                              fileMetadata.recognitionType || 
+                              fileMetadata.taskName
+            
+            if (hasMetadata) {
+              metadata = {
+                year: fileMetadata.year,
+                period: fileMetadata.period,
+                regionCode: fileMetadata.regionCode,
+                regionName: regionCodeToName[fileMetadata.regionCode],
+                recognitionType: fileMetadata.recognitionType,
+                taskName: fileMetadata.taskName
+              }
+            }
+          }
+        }
+        
+        // 🆕 步骤1：冲突检测（简化版：只检测文件名，不比较元数据）
+        console.log(`🔍 [${i + 1}/${resultFileList.value.length}] 检测文件冲突: ${fileItem.name}`)
+        
+        const conflictResponse = await checkFileConflict(fileItem.name, null)  // 不传metadata
+        
+        if (conflictResponse.code === 200 && conflictResponse.data.conflict) {
+          // 文件已存在，弹出确认对话框
+          console.warn(`⚠️ 文件已存在: ${fileItem.name}`)
+          
+          try {
+            await ElMessageBox.confirm(
+              `文件 "${fileItem.name}" 已存在，将会覆盖原文件。`,
+              '文件已存在',
+              {
+                confirmButtonText: '覆盖',
+                cancelButtonText: '取消',
+                type: 'warning',
+                distinguishCancelAndClose: true
+              }
+            )
+            
+            // 用户选择覆盖，继续上传
+            console.log(`✅ 用户选择覆盖: ${fileItem.name}`)
+          } catch (error) {
+            // 用户选择取消，跳过该文件（不计入失败数）
+            if (error === 'cancel' || error === 'close') {
+              console.log(`⏭️ 用户取消上传: ${fileItem.name}`)
+              // 不增加failCount，因为这不是失败，是用户主动取消
+              continue
+            }
+            throw error
+          }
+        }
+        
+        // 🆕 步骤2：上传文件
         const formData = new FormData()
         formData.append('file', fileItem.raw)
         
-        // 🆕 如果填写了元数据，一起发送给后端
-        const hasMetadata = uploadMetadataForm.value.year || 
-                          uploadMetadataForm.value.period || 
-                          uploadMetadataForm.value.regionCode || 
-                          uploadMetadataForm.value.recognitionType || 
-                          uploadMetadataForm.value.taskName
-        
-        if (hasMetadata) {
-          // 区域代码到名称的映射
-          const regionCodeToName = {
-            'BTH': '包头湖',
-            'JJMC': '经济牧场',
-            'KEC': '库尔楚',
-            'PHMC': '普惠牧场',
-            'PHNC': '普惠农场',
-            'YZC': '原种场'
-          }
-          
-          const metadata = {
-            year: uploadMetadataForm.value.year,
-            period: uploadMetadataForm.value.period,
-            regionCode: uploadMetadataForm.value.regionCode,
-            regionName: regionCodeToName[uploadMetadataForm.value.regionCode],
-            recognitionType: uploadMetadataForm.value.recognitionType,
-            taskName: uploadMetadataForm.value.taskName
-          }
-          
-          // 将元数据作为JSON字符串发送
+        // 将元数据作为JSON字符串发送
+        if (metadata) {
           formData.append('metadata', JSON.stringify(metadata))
         }
         
@@ -2091,35 +2388,52 @@ const startUpload = async () => {
       }
     }
     
-    // 显示结果
-    if (failCount === 0) {
-      ElNotification({
-        title: '上传完成',
-        message: `✅ 成功上传 ${successCount} 个文件`,
-        type: 'success',
-        duration: 3000
-      })
+    // 显示结果和处理对话框关闭
+    if (successCount > 0 || failCount > 0) {
+      // 有成功或失败的上传，显示通知并关闭对话框
+      if (failCount === 0) {
+        ElNotification({
+          title: '上传完成',
+          message: `✅ 成功上传 ${successCount} 个文件`,
+          type: 'success',
+          duration: 3000
+        })
+      } else {
+        ElNotification({
+          title: '上传完成',
+          message: `成功: ${successCount} 个，失败: ${failCount} 个`,
+          type: 'warning',
+          duration: 3000
+        })
+      }
+      
+      // 只有在有成功上传的文件时才刷新列表
+      if (successCount > 0) {
+        await loadAllResults()
+      }
+      
+      // 关闭对话框并重置表单
+      resultFileList.value = []
+      showResultUploadDialog.value = false
+      uploadMetadataForm.value = {
+        year: null,
+        period: null,
+        regionCode: '',
+        recognitionType: '',
+        taskName: ''
+      }
+      // 重置元数据列表
+      resultFileMetadataList.value = []
+      currentResultFileIndex.value = 0
+      resultUploadMode.value = 'batch'
     } else {
-      ElNotification({
-        title: '上传完成',
-        message: `成功: ${successCount} 个，失败: ${failCount} 个`,
-        type: 'warning',
-        duration: 3000
+      // 所有文件都被用户取消，保持对话框打开，显示提示
+      ElMessage({
+        message: '所有文件均已取消上传',
+        type: 'info',
+        duration: 2000
       })
-    }
-    
-    // 刷新列表
-    await loadAllResults()
-    
-    // 关闭对话框并重置表单
-    resultFileList.value = []
-    showResultUploadDialog.value = false
-    uploadMetadataForm.value = {
-      year: null,
-      period: null,
-      regionCode: '',
-      recognitionType: '',
-      taskName: ''
+      // 不关闭对话框，用户可以重新选择或修改
     }
     
   } catch (error) {
@@ -2185,7 +2499,6 @@ const editForm = ref({
   name: '',
   year: '',
   period: '',
-  cropType: '',
   region: '',
   sensor: '',
   date: '',
@@ -2215,6 +2528,7 @@ const uploadForm = ref({
   month: '',
   period: '',
   region: '',
+  date: '', // 🆕 采集日期
   sensor: '',
   description: '',
   needOptimize: false, // 是否优化（默认不优化，保留原始文件）
@@ -2753,7 +3067,6 @@ const handleEdit = (row) => {
     name: row.name,
     year: row.year,
     period: row.period,
-    cropType: row.cropType,
     region: row.region,
     sensor: row.sensor,
     date: row.date,
@@ -2768,8 +3081,8 @@ const handleEdit = (row) => {
 const handleSaveEdit = async () => {
   try {
     // 验证必填字段
-    if (!editForm.value.year || !editForm.value.period || !editForm.value.cropType) {
-      ElMessage.warning('请填写年份、期次和作物类型')
+    if (!editForm.value.year || !editForm.value.period) {
+      ElMessage.warning('请填写年份和期次')
       return
     }
     
@@ -2777,7 +3090,6 @@ const handleSaveEdit = async () => {
     const updateData = {
       year: editForm.value.year,
       period: editForm.value.period,
-      cropType: editForm.value.cropType,
       region: editForm.value.region,
       sensor: editForm.value.sensor,
       date: editForm.value.date,
@@ -2998,7 +3310,7 @@ const handleFileChange = (file) => {
   
   uploadFiles.value.push(file.raw)
   
-  // 🆕 从文件名自动识别年份和月份
+  // 🆕 从文件名自动识别区域、年份、月份、采集日期
   const autoMetadata = parseFileNameMetadata(file.name)
   
   // 🆕 初始化该文件的元数据（逐个模式使用）
@@ -3006,20 +3318,37 @@ const handleFileChange = (file) => {
     year: autoMetadata.year || '',
     month: autoMetadata.month || '',
     period: '',
-    region: '',
+    region: autoMetadata.region || '',
+    date: autoMetadata.date || '', // 🆕 采集日期
     sensor: '',
     description: ''
   })
   
   // 🆕 如果是第一个文件，自动填充批量表单
-  if (uploadFiles.value.length === 1 && autoMetadata.year) {
-    uploadForm.value.year = autoMetadata.year
+  if (uploadFiles.value.length === 1) {
+    if (autoMetadata.year) {
+      uploadForm.value.year = autoMetadata.year
+    }
     if (autoMetadata.month) {
       uploadForm.value.month = autoMetadata.month
     }
+    if (autoMetadata.region) {
+      uploadForm.value.region = autoMetadata.region
+    }
+    if (autoMetadata.date) {
+      uploadForm.value.date = autoMetadata.date // 🆕 采集日期
+    }
   }
   
-  ElMessage.success(` 已添加: ${file.name}`)
+  // 显示识别结果
+  let autoInfo = []
+  if (autoMetadata.region) autoInfo.push(`区域: ${autoMetadata.region}`)
+  if (autoMetadata.date) autoInfo.push(`日期: ${autoMetadata.date}`)
+  else if (autoMetadata.year && autoMetadata.month) autoInfo.push(`日期: ${autoMetadata.year}-${autoMetadata.month}`)
+  else if (autoMetadata.year) autoInfo.push(`年份: ${autoMetadata.year}`)
+  
+  const autoInfoStr = autoInfo.length > 0 ? ` (已识别: ${autoInfo.join(', ')})` : ''
+  ElMessage.success(`已添加: ${file.name}${autoInfoStr}`)
 }
 
 const removeFile = (index) => {
@@ -3032,30 +3361,38 @@ const removeFile = (index) => {
   }
 }
 
-// 🆕 从文件名自动识别年份和月份
+// 🆕 从文件名自动识别区域、年份、月份、采集日期
 const parseFileNameMetadata = (filename) => {
   const result = {
     year: '',
-    month: ''
+    month: '',
+    region: '',
+    date: '' // 采集日期 YYYY-MM-DD
   }
+  
+  // 使用 regionMapping.js 中的自动识别函数识别区域、年份、期次
+  const autoDetected = autoDetectMetadata(filename)
+  result.region = autoDetected.regionName || ''
   
   // 移除文件扩展名
   const nameWithoutExt = filename.replace(/\.(tif|tiff|img|jp2)$/i, '')
   
   // 尝试匹配各种日期格式
-  // 格式1: YYYYMMDD (如: BTH20250611RGB.tif → 20250611)
+  // 格式1: YYYYMMDD (如: BTH20250611RGB.tif → 2025-06-11)
   let match = nameWithoutExt.match(/(\d{4})(\d{2})(\d{2})/)
   if (match) {
     result.year = match[1]
     result.month = match[2]
+    result.date = `${match[1]}-${match[2]}-${match[3]}` // 采集日期
     return result
   }
   
-  // 格式2: YYYY_MM (如: 2024_06_data.tif)
-  match = nameWithoutExt.match(/(\d{4})[_-](\d{2})/)
+  // 格式2: YYYY_MM_DD (如: 2024_06_11_data.tif)
+  match = nameWithoutExt.match(/(\d{4})[_-](\d{2})[_-](\d{2})/)
   if (match) {
     result.year = match[1]
     result.month = match[2]
+    result.date = `${match[1]}-${match[2]}-${match[3]}`
     return result
   }
   
@@ -3064,14 +3401,24 @@ const parseFileNameMetadata = (filename) => {
   if (match) {
     result.year = match[1]
     result.month = match[2]
+    result.date = `${match[1]}-${match[2]}-${match[3]}`
     return result
   }
   
-  // 格式4: 只有年份 (如: 2024_kle_vh_kndvi.tif)
+  // 格式4: YYYY_MM (如: 2024_06_data.tif)
+  match = nameWithoutExt.match(/(\d{4})[_-](\d{2})/)
+  if (match) {
+    result.year = match[1]
+    result.month = match[2]
+    // 没有具体日期，只有年月
+    return result
+  }
+  
+  // 格式5: 只有年份 (如: 2024_kle_vh_kndvi.tif)
   match = nameWithoutExt.match(/(\d{4})/)
   if (match) {
     result.year = match[1]
-    // 月份留空
+    // 月份和日期留空
     return result
   }
   
@@ -3245,6 +3592,7 @@ const handleUpload = async () => {
       formData.append('month', uploadForm.value.month)
       formData.append('period', uploadForm.value.period)
       formData.append('region', uploadForm.value.region || '')
+      formData.append('date', uploadForm.value.date || '') // 🆕 采集日期
       formData.append('sensor', uploadForm.value.sensor || '')
       formData.append('description', uploadForm.value.description || '')
     } else {
@@ -3330,6 +3678,7 @@ const handleUpload = async () => {
       month: '',
       period: '',
       region: '',
+      date: '', // 🆕 采集日期
       sensor: '',
       description: '',
       needOptimize: false,
