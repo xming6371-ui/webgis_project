@@ -242,8 +242,8 @@
           </template>
           <div id="map-container" class="map-container">
             
-            <!-- 栅格图层图例（左下角） - 根据数据源动态显示 -->
-            <div class="map-legend" v-show="currentImageData || currentRecognitionData">
+            <!-- 栅格图层图例（左下角） - 只在识别结果时显示 -->
+            <div class="map-legend" v-show="dataSource === 'recognition' && currentRecognitionData">
               <div class="legend-header" @click="legendCollapsed = !legendCollapsed">
                 <span class="legend-title">{{ getLegendTitle() }}</span>
                 <el-icon 
@@ -337,8 +337,8 @@
 
       <!-- 右侧图表 -->
       <el-col :xs="24" :lg="6">
-        <!-- 作物分布图 -->
-        <el-card class="chart-card" shadow="never">
+        <!-- 作物分布图 - 只在识别结果时显示 -->
+        <el-card class="chart-card" shadow="never" v-if="dataSource === 'recognition'">
           <template #header>
             <div style="display: flex; align-items: center; justify-content: space-between;">
               <span><el-icon><PieChart /></el-icon> {{ getChartTitle() }}</span>
@@ -372,11 +372,14 @@
           <div id="crop-chart" class="chart-container"></div>
         </el-card>
 
-        <!-- 统计信息卡片 -->
-        <el-card class="stats-card" shadow="never" style="margin-top: 20px">
+        <!-- 统计信息卡片 / 影像信息卡片 -->
+        <el-card class="stats-card" shadow="never" :style="{ marginTop: dataSource === 'recognition' ? '20px' : '0' }">
           <template #header>
               <div class="stats-header">
-                <span class="stats-title"><el-icon><DataAnalysis /></el-icon> 统计信息</span>
+                <span class="stats-title">
+                  <el-icon><DataAnalysis /></el-icon> 
+                  {{ dataSource === 'image' ? '影像信息' : '统计信息' }}
+                </span>
               <!-- 切换按钮（多文件时显示） -->
               <div v-if="(dataSource === 'image' && loadedImages.length > 1) || (dataSource === 'recognition' && loadedKmzFiles.length > 1)" 
                    class="file-switch-controls">
@@ -404,37 +407,104 @@
               </div>
             </div>
           </template>
-          <div v-if="kpiData.totalArea === '—'" class="stats-empty">
-            <el-empty description="暂无统计数据" :image-size="80" />
+          <!-- 影像数据信息 -->
+          <div v-if="dataSource === 'image'" class="image-info-content">
+            <div v-if="!currentImageData" class="stats-empty">
+              <el-empty description="请选择影像数据" :image-size="80" />
+            </div>
+            <div v-else class="info-list">
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><DocumentChecked /></el-icon>
+                  <span>影像名称</span>
+                </div>
+                <div class="info-value">{{ currentImageData.name }}</div>
+              </div>
+              
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Calendar /></el-icon>
+                  <span>年份</span>
+                </div>
+                <div class="info-value">{{ currentImageData.year }}年</div>
+              </div>
+              
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Grid /></el-icon>
+                  <span>期次</span>
+                </div>
+                <div class="info-value">第{{ currentImageData.period }}期</div>
+              </div>
+              
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Location /></el-icon>
+                  <span>区域</span>
+                </div>
+                <div class="info-value">{{ currentImageData.region || '未设置' }}</div>
+              </div>
+              
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Files /></el-icon>
+                  <span>文件大小</span>
+                </div>
+                <div class="info-value">{{ currentImageData.size }}</div>
+              </div>
+              
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Check /></el-icon>
+                  <span>优化状态</span>
+                </div>
+                <div class="info-value">
+                  <el-tag :type="currentImageData.isOptimized ? 'success' : 'info'" size="small">
+                    {{ currentImageData.isOptimized ? '已优化' : '未优化' }}
+                  </el-tag>
+                </div>
+              </div>
+              
+              <div class="info-item">
+                <div class="info-label">
+                  <el-icon><Clock /></el-icon>
+                  <span>上传时间</span>
+                </div>
+                <div class="info-value">{{ formatUploadTime(currentImageData.uploadTime) }}</div>
+              </div>
+            </div>
           </div>
-          <div v-else class="stats-content">
-            <!-- 当前文件名 -->
-            <div v-if="dataSource === 'image' && currentImageData" class="current-file-name">
-              <el-icon><DocumentChecked /></el-icon>
-              <span>{{ currentImageData.name }}</span>
+          
+          <!-- 识别结果统计信息 -->
+          <div v-else>
+            <div v-if="kpiData.totalArea === '—'" class="stats-empty">
+              <el-empty description="暂无统计数据" :image-size="80" />
             </div>
-            <div v-if="dataSource === 'recognition' && currentRecognitionData" class="current-file-name">
-              <el-icon><DocumentChecked /></el-icon>
-              <span>{{ currentRecognitionData.name }}</span>
-            </div>
-            
-            <div class="stat-item">
-              <div class="stat-icon">
-                <el-icon :size="24" color="#409EFF"><Grid /></el-icon>
+            <div v-else class="stats-content">
+              <!-- 当前文件名 -->
+              <div v-if="currentRecognitionData" class="current-file-name">
+                <el-icon><DocumentChecked /></el-icon>
+                <span>{{ currentRecognitionData.name }}</span>
               </div>
-              <div class="stat-info">
-                <div class="stat-label">总监测面积</div>
-                <div class="stat-value">{{ kpiData.totalArea }} <span class="stat-unit">亩</span></div>
+              
+              <div class="stat-item">
+                <div class="stat-icon">
+                  <el-icon :size="24" color="#409EFF"><Grid /></el-icon>
+                </div>
+                <div class="stat-info">
+                  <div class="stat-label">总监测面积</div>
+                  <div class="stat-value">{{ kpiData.totalArea }} <span class="stat-unit">亩</span></div>
+                </div>
               </div>
-            </div>
-            <!-- 地块总数（仅识别结果显示） -->
-            <div v-if="dataSource === 'recognition'" class="stat-item">
-              <div class="stat-icon">
-                <el-icon :size="24" color="#67C23A"><DocumentChecked /></el-icon>
-              </div>
-              <div class="stat-info">
-                <div class="stat-label">地块总数</div>
-                <div class="stat-value">{{ kpiData.plotCount }} <span class="stat-unit">块</span></div>
+              
+              <div class="stat-item">
+                <div class="stat-icon">
+                  <el-icon :size="24" color="#67C23A"><DocumentChecked /></el-icon>
+                </div>
+                <div class="stat-info">
+                  <div class="stat-label">地块总数</div>
+                  <div class="stat-value">{{ kpiData.plotCount }} <span class="stat-unit">块</span></div>
+                </div>
               </div>
             </div>
           </div>
@@ -471,8 +541,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { Search, Refresh, Grid, SuccessFilled, WarningFilled, DocumentChecked, Location, ZoomIn, ZoomOut, Position, PieChart, DataLine, TrendCharts, ArrowDown, Loading, DataAnalysis, FolderOpened, Check } from '@element-plus/icons-vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { Search, Refresh, Grid, SuccessFilled, WarningFilled, DocumentChecked, Location, ZoomIn, ZoomOut, Position, PieChart, DataLine, TrendCharts, ArrowDown, Loading, DataAnalysis, FolderOpened, Check, Calendar, Files, Clock } from '@element-plus/icons-vue'
 import { RefreshCw } from 'lucide-vue-next'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
@@ -643,6 +713,99 @@ const cropLegend = [
   { value: 9, label: '籽用葫芦', color: '#9370DB' },  // 原8
   { value: 10, label: '其它耕地', color: '#808080' }  // 原9
 ]
+
+// 🎨 hexToRgbObject 辅助函数（返回对象格式）
+const hexToRgbObject = (hex) => {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : { r: 100, g: 100, b: 100 }
+}
+
+// 🎨 动态要素样式函数
+let styleDebugCount = 0  // 用于限制调试输出
+const getFeatureStyle = (feature, recognitionType) => {
+  const props = feature.getProperties()
+  let fillColor = 'rgba(100, 100, 100, 0.5)' // 默认灰色
+  
+  if (recognitionType === 'planting_situation') {
+    // 🌾 种植情况识别：读取 gridcode，映射到作物颜色
+    let gridcode = null
+    if (props.gridcode !== undefined && props.gridcode !== null) {
+      gridcode = parseInt(props.gridcode)
+    } else if (props.GRIDCODE !== undefined && props.GRIDCODE !== null) {
+      gridcode = parseInt(props.GRIDCODE)
+    } else if (props.GridCode !== undefined && props.GridCode !== null) {
+      gridcode = parseInt(props.GridCode)
+    }
+    
+    // 🐛 调试输出（仅输出前5个要素）
+    if (styleDebugCount < 5) {
+      console.log(`🎨 [种植情况识别] 要素属性:`, {
+        gridcode: props.gridcode,
+        GRIDCODE: props.GRIDCODE,
+        GridCode: props.GridCode,
+        解析后: gridcode,
+        所有属性: Object.keys(props).filter(k => k !== 'geometry')
+      })
+      styleDebugCount++
+    }
+    
+    if (gridcode !== null && gridcode >= 1 && gridcode <= 10) {
+      const cropInfo = cropLegend.find(c => c.value === gridcode)
+      if (cropInfo) {
+        const rgb = hexToRgbObject(cropInfo.color)
+        fillColor = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.6)`
+      }
+    }
+  } else if (recognitionType === 'crop_recognition') {
+    // 🌱 作物识别：读取 class，0=未种植（红色），1=已种植（绿色）
+    let classValue = null
+    if (props.class !== undefined && props.class !== null) {
+      classValue = parseInt(props.class)
+    } else if (props.CLASS !== undefined && props.CLASS !== null) {
+      classValue = parseInt(props.CLASS)
+    } else if (props.Class !== undefined && props.Class !== null) {
+      classValue = parseInt(props.Class)
+    }
+    
+    // 🐛 调试输出（仅输出前5个要素）
+    if (styleDebugCount < 5) {
+      console.log(`🎨 [作物识别] 要素属性:`, {
+        class: props.class,
+        CLASS: props.CLASS,
+        Class: props.Class,
+        解析后: classValue,
+        所有属性: Object.keys(props).filter(k => k !== 'geometry')
+      })
+      styleDebugCount++
+    }
+    
+    if (classValue === 1) {
+      fillColor = 'rgba(103, 194, 58, 0.6)' // 已种植=绿色
+    } else if (classValue === 0) {
+      fillColor = 'rgba(245, 108, 108, 0.6)' // 未种植=红色
+    }
+  } else {
+    // ⚠️ 未知识别类型，输出警告
+    if (styleDebugCount < 2) {
+      console.warn(`⚠️ 未知的识别类型: "${recognitionType}"`)
+      styleDebugCount++
+    }
+  }
+  
+  return new Style({
+    fill: new Fill({
+      color: fillColor
+    }),
+    stroke: new Stroke({
+      color: 'rgba(0, 0, 0, 0)',  // 🔧 完全透明的边框
+      width: 0
+    })
+  })
+}
 
 // 获取影像数据列表
 const fetchImageData = async () => {
@@ -835,6 +998,16 @@ const loadRecognitionData = async () => {
   if (tiffLayerVisible.value && newFiles.length > 0) {
     // 🔧 修复：根据文件类型加载不同格式的文件
     await loadRecognitionFilesIncremental(loadedKmzFiles.value)
+    
+    // 🔧 加载完成后，确保图表初始化
+    nextTick(() => {
+      if (!cropChart) {
+        setTimeout(() => {
+          initCropChart()
+          console.log('✅ 查询后图表已初始化')
+        }, 100)
+      }
+    })
   }
   
   console.log(`✅ 已准备 ${loadedKmzFiles.value.length} 个文件，${tiffLayerVisible.value ? '正在加载' : '勾选图层开关以显示'}`)
@@ -956,36 +1129,23 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
           // 使用前端解析KMZ
           const features = await parseKmzToGeoJSON(filePath)
           
-          if (features && features.length > 0) {
-            // 创建图层
-            const geojsonSource = new VectorSource({
-              features: features
-            })
-            
-            const newLayer = new VectorLayer({
-              source: geojsonSource,
-              style: new Style({
-                fill: new Fill({
-                  color: 'rgba(67, 160, 71, 0.5)'
-                }),
-                stroke: new Stroke({
-                  color: '#2E7D32',
-                  width: 2
-                }),
-                image: new Circle({
-                  radius: 7,
-                  fill: new Fill({
-                    color: '#43A047'
-                  })
-                })
-              }),
-              zIndex: 100 + layerIndex,
-              visible: true
-            })
-            
-            // 保存文件名到图层（用于增量加载判断）
-            newLayer.set('fileName', file.name)
-            newLayer.set('fileData', file)
+            if (features && features.length > 0) {
+              // 创建图层
+              const geojsonSource = new VectorSource({
+                features: features
+              })
+              
+              // 🎨 使用动态样式函数
+              const newLayer = new VectorLayer({
+                source: geojsonSource,
+                style: (feature) => getFeatureStyle(feature, file.recognitionType),
+                zIndex: 100 + layerIndex,
+                visible: true
+              })
+              
+              // 保存文件名到图层（用于增量加载判断）
+              newLayer.set('fileName', file.name)
+              newLayer.set('fileData', file)
             
             map.addLayer(newLayer)
             kmzLayers.push(newLayer)
@@ -1046,6 +1206,9 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
 // 🆕 通用识别结果文件增量加载（支持KMZ、SHP、GeoJSON）
 const loadRecognitionFilesIncremental = async (selectedFiles) => {
   try {
+    // 🐛 重置样式调试计数器
+    styleDebugCount = 0
+    
     console.log(`📥 开始增量加载识别结果文件...`)
     console.log(`   已选择: ${selectedFiles.length} 个文件`)
     
@@ -1146,23 +1309,10 @@ const loadShpFilesIncremental = async (selectedFiles) => {
                 features: features
               })
               
+              // 🎨 使用动态样式函数
               const newLayer = new VectorLayer({
                 source: geojsonSource,
-                style: new Style({
-                  fill: new Fill({
-                    color: 'rgba(67, 160, 71, 0.5)'
-                  }),
-                  stroke: new Stroke({
-                    color: '#2E7D32',
-                    width: 2
-                  }),
-                  image: new Circle({
-                    radius: 7,
-                    fill: new Fill({
-                      color: '#43A047'
-                    })
-                  })
-                }),
+                style: (feature) => getFeatureStyle(feature, file.recognitionType),
                 zIndex: 100 + layerIndex,
                 visible: true
               })
@@ -1263,23 +1413,10 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
                 features: features
               })
               
+              // 🎨 使用动态样式函数
               const newLayer = new VectorLayer({
                 source: geojsonSource,
-                style: new Style({
-                  fill: new Fill({
-                    color: 'rgba(67, 160, 71, 0.5)'
-                  }),
-                  stroke: new Stroke({
-                    color: '#2E7D32',
-                    width: 2
-                  }),
-                  image: new Circle({
-                    radius: 7,
-                    fill: new Fill({
-                      color: '#43A047'
-                    })
-                  })
-                }),
+                style: (feature) => getFeatureStyle(feature, file.recognitionType),
                 zIndex: 100 + layerIndex,
                 visible: true
               })
@@ -1355,6 +1492,8 @@ const updateGeoJsonStatistics = (fileData, features) => {
   
   // 统计作物类型或种植情况分布
   const typeCounts = {}
+  const isPlantingSituation = fileData.recognitionType === 'planting_situation'
+  const gridcodeStats = {}  // 🐛 用于统计 gridcode 分布
   
   features.forEach((feature, idx) => {
     const props = feature.getProperties()
@@ -1369,36 +1508,47 @@ const updateGeoJsonStatistics = (fileData, features) => {
     
     let type = '未知'
     
-    // ✅ 优先检查class字段（SHP文件常用字段）
-    if (props.class !== undefined && props.class !== null) {
-      // class字段：1=已种植，0=未种植
-      type = props.class === 1 || props.class === '1' ? '已种植' : '未种植'
-    }
-    // 检查planted字段（0/1或字符串）
-    else if (props.planted !== undefined && props.planted !== null) {
-      type = props.planted === 1 || props.planted === '1' ? '已种植' : '未种植'
-    }
-    // 检查status字段（字符串形式）
-    else if (props.status) {
-      type = props.status
-    }
-    // 检查planting_status或plantingStatus字段
-    else if (props.planting_status || props.plantingStatus) {
-      const status = props.planting_status || props.plantingStatus
-      type = status === 'planted' || status === 1 || status === '1' ? '已种植' : '未种植'
-    }
-    // 检查作物类型相关字段
-    else if (props.cropType || props.crop_type || props.type) {
-      type = props.cropType || props.crop_type || props.type
-    }
-    // 检查category字段
-    else if (props.category) {
-      type = props.category
+    if (isPlantingSituation) {
+      // 🌾 种植情况识别：读取 gridcode 字段，映射到作物类型（1-10）
+      let gridcode = null
+      if (props.gridcode !== undefined && props.gridcode !== null) {
+        gridcode = parseInt(props.gridcode)
+      } else if (props.GRIDCODE !== undefined && props.GRIDCODE !== null) {
+        gridcode = parseInt(props.GRIDCODE)
+      } else if (props.GridCode !== undefined && props.GridCode !== null) {
+        gridcode = parseInt(props.GridCode)
+      }
+      
+      // 🐛 统计原始 gridcode 值分布
+      if (gridcode !== null) {
+        gridcodeStats[gridcode] = (gridcodeStats[gridcode] || 0) + 1
+      }
+      
+      if (gridcode !== null && gridcode >= 1 && gridcode <= 10) {
+        const cropInfo = cropLegend.find(c => c.value === gridcode)
+        type = cropInfo ? cropInfo.label : `未知类型(${gridcode})`
+      } else if (gridcode !== null) {
+        // 🐛 gridcode 超出范围的情况
+        type = `超出范围(${gridcode})`
+      }
+    } else {
+      // 🌱 作物识别：读取 class 字段，0=未种植，1=已种植
+      if (props.class !== undefined && props.class !== null) {
+        const classValue = parseInt(props.class)
+        type = classValue === 1 ? '已种植' : '未种植'
+      } else if (props.CLASS !== undefined && props.CLASS !== null) {
+        const classValue = parseInt(props.CLASS)
+        type = classValue === 1 ? '已种植' : '未种植'
+      } else if (props.Class !== undefined && props.Class !== null) {
+        const classValue = parseInt(props.Class)
+        type = classValue === 1 ? '已种植' : '未种植'
+      }
     }
     
     typeCounts[type] = (typeCounts[type] || 0) + 1
   })
   
+  console.log('🐛 原始 gridcode 值统计:', gridcodeStats)
   console.log('📊 分类统计:', typeCounts)
   
   // 更新KPI数据
@@ -1410,70 +1560,110 @@ const updateGeoJsonStatistics = (fileData, features) => {
   }
   
   // 更新饼图
-  if (cropChart) {
-    const chartData = Object.entries(typeCounts).map(([name, value]) => ({
-      name: name,
-      value: value
-    }))
-    
-    console.log('📊 准备更新饼图，数据:', chartData)
-    
-    const chartTitle = fileData.recognitionType === 'planting_situation' ? '种植情况分布' : '作物类型分布'
-    
-    // ✅ 使用完整的配置，确保饼图正确显示
-    const option = {
-      title: {
-        text: chartTitle,
-        left: 'center',
-        top: 10,
-        textStyle: {
-          fontSize: 16,
-          fontWeight: 600
-        }
-      },
-      tooltip: {
-        trigger: 'item',
-        formatter: '{b}: {c}个 ({d}%)'
-      },
-      legend: {
-        orient: 'vertical',
-        left: 'left',
-        top: 'middle',
-        textStyle: {
-          fontSize: 12
-        }
-      },
-      series: [{
-        name: chartTitle,
-        type: 'pie',
-        radius: ['40%', '70%'],
-        center: ['60%', '50%'],
-        avoidLabelOverlap: true,
+  // 🎨 根据识别类型设置不同的颜色
+  let chartData
+  if (isPlantingSituation) {
+    // 种植情况识别：使用 cropLegend 颜色
+    chartData = Object.entries(typeCounts).map(([name, value]) => {
+      const cropInfo = cropLegend.find(c => c.label === name)
+      return {
+        name: name,
+        value: value,
         itemStyle: {
-          borderRadius: 8,
-          borderColor: '#fff',
-          borderWidth: 2
-        },
-        label: {
-          show: true,
-          formatter: '{b}: {d}%'
-        },
-        emphasis: {
-          label: {
-            show: true,
-            fontSize: 14,
-            fontWeight: 'bold'
-          }
-        },
-        data: chartData
-      }]
-    }
-    
-    cropChart.setOption(option, true)  // 完全替换配置
-    
-    console.log('✅ 饼图已更新，数据项数:', chartData.length)
+          color: cropInfo ? cropInfo.color : '#999999'
+        }
+      }
+    })
   } else {
-    console.warn('⚠️ cropChart未初始化')
+    // 作物识别：已种植=绿色，未种植=红色
+    chartData = Object.entries(typeCounts).map(([name, value]) => {
+      const color = name === '已种植' ? '#67C23A' : '#F56C6C'
+      return {
+        name: name,
+        value: value,
+        itemStyle: {
+          color: color
+        }
+      }
+    })
+  }
+  
+  console.log('📊 准备更新饼图，数据:', chartData)
+  
+  const chartTitle = fileData.recognitionType === 'planting_situation' ? '种植情况分布' : '作物类型分布'
+  
+  // ✅ 使用完整的配置，确保饼图正确显示
+  const option = {
+    title: {
+      text: chartTitle,
+      left: 'center',
+      top: 10,
+      textStyle: {
+        fontSize: 16,
+        fontWeight: 600
+      }
+    },
+    tooltip: {
+      trigger: 'item',
+      formatter: '{b}: {c}个 ({d}%)'
+    },
+    legend: {
+      orient: 'horizontal',  // 🔧 横向排列
+      left: 'center',        // 🔧 居中对齐
+      bottom: 5,             // 🔧 放在底部
+      width: '90%',          // 🔧 限制宽度，自动换行
+      textStyle: {
+        fontSize: 10
+      },
+      itemGap: 6,            // 🔧 图例项之间的间距
+      itemWidth: 12,         // 🔧 图例标记宽度
+      itemHeight: 12         // 🔧 图例标记高度
+    },
+    series: [{
+      name: chartTitle,
+      type: 'pie',
+      radius: ['35%', '60%'],  // 🔧 稍微缩小以留出底部空间
+      center: ['50%', '45%'],  // 🔧 饼图居中，稍微上移
+      avoidLabelOverlap: true,
+      itemStyle: {
+        borderRadius: 8,
+        borderColor: '#fff',
+        borderWidth: 2
+      },
+      label: {
+        show: false  // 🔧 隐藏饼图上的标签和指示线
+      },
+      labelLine: {
+        show: false  // 🔧 隐藏指示线
+      },
+      emphasis: {
+        label: {
+          show: false  // 🔧 悬停时也不显示
+        },
+        scale: true,
+        scaleSize: 10
+      },
+      data: chartData
+    }]
+  }
+  
+  // 🔧 确保图表已初始化
+  if (!cropChart) {
+    console.warn('⚠️ cropChart未初始化，尝试初始化...')
+    nextTick(() => {
+      try {
+        initCropChart()
+        if (cropChart) {
+          cropChart.setOption(option, true)
+          console.log('✅ 图表初始化成功并已更新数据')
+        }
+      } catch (error) {
+        console.error('❌ 图表初始化失败:', error)
+      }
+    })
+  } else {
+    cropChart.setOption(option, true)  // 完全替换配置
+    console.log('✅ 饼图已更新，数据项数:', chartData.length)
   }
 }
 
@@ -1507,8 +1697,10 @@ const updateKmzStatistics = (fileData, index) => {
   const totalArea = calculateKmzArea(features)
   const plotCount = features.length
   
-  // 统计种植情况分布（从description字段解析）
-  const statusCounts = {}
+  // 统计作物类型或种植情况分布
+  const typeCounts = {}
+  const isPlantingSituation = fileData.recognitionType === 'planting_situation'
+  const gridcodeStats = {}  // 🐛 用于统计 gridcode 分布
   
   features.forEach((feature, idx) => {
     const props = feature.getProperties()
@@ -1521,62 +1713,50 @@ const updateKmzStatistics = (fileData, index) => {
       }, {}))
     }
     
-    // 尝试多种可能的字段名来确定种植状态
-    let status = '未知'
+    let type = '未知'
     
-    // 优先从description字段解析
-    if (props.description) {
-      // description是HTML格式，需要解析
-      const desc = props.description
-      
-      // 尝试匹配"种植情况"相关的内容
-      // 例如: <td>已种植</td> 或 <td>未种植</td>
-      const plantedMatch = desc.match(/种植情况.*?<td>([^<]+)<\/td>/i) ||
-                          desc.match(/<td>(已种植|未种植)<\/td>/i) ||
-                          desc.match(/>(已种植|未种植)</i)
-      
-      if (plantedMatch && plantedMatch[1]) {
-        status = plantedMatch[1].trim()
+    if (isPlantingSituation) {
+      // 🌾 种植情况识别：读取 gridcode 字段，映射到作物类型（1-10）
+      let gridcode = null
+      if (props.gridcode !== undefined && props.gridcode !== null) {
+        gridcode = parseInt(props.gridcode)
+      } else if (props.GRIDCODE !== undefined && props.GRIDCODE !== null) {
+        gridcode = parseInt(props.GRIDCODE)
+      } else if (props.GridCode !== undefined && props.GridCode !== null) {
+        gridcode = parseInt(props.GridCode)
       }
       
-      // 输出第一个要素的完整description用于调试
-      if (idx === 0) {
-        console.log('📝 第一个要素的description完整内容:')
-        console.log(desc.substring(0, 1000))  // 输出前1000字符
+      // 🐛 统计原始 gridcode 值分布
+      if (gridcode !== null) {
+        gridcodeStats[gridcode] = (gridcodeStats[gridcode] || 0) + 1
       }
       
-      // 如果上面没匹配到，尝试从name字段
-      if (status === '未知' && props.name) {
-        // name字段可能是 '0' 或 '1'
-        if (props.name === '0') {
-          status = '未种植'
-        } else if (props.name === '1') {
-          status = '已种植'
-        }
+      if (gridcode !== null && gridcode >= 1 && gridcode <= 10) {
+        const cropInfo = cropLegend.find(c => c.value === gridcode)
+        type = cropInfo ? cropInfo.label : `未知类型(${gridcode})`
+      } else if (gridcode !== null) {
+        // 🐛 gridcode 超出范围的情况
+        type = `超出范围(${gridcode})`
       }
-    } else if (props.planted === 1 || props.planted === '1') {
-      status = '已种植'
-    } else if (props.planted === 0 || props.planted === '0') {
-      status = '未种植'
-    } else if (props.status) {
-      status = props.status
-    } else if (props.planting_status) {
-      status = props.planting_status === 'planted' ? '已种植' : '未种植'
-    } else if (props.type) {
-      status = props.type
-    } else if (props.name) {
-      // name字段是 '0' 或 '1'
-      if (props.name === '0') {
-        status = '未种植'
-      } else if (props.name === '1') {
-        status = '已种植'
+    } else {
+      // 🌱 作物识别：读取 class 字段，0=未种植，1=已种植
+      if (props.class !== undefined && props.class !== null) {
+        const classValue = parseInt(props.class)
+        type = classValue === 1 ? '已种植' : '未种植'
+      } else if (props.CLASS !== undefined && props.CLASS !== null) {
+        const classValue = parseInt(props.CLASS)
+        type = classValue === 1 ? '已种植' : '未种植'
+      } else if (props.Class !== undefined && props.Class !== null) {
+        const classValue = parseInt(props.Class)
+        type = classValue === 1 ? '已种植' : '未种植'
       }
     }
     
-    statusCounts[status] = (statusCounts[status] || 0) + 1
+    typeCounts[type] = (typeCounts[type] || 0) + 1
   })
   
-  console.log('🌾 种植情况统计:', statusCounts)
+  console.log('🐛 原始 gridcode 值统计:', gridcodeStats)
+  console.log('📊 分类统计:', typeCounts)
   
   // 更新统计数据
   kpiData.value = {
@@ -1587,24 +1767,112 @@ const updateKmzStatistics = (fileData, index) => {
   }
   
   // 更新饼图
-  if (cropChart) {
-    const chartData = Object.entries(statusCounts).map(([status, count]) => ({
-      value: count,
-      name: status
-    }))
-    
-    // 按数量排序
-    chartData.sort((a, b) => b.value - a.value)
-    
-    console.log('📊 饼图数据:', chartData)
-    
-    cropChart.setOption({
-      series: [{
-        name: '种植情况',
-        data: chartData
-        // 不设置minAngle，让所有数据都能显示
-      }]
-    }, true)  // 使用notMerge确保完全替换
+  // 🎨 根据识别类型设置不同的颜色
+  let chartData
+  if (isPlantingSituation) {
+    // 种植情况识别：使用 cropLegend 颜色
+    chartData = Object.entries(typeCounts).map(([name, value]) => {
+      const cropInfo = cropLegend.find(c => c.label === name)
+      return {
+        name: name,
+        value: value,
+        itemStyle: {
+          color: cropInfo ? cropInfo.color : '#999999'
+        }
+      }
+    })
+  } else {
+    // 作物识别：已种植=绿色，未种植=红色
+    chartData = Object.entries(typeCounts).map(([name, value]) => {
+      const color = name === '已种植' ? '#67C23A' : '#F56C6C'
+      return {
+        name: name,
+        value: value,
+        itemStyle: {
+          color: color
+        }
+      }
+    })
+  }
+  
+  // 按数量排序
+  chartData.sort((a, b) => b.value - a.value)
+  
+  console.log('📊 饼图数据:', chartData)
+  
+  const chartTitle = fileData.recognitionType === 'planting_situation' ? '种植情况分布' : '作物类型分布'
+  
+  const option = {
+    title: {
+      text: chartTitle,
+      left: 'center',
+      top: 10,
+      textStyle: {
+        fontSize: 16,
+        fontWeight: 600
+      }
+    },
+    tooltip: {
+      trigger: 'item',
+      formatter: '{b}: {c}个 ({d}%)'
+    },
+    legend: {
+      orient: 'horizontal',  // 🔧 横向排列
+      left: 'center',        // 🔧 居中对齐
+      bottom: 5,             // 🔧 放在底部
+      width: '90%',          // 🔧 限制宽度，自动换行
+      textStyle: {
+        fontSize: 10
+      },
+      itemGap: 6,            // 🔧 图例项之间的间距
+      itemWidth: 12,         // 🔧 图例标记宽度
+      itemHeight: 12         // 🔧 图例标记高度
+    },
+    series: [{
+      name: chartTitle,
+      type: 'pie',
+      radius: ['35%', '60%'],
+      center: ['50%', '45%'],
+      avoidLabelOverlap: true,
+      itemStyle: {
+        borderRadius: 8,
+        borderColor: '#fff',
+        borderWidth: 2
+      },
+      label: {
+        show: false  // 🔧 隐藏标签
+      },
+      labelLine: {
+        show: false  // 🔧 隐藏指示线
+      },
+      emphasis: {
+        label: {
+          show: false
+        },
+        scale: true,
+        scaleSize: 10
+      },
+      data: chartData
+    }]
+  }
+  
+  // 🔧 确保图表已初始化
+  if (!cropChart) {
+    console.warn('⚠️ cropChart未初始化，尝试初始化...')
+    nextTick(() => {
+      try {
+        initCropChart()
+        if (cropChart) {
+          cropChart.setOption(option, true)
+          console.log('✅ 图表初始化成功并已更新数据')
+        }
+      } catch (error) {
+        console.error('❌ 图表初始化失败:', error)
+      }
+    })
+  } else {
+    cropChart.setOption(option, true)  // 使用notMerge确保完全替换
+    console.log('✅ 饼图已更新')
   }
   
   console.log(`✅ 更新KMZ统计完成: 面积=${totalArea.toFixed(0)}亩, 地块=${plotCount}`)
@@ -2521,6 +2789,22 @@ const formatNumber = (num) => {
   return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
 
+// 格式化上传时间
+const formatUploadTime = (uploadTime) => {
+  if (!uploadTime) return '未知'
+  try {
+    const date = new Date(uploadTime)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    return `${year}-${month}-${day} ${hours}:${minutes}`
+  } catch (error) {
+    return '未知'
+  }
+}
+
 // 获取图例标题
 const getLegendTitle = () => {
   if (dataSource.value === 'image') {
@@ -2581,27 +2865,91 @@ const handleRefreshOptions = async () => {
     // 重新加载数据
     if (dataSource.value === 'image') {
       await fetchImageData()
-      // 重置影像筛选条件
+      // 重置影像筛选条件（不设置默认值，显示占位符）
       filterForm.value = {
-        year: availableYears.value[0] || '2024',
-        period: '1',
+        year: '',  // 不设置默认值，显示占位符
+        period: '',
         imageNames: [],
         region: [],
         keyword: ''
       }
       selectedCropTypes.value = []
-      updateAvailablePeriods()
+      availablePeriods.value = []  // 清空期次选项
+      
+      // 🔧 重新初始化图表
+      nextTick(() => {
+        if (cropChart) {
+          try {
+            cropChart.dispose()
+          } catch (e) {
+            console.warn('销毁旧图表实例时出错:', e)
+          }
+          cropChart = null
+        }
+        setTimeout(() => {
+          initCropChart()
+          console.log('✅ 影像数据图表已重新初始化')
+        }, 100)
+      })
     } else {
+      // 🔧 清空之前的查询结果
+      loadedKmzFiles.value = []
+      currentRecognitionData.value = null
+      currentKmzIndex.value = 0
+      
       await loadRecognitionResults()
-      // 重置识别结果筛选条件
+      
+      // 🔧 重置识别结果筛选条件（使用新对象确保响应式更新）
+      // 🔧 不设置默认值，让用户手动选择
       recognitionFilter.value = {
-        year: '',  // 🔧 修复：默认为空（全部年份）
+        year: '',  // 不设置默认值，显示占位符
         period: '',
         region: '',
         recognitionType: '',
         fileFormat: '',
         fileNames: []
       }
+      
+      // 🔧 清空期次选项
+      recognitionPeriods.value = []
+      
+      // 🔧 重新初始化图表为空白状态
+      nextTick(() => {
+        if (cropChart) {
+          try {
+            cropChart.dispose()
+          } catch (e) {
+            console.warn('销毁旧图表实例时出错:', e)
+          }
+          cropChart = null
+        }
+        setTimeout(() => {
+          initCropChart()
+          // 设置为空白状态
+          if (cropChart) {
+            cropChart.setOption({
+              title: {
+                text: '种植情况分布',
+                left: 'center',
+                top: 10,
+                textStyle: {
+                  fontSize: 16,
+                  fontWeight: 600
+                }
+              },
+              series: [{
+                type: 'pie',
+                radius: ['35%', '60%'],
+                center: ['50%', '45%'],
+                data: [],
+                label: { show: false },
+                labelLine: { show: false }
+              }]
+            })
+          }
+          console.log('✅ 识别结果图表已重新初始化为空白状态')
+        }, 100)
+      })
     }
     
     // 重置统计信息
@@ -2618,29 +2966,8 @@ const handleRefreshOptions = async () => {
 const handleDataSourceChange = async () => {
   console.log('数据源切换:', dataSource.value)
   
-  // 清空地图上的图层
-  clearMapLayers()
-  
-  // 重置统计信息为初始状态
-  resetStatistics()
-  
-  if (dataSource.value === 'image') {
-    // 切换到影像数据，清空识别结果的筛选条件
-    recognitionFilter.value.year = ''
-    recognitionFilter.value.period = ''
-    recognitionFilter.value.region = ''
-    recognitionFilter.value.recognitionType = ''
-    recognitionFilter.value.fileNames = []
-    await fetchImageData()
-  } else {
-    // 切换到识别结果，清空影像数据的筛选条件
-    filterForm.value.year = ''
-    filterForm.value.period = ''
-    filterForm.value.imageNames = []
-    selectedCropTypes.value = []
-    availableCropTypes.value = []
-    await loadRecognitionResults()
-  }
+  // 🔧 直接调用刷新逻辑，确保完全重置
+  await handleRefreshOptions()
 }
 
 // 重置统计信息为初始状态
@@ -2658,22 +2985,17 @@ const resetStatistics = () => {
     plotCount: '—'
   }
   
-  // 重置饼图为"暂无数据"
-  if (cropChart) {
-    cropChart.setOption({
-      series: [{
-        name: dataSource.value === 'image' ? '作物类型' : '种植情况',
-        data: [{ value: 1, name: '暂无数据' }]
-        // 不设置minAngle，让所有数据都能显示
-      }]
-    }, true)  // 使用notMerge确保完全替换
-  }
+  // 🔧 不在这里重置饼图，让数据源切换时统一处理
+  // 避免在图表初始化前操作导致问题
 }
 
 // 加载识别结果数据
 const loadRecognitionResults = async () => {
   try {
+    console.log('🔄 开始加载识别结果数据...')
     const response = await axios.get('/api/analysis/results')
+    
+    console.log('📡 API响应:', response.data)
     
     if (response.data.code === 200) {
       // 🔧 修复：加载所有格式的识别结果（KMZ、SHP、GeoJSON）
@@ -2682,42 +3004,43 @@ const loadRecognitionResults = async () => {
       )
       
       console.log('✅ 加载识别结果:', recognitionResults.value.length, '个')
+      console.log('📋 原始数据条数:', response.data.data.length)
       console.log('   格式分布:', {
         KMZ: recognitionResults.value.filter(i => i.type === 'KMZ').length,
         SHP: recognitionResults.value.filter(i => i.type === 'SHP').length,
         GeoJSON: recognitionResults.value.filter(i => i.type === 'GeoJSON').length
       })
       
-      // 🔍 调试：输出所有KMZ文件的详细信息
-      const kmzFiles = recognitionResults.value.filter(i => i.type === 'KMZ')
-      if (kmzFiles.length > 0) {
-        console.log('📦 KMZ文件详情:')
-        kmzFiles.forEach(file => {
-          console.log(`   - ${file.name}:`, {
-            year: file.year,
-            period: file.period,
-            region: file.regionCode,
-            recognitionType: file.recognitionType,
-            relativePath: file.relativePath
-          })
+      // 🔍 调试：输出前3个文件的完整信息
+      if (recognitionResults.value.length > 0) {
+        console.log('📦 前3个文件详情:')
+        recognitionResults.value.slice(0, 3).forEach((file, idx) => {
+          console.log(`   ${idx + 1}. ${file.name}:`, file)
         })
       }
       
       // 提取可用的年份
       const years = new Set()
       recognitionResults.value.forEach(item => {
+        console.log(`   检查文件 ${item.name} 的年份: ${item.year}`)
         if (item.year) {
           years.add(item.year)
         }
       })
       recognitionYears.value = Array.from(years).sort((a, b) => b - a)
       
+      console.log('📅 提取到的年份列表:', recognitionYears.value)
+      console.log('📊 recognitionYears.value:', recognitionYears.value)
+      
       // 🔧 修复：不自动选择年份，默认显示全部
       // 用户可以通过下拉框手动选择年份进行筛选
+    } else {
+      console.error('❌ API返回错误:', response.data)
+      ElMessage.error('加载识别结果失败: ' + (response.data.message || '未知错误'))
     }
   } catch (error) {
-    console.error('加载识别结果失败:', error)
-    ElMessage.error('加载识别结果失败')
+    console.error('❌ 加载识别结果失败:', error)
+    ElMessage.error('加载识别结果失败: ' + error.message)
   }
 }
 
@@ -2829,13 +3152,45 @@ const handleZoomOut = () => {
   }
 }
 
-const handleZoomToExtent = () => {
+const handleZoomToExtent = async () => {
   if (map) {
     const view = map.getView()
     
-    // 如果TIF图层打开，尝试缩放到TIF范围
-    if (tiffLayerVisible.value && tiffLayers.length > 0) {
-      // 获取第一个图层的源
+    // 🆕 影像数据模式：自动加载图层并缩放
+    if (dataSource.value === 'image' && loadedImages.value.length > 0) {
+      // 如果图层未加载，先加载
+      if (tiffLayers.length === 0) {
+        tiffLayerVisible.value = true
+        await reloadMultipleTiffLayers(loadedImages.value)
+      }
+      
+      // 缩放到图层范围
+      if (tiffLayers.length > 0) {
+        const firstLayer = tiffLayers[0]
+        const source = firstLayer.getSource()
+        
+        if (source) {
+          source.getView().then((viewConfig) => {
+            if (viewConfig && viewConfig.extent) {
+              view.fit(viewConfig.extent, {
+                padding: [50, 50, 50, 50],
+                duration: 500
+              })
+              ElMessage.success('已缩放至影像范围')
+            }
+          }).catch(() => {
+            view.animate({
+              center: fromLonLat([87.6, 43.8]),
+              zoom: 6,
+              duration: 500
+            })
+            ElMessage.info('已缩放至默认视图')
+          })
+        }
+      }
+    }
+    // 识别结果模式：原有逻辑
+    else if (tiffLayerVisible.value && tiffLayers.length > 0) {
       const firstLayer = tiffLayers[0]
       const source = firstLayer.getSource()
       
@@ -2849,7 +3204,6 @@ const handleZoomToExtent = () => {
           ElMessage.success('已缩放至图层范围')
         }
       }).catch(() => {
-        // 如果获取失败，使用默认范围
         view.animate({
           center: fromLonLat([87.6, 43.8]),
           zoom: 6,
@@ -3044,7 +3398,26 @@ const handleBaseMapChange = (value) => {
 
 const initCropChart = () => {
   const chartDom = document.getElementById('crop-chart')
-  cropChart = echarts.init(chartDom)
+  
+  // 🔧 检查DOM元素是否存在
+  if (!chartDom) {
+    console.warn('⚠️ 图表DOM元素不存在，跳过初始化')
+    return
+  }
+  
+  // 🔧 如果已经存在实例，先销毁
+  if (cropChart) {
+    cropChart.dispose()
+    cropChart = null
+  }
+  
+  try {
+    cropChart = echarts.init(chartDom)
+    console.log('✅ ECharts实例初始化成功')
+  } catch (error) {
+    console.error('❌ ECharts初始化失败:', error)
+    return
+  }
   
   const option = {
     tooltip: {
@@ -3634,6 +4007,64 @@ onBeforeUnmount(() => {
     .stats-empty {
       padding: 20px;
       text-align: center;
+    }
+    
+    // 🆕 影像信息样式
+    .image-info-content {
+      .info-list {
+        padding: 8px 0;
+        
+        .info-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 14px 16px;
+          margin-bottom: 10px;
+          background: linear-gradient(135deg, #ffffff 0%, #f8f9fc 100%);
+          border-radius: 10px;
+          border: 1px solid #e8ecf0;
+          transition: all 0.3s ease;
+          
+          &:last-child {
+            margin-bottom: 0;
+          }
+          
+          &:hover {
+            background: linear-gradient(135deg, #f8f9fc 0%, #e8edf5 100%);
+            transform: translateX(4px);
+            border-color: #409EFF;
+            box-shadow: 0 4px 12px rgba(64, 158, 255, 0.15);
+          }
+          
+          .info-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #606266;
+            min-width: 100px;
+            
+            .el-icon {
+              font-size: 16px;
+              color: #409EFF;
+            }
+          }
+          
+          .info-value {
+            font-size: 13px;
+            color: #303133;
+            font-weight: 500;
+            text-align: right;
+            flex: 1;
+            word-break: break-all;
+            
+            .el-tag {
+              font-size: 12px;
+            }
+          }
+        }
+      }
     }
     
     .stats-content {
