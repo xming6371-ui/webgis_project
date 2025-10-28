@@ -16,19 +16,6 @@
           <el-tooltip content="刷新" placement="bottom">
             <el-button :icon="Refresh" circle @click="handleRefresh" />
           </el-tooltip>
-          <el-dropdown>
-            <div class="user-info">
-              <el-avatar :size="32" :icon="User" />
-              <span class="username">管理员</span>
-            </div>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item :icon="User">个人中心</el-dropdown-item>
-                <el-dropdown-item :icon="Setting">系统设置</el-dropdown-item>
-                <el-dropdown-item divided :icon="SwitchButton">退出登录</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
         </el-space>
       </div>
     </el-header>
@@ -92,9 +79,7 @@ import {
   Location,
   FullScreen,
   Refresh,
-  User,
   Setting,
-  SwitchButton,
   Monitor,
   Picture,
   View,
@@ -169,24 +154,6 @@ const handleRefresh = () => {
   }
 
   .header-right {
-    .user-info {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      cursor: pointer;
-      padding: 5px 10px;
-      border-radius: 20px;
-      transition: all 0.3s;
-
-      &:hover {
-        background: rgba(255, 255, 255, 0.1);
-      }
-
-      .username {
-        font-size: 14px;
-        font-weight: 500;
-      }
-    }
   }
 }
 
