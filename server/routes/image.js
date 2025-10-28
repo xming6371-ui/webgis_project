@@ -1327,12 +1327,10 @@ async function optimizeTifFile(id, options = {}) {
       console.log('   - 重采样方法: cubic（更适合RGB影像）')
       gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     } else if (dataType === 'Float32' || dataType === 'Float64') {
-      // 浮点RGB：需要两步处理
-      // 步骤1: gdal_translate 转换为Byte + 缩放
-      // 步骤2: gdalwarp 投影转换 + COG优化
-      console.log(`   - ⚠️ 检测到浮点类型 (${dataType})，需要两步处理`)
-      console.log('   - 步骤1: 转换为Byte类型并缩放到0-255')
-      console.log('   - 步骤2: 投影转换 + COG优化')
+      // 浮点RGB：需要转换为Byte并使用检测到的值域统一缩放
+      console.log(`   - ⚠️ 检测到浮点类型 (${dataType})`)
+      console.log('   - 需要转换为Byte (0-255) 以便正确显示')
+      console.log('   - 将检测实际值域并统一缩放所有波段')
       console.log('   - 压缩方式: JPEG (质量85)')
       console.log('   - 重采样方法: cubic')
       
@@ -1365,17 +1363,51 @@ async function optimizeTifFile(id, options = {}) {
       // ========== 两步处理：Float RGB 影像 ==========
       console.log('\n🔄 开始两步处理流程:')
       
-      // 步骤1: gdal_translate 转换数据类型并缩放
-      console.log('📋 步骤1/2: 数据类型转换 + 缩放')
-      const translateCmd = `gdal_translate -ot Byte -scale -of GTiff "${inputPath}" "${tempScaled}"`
+      // 步骤0: 使用gdalinfo -stats检测值域
+      console.log('📊 步骤0: 检测影像值域范围...')
+      const gdalinfoStatsCmd = buildGDALCommand(`gdalinfo -stats "${inputPath}"`)
+      const { stdout: statsOutput } = await execAsync(gdalinfoStatsCmd)
+      
+      // 提取每个波段的最小值和最大值
+      const bandStats = []
+      const bandRegex = /Band (\d+)[\s\S]*?Minimum=([\d.]+)[\s\S]*?Maximum=([\d.]+)/g
+      let match
+      while ((match = bandRegex.exec(statsOutput)) !== null) {
+        bandStats.push({
+          band: parseInt(match[1]),
+          min: parseFloat(match[2]),
+          max: parseFloat(match[3])
+        })
+      }
+      
+      console.log('   检测到各波段值域:')
+      bandStats.forEach(stat => {
+        console.log(`   - Band ${stat.band}: ${stat.min.toFixed(2)} ~ ${stat.max.toFixed(2)}`)
+      })
+      
+      // ✅ 使用每个波段独立的最小最大值拉伸（类似ArcGIS Pro的"最小最大值拉伸"）
+      console.log(`   ✅ 策略：每个波段独立拉伸到0-255（保留真彩色）`)
+      
+      const band1 = bandStats.find(s => s.band === 1) || bandStats[0]
+      const band2 = bandStats.find(s => s.band === 2) || bandStats[1]
+      const band3 = bandStats.find(s => s.band === 3) || bandStats[2]
+      
+      // 步骤1: gdal_translate 转换数据类型，每个波段使用独立的缩放范围
+      console.log('\n📋 步骤1/2: 数据类型转换 + 独立波段拉伸')
+      console.log(`   Band 1 (红): ${band1.min.toFixed(2)}-${band1.max.toFixed(2)} → 0-255`)
+      console.log(`   Band 2 (绿): ${band2.min.toFixed(2)}-${band2.max.toFixed(2)} → 0-255`)
+      console.log(`   Band 3 (蓝): ${band3.min.toFixed(2)}-${band3.max.toFixed(2)} → 0-255`)
+      
+      const translateCmd = `gdal_translate -ot Byte -scale_1 ${band1.min} ${band1.max} 0 255 -scale_2 ${band2.min} ${band2.max} 0 255 -scale_3 ${band3.min} ${band3.max} 0 255 -a_nodata 0 -of GTiff "${inputPath}" "${tempScaled}"`
       const fullTranslateCmd = buildGDALCommand(translateCmd)
       console.log(`   命令: ${fullTranslateCmd}`)
+      console.log(`   ⚠️ 每个波段独立拉伸（最小最大值拉伸）`)
       
       optimizationProgress.set(id, {
         ...optimizationProgress.get(id),
         progress: 40,
         status: 'converting',
-        step: '步骤1/2: Float→Byte转换 + 缩放...'
+        step: '步骤1/2: Float→Byte转换 + 统一缩放...'
       })
       
       const { stdout: stdout1, stderr: stderr1 } = await execAsync(fullTranslateCmd)
@@ -1389,6 +1421,20 @@ async function optimizeTifFile(id, options = {}) {
       console.log(`✅ 步骤1完成 (耗时: ${elapsed1}秒)`)
       console.log(`   缩放后文件大小: ${(scaledStats.size / (1024 * 1024)).toFixed(2)}MB`)
       if (stderr1 && stderr1.trim()) console.log(`   stderr: ${stderr1}`)
+      
+      // 检查缩放后的像素值分布
+      console.log('\n📊 检查缩放后的像素值分布...')
+      const checkStatsCmd = buildGDALCommand(`gdalinfo -stats "${tempScaled}"`)
+      try {
+        const { stdout: checkOutput } = await execAsync(checkStatsCmd)
+        const scaledBandRegex = /Band (\d+)[\s\S]*?Minimum=([\d.]+)[\s\S]*?Maximum=([\d.]+)[\s\S]*?Mean=([\d.]+)/g
+        let checkMatch
+        while ((checkMatch = scaledBandRegex.exec(checkOutput)) !== null) {
+          console.log(`   Band ${checkMatch[1]}: Min=${checkMatch[2]}, Max=${checkMatch[3]}, Mean=${checkMatch[4]}`)
+        }
+      } catch (err) {
+        console.warn('   ⚠️ 无法检查缩放后统计信息')
+      }
       
       // 步骤2: gdalwarp 投影转换 + COG优化
       console.log('\n📋 步骤2/2: 投影转换 + COG优化')
@@ -1425,8 +1471,8 @@ async function optimizeTifFile(id, options = {}) {
       console.log(`   ${gdalCommand}`)
       
       const { stdout, stderr } = await execAsync(gdalCommand)
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
-      console.log(`✅ 投影转换 + COG转换 + 金字塔生成完成 (耗时: ${elapsed}秒)`)
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
+    console.log(`✅ 投影转换 + COG转换 + 金字塔生成完成 (耗时: ${elapsed}秒)`)
       if (stderr && stderr.trim()) console.log(`   GDAL stderr: ${stderr}`)
     }
     

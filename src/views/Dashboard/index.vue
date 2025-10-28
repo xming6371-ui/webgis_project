@@ -2158,17 +2158,17 @@ const reloadMultipleTiffLayers = async (images) => {
       // 🎨 根据影像类型选择不同的样式
       let layerStyle
       if (isRGB) {
-        // RGB 影像：直接显示 RGB 三个波段
+        // RGB 影像：直接归一化（后端已做独立波段拉伸）
         layerStyle = {
           color: [
             'array',
-            ['band', 1],  // Red
-            ['band', 2],  // Green
-            ['band', 3],  // Blue
-            1             // Alpha (完全不透明)
+            ['/', ['band', 1], 255],  // Red: 归一化到0-1
+            ['/', ['band', 2], 255],  // Green: 归一化到0-1
+            ['/', ['band', 3], 255],  // Blue: 归一化到0-1
+            1                          // Alpha
           ]
         }
-        console.log('   🎨 使用 RGB 样式')
+        console.log('   🎨 使用 RGB 样式（直接归一化，后端已做独立波段拉伸）')
       } else {
         // 单波段影像：使用作物分类颜色映射
         layerStyle = {
