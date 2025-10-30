@@ -2328,8 +2328,14 @@ const reloadMultipleTiffLayers = async (images) => {
           pathToLoad = `/api/image/file/${encodeURIComponent(filename)}`
         }
         
-        // 🎨 检测是否为 RGB 影像（根据文件名）
-        const isRGB = image.name.toUpperCase().includes('RGB')
+        // 🎨 检测是否为 RGB 影像
+        // ✅ 智能判断逻辑：
+        // 1. 如果有统计数据且 bandCount === 3，则认为是RGB（最可靠）
+        // 2. 否则使用 statistics.isRGB 字段
+        // 3. 最后回退到文件名判断
+        const isRGB = (image.statistics?.bandCount === 3) || 
+                      image.statistics?.isRGB || 
+                      image.name.toUpperCase().includes('RGB')
         
         if (isDev) {
           console.log(`   [${i + 1}/${images.length}] ${image.name} (${isRGB ? 'RGB' : '分类'})`)
@@ -2737,7 +2743,10 @@ const updateStatistics = async (imageData) => {
     }
     
     // ⚡ 优化：RGB影像不需要统计数据，直接跳过
-    const isRGB = imageData.name.toUpperCase().includes('RGB')
+    // ✅ 智能判断逻辑（与加载影像时保持一致）
+    const isRGB = (imageData.statistics?.bandCount === 3) || 
+                  imageData.statistics?.isRGB || 
+                  imageData.name.toUpperCase().includes('RGB')
     if (isRGB) {
       if (isDev) {
         console.log('ℹ️ RGB影像无需统计数据')

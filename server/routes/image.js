@@ -111,9 +111,13 @@ async function syncMetadata() {
     
     const tifFiles = files.filter(f => {
       const ext = path.extname(f).toLowerCase()
-      return ['.tif', '.tiff'].includes(ext)
+      // ✅ 过滤掉临时文件和备份文件
+      const isTemporaryFile = f.startsWith('temp_optimized_') || 
+                             f.startsWith('temp_scaled_') || 
+                             f.startsWith('backup_')
+      return ['.tif', '.tiff'].includes(ext) && !isTemporaryFile
     })
-    console.log(`📊 其中 ${tifFiles.length} 个TIF文件`)
+    console.log(`📊 其中 ${tifFiles.length} 个TIF文件（已过滤临时文件和备份文件）`)
     
     const metadata = readMetadata()
     console.log(`💾 当前元数据中有 ${metadata.images.length} 条记录`)
@@ -628,16 +632,18 @@ router.post('/upload', upload.array('files'), async (req, res) => {
       description: req.body.description || ''
     }
     
-    // 获取优化选项
-    const needOptimize = req.body.needOptimize === 'true'
-    const overwriteOriginal = req.body.overwriteOriginal === 'true'
+    // 获取优化选项（兼容字符串和布尔值）
+    const needOptimize = req.body.needOptimize === 'true' || req.body.needOptimize === true
+    const overwriteOriginal = req.body.overwriteOriginal === 'true' || req.body.overwriteOriginal === true
     const optimizedFileName = req.body.optimizedFileName || ''
     
     console.log('📥 上传选项:', {
       uploadMode,
       needOptimize,
       overwriteOriginal,
-      optimizedFileName
+      optimizedFileName,
+      rawNeedOptimize: req.body.needOptimize,
+      rawOverwriteOriginal: req.body.overwriteOriginal
     })
     
     // ✅ 手动为每个文件创建元数据（不触发全量同步）
@@ -1087,6 +1093,23 @@ async function analyzeTifFile(filePath) {
     const values = data[0] // 第一个波段
     const pixelCount = values.length
     
+    // ✅ 检测波段数和数据类型（用于判断RGB影像）
+    const bandCount = data.length
+    const sampleFormat = image.getSampleFormat()
+    const bitsPerSample = image.getBitsPerSample()
+    
+    // ✅ 判断是否为RGB影像
+    // RGB影像特征：3个波段（不管数据类型）
+    // 注意：不依赖数据类型判断，因为优化后的TIF可能有不同的数据类型
+    const isRGBImage = bandCount === 3
+    
+    console.log(`📊 波段数: ${bandCount}, 数据类型: ${sampleFormat[0]}, 位深: ${bitsPerSample[0]}`)
+    if (isRGBImage) {
+      console.log(`🎨 检测到RGB影像（${bandCount}波段）`)
+    } else {
+      console.log(`📊 检测到单波段影像（分类/指数）`)
+    }
+    
     // 获取地理变换参数（用于计算面积）
     const pixelSize = image.getResolution() // [宽度, 高度]
     const pixelAreaM2 = Math.abs(pixelSize[0] * pixelSize[1]) // 平方米
@@ -1097,7 +1120,7 @@ async function analyzeTifFile(filePath) {
     console.log(`   像元大小: ${pixelSize[0]}m × ${pixelSize[1]}m`)
     console.log(`   总面积: ${totalAreaMu.toFixed(2)} 亩`)
     
-    // ✅ 返回简化的统计信息
+    // ✅ 返回完整的统计信息（包含RGB标识）
     const statistics = {
       pixelCount: pixelCount,
       pixelWidth: image.getWidth(),
@@ -1107,6 +1130,10 @@ async function analyzeTifFile(filePath) {
       pixelAreaM2: pixelAreaM2,
       pixelAreaMu: pixelAreaMu,
       totalAreaMu: totalAreaMu.toFixed(2),
+      bandCount: bandCount,  // ✅ 新增：波段数
+      isRGB: isRGBImage,     // ✅ 新增：RGB标识
+      dataType: sampleFormat[0],  // ✅ 新增：数据类型
+      bitsPerSample: bitsPerSample[0],  // ✅ 新增：位深
       analyzedAt: new Date().toISOString(),
       analyzed: true
     }
@@ -1197,11 +1224,19 @@ async function detectOptimizationStatus(filePath) {
 
 // 优化TIF文件的核心函数（可被路由和自动优化调用）
 async function optimizeTifFile(id, options = {}) {
-  // 解析选项
+  // 解析选项（兼容布尔值和字符串）
   const {
     overwriteOriginal = false,  // 是否覆盖原文件
     customFileName = ''          // 自定义文件名（不带.tif后缀）
   } = options
+  
+  // ✅ 转换为布尔值，确保类型一致
+  const shouldOverwriteOriginal = Boolean(overwriteOriginal)
+  
+  console.log(`\n🚀 优化参数检查:`)
+  console.log(`   原始 overwriteOriginal: ${overwriteOriginal} (类型: ${typeof overwriteOriginal})`)
+  console.log(`   转换后: ${shouldOverwriteOriginal} (类型: ${typeof shouldOverwriteOriginal})`)
+  console.log(`   customFileName: ${customFileName}`)
   
   // 1. 检查GDAL是否安装
   const hasGDAL = await checkGDAL()
@@ -1223,7 +1258,7 @@ async function optimizeTifFile(id, options = {}) {
   }
   
   // 检查是否已优化（如果不是覆盖模式）
-  if (!overwriteOriginal && image.isOptimized) {
+  if (!shouldOverwriteOriginal && image.isOptimized) {
     return {
       originalSize: image.originalSize,
       optimizedSize: image.optimizedSize,
@@ -1232,8 +1267,8 @@ async function optimizeTifFile(id, options = {}) {
   }
   
   console.log(`\n🚀 开始优化: ${image.name}`)
-  console.log(`   覆盖原文件: ${overwriteOriginal ? '是' : '否'}`)
-  if (!overwriteOriginal && customFileName) {
+  console.log(`   覆盖原文件: ${shouldOverwriteOriginal ? '是' : '否'}`)
+  if (!shouldOverwriteOriginal && customFileName) {
     console.log(`   自定义文件名: ${customFileName}.tif`)
   }
   
@@ -1250,29 +1285,34 @@ async function optimizeTifFile(id, options = {}) {
   
   // 3. 准备文件路径
   const tempOutput = path.join(TIF_DIR, `temp_optimized_${Date.now()}.tif`)
-  // const tempScaled = path.join(TIF_DIR, `temp_scaled_${Date.now()}.tif`) // 用于缩放后的临时文件（已禁用两步转换）
+  const tempScaled = path.join(TIF_DIR, `temp_scaled_${Date.now()}.tif`) // 用于缩放后的临时文件（已禁用两步转换，但声明变量用于清理）
   
   // 根据选项决定最终输出路径
   let optimizedPath
   let finalFileName
   
-  if (overwriteOriginal) {
-    // 覆盖原文件：直接覆盖，不创建备份
+  if (shouldOverwriteOriginal) {
+    // ✅ 覆盖原文件模式：直接覆盖，不创建新文件
     optimizedPath = inputPath  // 最终会覆盖原文件
     finalFileName = image.name
-    console.log(`⚠️ 将覆盖原文件: ${image.name}`)
+    console.log(`⚠️ 【覆盖模式】将覆盖原文件: ${image.name}`)
+    console.log(`   输入路径: ${inputPath}`)
+    console.log(`   输出路径: ${optimizedPath}`)
+    console.log(`   最终文件名: ${finalFileName}`)
   } else if (customFileName) {
     // 使用自定义文件名
     finalFileName = `${customFileName}.tif`
     optimizedPath = path.join(TIF_DIR, finalFileName)
+    console.log(`📝 【新文件模式】使用自定义文件名: ${finalFileName}`)
   } else {
     // 默认添加_optimized后缀
     finalFileName = image.name.replace(/\.tif$/i, '_optimized.tif')
     optimizedPath = path.join(TIF_DIR, finalFileName)
+    console.log(`📝 【新文件模式】使用默认后缀: ${finalFileName}`)
   }
   
-  // ✅ 检查文件名冲突（不覆盖原文件模式下）
-  if (!overwriteOriginal && fs.existsSync(optimizedPath) && optimizedPath !== inputPath) {
+  // ✅ 检查文件名冲突（仅在新文件模式下）
+  if (!shouldOverwriteOriginal && fs.existsSync(optimizedPath) && optimizedPath !== inputPath) {
     // 检查是否已经在元数据中存在同名文件
     const existingImage = metadata.images.find(img => img.name === finalFileName)
     if (existingImage) {
@@ -1301,6 +1341,7 @@ async function optimizeTifFile(id, options = {}) {
   let isRGB = false
   let sourceSRS = 'EPSG:32645' // 默认值
   let dataType = 'Unknown' // 数据类型
+  let alreadyInTargetSRS = false // 是否已经是目标坐标系
   
   console.log('🔍 使用 gdalinfo 检测影像类型和坐标系...')
   try {
@@ -1309,7 +1350,7 @@ async function optimizeTifFile(id, options = {}) {
     const { stdout: gdalinfo } = await execAsync(gdalinfoCmd)
     
     // 🌐 自动检测源坐标系（尝试多种匹配方式）
-    // 方式1: 匹配 AUTHORITY["EPSG","32645"]
+    // 方式1: 匹配 AUTHORITY["EPSG","32645"] 或其他EPSG代码
     let srsMatch = gdalinfo.match(/AUTHORITY\["EPSG","(\d+)"\]/)
     
     // 方式2: 匹配 PROJCS["WGS 84 / UTM zone 45N"... 
@@ -1317,13 +1358,22 @@ async function optimizeTifFile(id, options = {}) {
       if (gdalinfo.includes('UTM zone 45N') || gdalinfo.includes('UTM Zone 45N')) {
         sourceSRS = 'EPSG:32645'
         console.log(`🌐 检测到UTM Zone 45N，使用: ${sourceSRS}`)
+      } else if (gdalinfo.includes('WGS 84 / Pseudo-Mercator') || gdalinfo.includes('Popular Visualisation CRS / Mercator')) {
+        sourceSRS = 'EPSG:3857'
+        console.log(`🌐 检测到Web Mercator，使用: ${sourceSRS}`)
       }
     } else {
       sourceSRS = `EPSG:${srsMatch[1]}`
       console.log(`🌐 检测到源坐标系: ${sourceSRS}`)
     }
     
-    if (!srsMatch && !gdalinfo.includes('UTM')) {
+    // ✅ 关键：检测是否已经是目标坐标系
+    alreadyInTargetSRS = (sourceSRS === 'EPSG:3857')
+    if (alreadyInTargetSRS) {
+      console.log(`✅ 文件已经是目标坐标系 (EPSG:3857)，将跳过坐标系转换`)
+    }
+    
+    if (!srsMatch && !gdalinfo.includes('UTM') && !gdalinfo.includes('Mercator')) {
       console.log(`⚠️ 无法检测坐标系，使用默认值: ${sourceSRS}`)
       console.log('--- gdalinfo 输出（前500字符）---')
       console.log(gdalinfo.substring(0, 500))
@@ -1377,7 +1427,18 @@ async function optimizeTifFile(id, options = {}) {
     console.log('📋 使用 RGB 影像优化参数:')
     console.log(`   - 源坐标系: ${sourceSRS}`)
     console.log(`   - 数据类型: ${dataType}`)
-    console.log('   - 目标坐标系: EPSG:3857 (Web Mercator)')
+    console.log(`   - 目标坐标系: EPSG:3857 (Web Mercator)`)
+    
+    // ✅ 坐标系转换参数
+    const srsParams = alreadyInTargetSRS 
+      ? '-a_srs EPSG:3857'  // 已经是EPSG:3857，只需明确指定坐标系
+      : `-s_srs ${sourceSRS} -t_srs EPSG:3857`  // 需要转换坐标系
+    
+    if (alreadyInTargetSRS) {
+      console.log('   - ✅ 已是目标坐标系，跳过转换（只添加COG格式）')
+    } else {
+      console.log(`   - 🔄 需要坐标系转换: ${sourceSRS} → EPSG:3857`)
+    }
     
     // 根据数据类型选择处理策略
     if (dataType === 'Byte') {
@@ -1385,13 +1446,13 @@ async function optimizeTifFile(id, options = {}) {
       console.log('   - 压缩方式: NONE（无压缩，保留原始质量）')
       console.log('   - 保持Byte数据类型（明确指定-ot Byte）')
       console.log('   - 重采样方法: cubic（更适合RGB影像）')
-      gdalwarpCmd = `gdalwarp -ot Byte -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+      gdalwarpCmd = `gdalwarp -ot Byte ${srsParams} -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     } else if (dataType === 'UInt16') {
       // 16位RGB：不压缩，保留原始质量，明确指定保持16位数据类型
       console.log('   - 压缩方式: NONE（无压缩，保留原始质量）')
       console.log('   - 保持UInt16数据类型（明确指定-ot UInt16）')
       console.log('   - 重采样方法: cubic（更适合RGB影像）')
-      gdalwarpCmd = `gdalwarp -ot UInt16 -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+      gdalwarpCmd = `gdalwarp -ot UInt16 ${srsParams} -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     } else if (dataType === 'Float32' || dataType === 'Float64') {
       // 浮点RGB：保持原始数据类型 + 无损压缩（配置1：完全保留精度）
       console.log(`   - 检测到浮点类型 (${dataType})`)
@@ -1408,20 +1469,20 @@ async function optimizeTifFile(id, options = {}) {
       // - RGB影像的所有像素值都是有效数据，不应该有NoData
       // - 去掉 -srcnodata 避免GDAL处理出错
       // - 浮点数据不使用 PHOTOMETRIC=RGB 和 COLORSPACE，避免自动转换
-      gdalwarpCmd = `gdalwarp -ot ${dataType} -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=DEFLATE -co PREDICTOR=3 -co ZLEVEL=6 -co OVERVIEW_COUNT=4 -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+      gdalwarpCmd = `gdalwarp -ot ${dataType} ${srsParams} -of COG -co COMPRESS=DEFLATE -co PREDICTOR=3 -co ZLEVEL=6 -co OVERVIEW_COUNT=4 -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     } else if (dataType === 'Int16' || dataType === 'UInt32' || dataType === 'Int32') {
       // 其他整数类型：保持原始数据类型，不压缩
       console.log(`   - 数据类型: ${dataType}（明确指定-ot ${dataType}）`)
       console.log(`   - 压缩方式: NONE（无压缩，保留原始质量）`)
       console.log('   - 重采样方法: cubic')
-      gdalwarpCmd = `gdalwarp -ot ${dataType} -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+      gdalwarpCmd = `gdalwarp -ot ${dataType} ${srsParams} -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     } else {
       // 未知类型：转换为UInt16保留更多信息，不压缩
       console.log(`   - ⚠️ 检测到未知数据类型 (${dataType})`)
       console.log(`   - 转换为UInt16以保留更多信息`)
       console.log(`   - 压缩方式: NONE（无压缩，保留原始质量）`)
       console.log('   - 重采样方法: cubic')
-      gdalwarpCmd = `gdalwarp -ot UInt16 -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+      gdalwarpCmd = `gdalwarp -ot UInt16 ${srsParams} -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     }
   } else {
     // 📊 普通 TIF 影像优化参数（KNDVI 等单波段浮点数据）
@@ -1432,7 +1493,18 @@ async function optimizeTifFile(id, options = {}) {
     console.log('   - NoData: NaN → 255')
     console.log('   - 重采样方法: near（保持原始像素值）')
     
-    gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -r near "${inputPath}" "${tempOutput}"`
+    // ✅ 坐标系转换参数（与RGB影像保持一致）
+    const srsParams = alreadyInTargetSRS 
+      ? '-a_srs EPSG:3857'  // 已经是EPSG:3857，只需明确指定坐标系
+      : `-s_srs ${sourceSRS} -t_srs EPSG:3857`  // 需要转换坐标系
+    
+    if (alreadyInTargetSRS) {
+      console.log('   - ✅ 已是目标坐标系，跳过转换（只添加COG格式）')
+    } else {
+      console.log(`   - 🔄 需要坐标系转换: ${sourceSRS} → EPSG:3857`)
+    }
+    
+    gdalwarpCmd = `gdalwarp ${srsParams} -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -r near "${inputPath}" "${tempOutput}"`
   }
   
   // ========== 两步处理代码已禁用 ==========
@@ -1628,14 +1700,27 @@ async function optimizeTifFile(id, options = {}) {
     console.error(`   错误: ${error.message}`)
     if (error.stderr) console.error(`   stderr: ${error.stderr}`)
     if (error.stdout) console.log(`   stdout: ${error.stdout}`)
+    
+    // ✅ 等待一下，确保GDAL完全释放文件句柄
+    console.log('   等待GDAL释放文件句柄...')
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    
     // 清理所有临时文件
     if (fs.existsSync(tempOutput)) {
       console.log(`   清理临时文件: ${tempOutput}`)
-      fs.unlinkSync(tempOutput)
+      try {
+        fs.unlinkSync(tempOutput)
+      } catch (cleanupErr) {
+        console.warn(`   ⚠️ 临时文件清理失败: ${cleanupErr.message}`)
+      }
     }
     if (fs.existsSync(tempScaled)) {
       console.log(`   清理临时文件: ${tempScaled}`)
-      fs.unlinkSync(tempScaled)
+      try {
+        fs.unlinkSync(tempScaled)
+      } catch (cleanupErr) {
+        console.warn(`   ⚠️ 临时文件清理失败: ${cleanupErr.message}`)
+      }
     }
     optimizationProgress.delete(id)
     throw new Error('GDAL转换失败: ' + error.message)
@@ -1650,19 +1735,175 @@ async function optimizeTifFile(id, options = {}) {
   })
   
   // 7. 保存优化文件（带重试机制，处理Windows文件占用问题）
-  console.log('⏳ 保存优化文件...')
-  
-  // ✅ 如果目标文件存在，先删除（带重试）
-  if (fs.existsSync(optimizedPath)) {
-    console.log('   删除旧的优化文件...')
-    fs.unlinkSync(optimizedPath)
+  try {
+    console.log('⏳ 保存优化文件...')
+    
+    // ✅ 在覆盖模式下，等待GDAL完全释放文件句柄（Windows系统需要）
+    if (shouldOverwriteOriginal) {
+      console.log('   【覆盖模式】等待GDAL释放文件句柄...')
+      await new Promise(resolve => setTimeout(resolve, 3000))  // 增加到3秒
+      
+      // 🔧 强制垃圾回收，释放可能的文件句柄（如果V8支持）
+      if (global.gc) {
+        console.log('   触发垃圾回收以释放文件句柄...')
+        global.gc()
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+    
+    // ✅ 覆盖模式：使用复制+删除策略，而不是直接重命名
+    if (shouldOverwriteOriginal) {
+      console.log('   【覆盖模式】使用复制+删除策略...')
+      
+      // 第一步：生成临时备份文件名
+      const backupPath = path.join(TIF_DIR, `backup_${Date.now()}_${path.basename(optimizedPath)}`)
+      
+      // 第二步：将原文件重命名为备份（如果存在）
+      let backupCreated = false
+      if (fs.existsSync(optimizedPath)) {
+        console.log('   步骤1: 重命名原文件为备份...')
+        let backupRetryCount = 0
+        
+        while (backupRetryCount < 8 && !backupCreated) {
+          try {
+            fs.renameSync(optimizedPath, backupPath)
+            backupCreated = true
+            console.log('   ✅ 原文件已备份')
+          } catch (err) {
+            if (['EPERM', 'EACCES', 'EBUSY', 'EAGAIN'].includes(err.code) && backupRetryCount < 7) {
+              console.warn(`   ⚠️ 备份失败 [${err.code}]，等待2秒后重试... (${backupRetryCount + 1}/8)`)
+              await new Promise(resolve => setTimeout(resolve, 2000))
+              backupRetryCount++
+            } else {
+              // 如果无法重命名原文件，尝试直接复制临时文件到新位置
+              console.warn(`   ⚠️ 无法重命名原文件，尝试复制方式...`)
+              break
+            }
+          }
+        }
+      }
+      
+      // 第三步：复制优化后的文件到目标位置
+      console.log('   步骤2: 复制优化文件到目标位置...')
+      let copyRetryCount = 0
+      let copySuccess = false
+      
+      while (copyRetryCount < 5 && !copySuccess) {
+        try {
+          fs.copyFileSync(tempOutput, optimizedPath)
+          copySuccess = true
+          console.log('   ✅ 优化文件已复制')
+        } catch (err) {
+          if (['EPERM', 'EACCES', 'EBUSY', 'EAGAIN'].includes(err.code) && copyRetryCount < 4) {
+            console.warn(`   ⚠️ 复制失败 [${err.code}]，重试中... (${copyRetryCount + 1}/5)`)
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            copyRetryCount++
+          } else {
+            throw new Error(`无法复制优化文件 [${err.code}]: ${err.message}`)
+          }
+        }
+      }
+      
+      if (!copySuccess) {
+        // 复制失败，恢复备份
+        if (backupCreated && fs.existsSync(backupPath)) {
+          console.log('   恢复备份文件...')
+          try {
+            fs.renameSync(backupPath, optimizedPath)
+          } catch (restoreErr) {
+            console.error('   ❌ 恢复备份失败:', restoreErr.message)
+          }
+        }
+        throw new Error('复制优化文件失败：文件句柄被占用')
+      }
+      
+      // 第四步：删除临时文件
+      console.log('   步骤3: 删除临时文件...')
+      try {
+        fs.unlinkSync(tempOutput)
+        console.log('   ✅ 临时文件已删除')
+      } catch (err) {
+        console.warn(`   ⚠️ 临时文件删除失败: ${err.message}（不影响主流程）`)
+      }
+      
+      // 第五步：删除备份文件
+      if (backupCreated && fs.existsSync(backupPath)) {
+        console.log('   步骤4: 删除备份文件...')
+        let deleteBackupRetryCount = 0
+        
+        while (deleteBackupRetryCount < 5) {
+          try {
+            fs.unlinkSync(backupPath)
+            console.log('   ✅ 备份文件已删除')
+            break
+          } catch (err) {
+            if (['EPERM', 'EACCES', 'EBUSY', 'EAGAIN'].includes(err.code) && deleteBackupRetryCount < 4) {
+              console.warn(`   ⚠️ 备份删除失败 [${err.code}]，重试中... (${deleteBackupRetryCount + 1}/5)`)
+              await new Promise(resolve => setTimeout(resolve, 1000))
+              deleteBackupRetryCount++
+            } else {
+              console.warn(`   ⚠️ 备份文件删除失败: ${err.message}（不影响主流程，请手动删除）`)
+              break
+            }
+          }
+        }
+      }
+      
+      console.log(`✅ 优化文件已保存（覆盖模式）: ${path.basename(optimizedPath)}`)
+      
+    } else {
+      // 新文件模式：直接重命名（保持原有逻辑）
+      console.log('   【新文件模式】使用重命名策略...')
+      
+      let renameRetryCount = 0
+      let renameSuccess = false
+      
+      while (renameRetryCount < 5 && !renameSuccess) {
+        try {
+          fs.renameSync(tempOutput, optimizedPath)
+          renameSuccess = true
+          console.log(`✅ 优化文件已保存: ${path.basename(optimizedPath)}`)
+        } catch (err) {
+          const isFileAccessError = ['EPERM', 'EACCES', 'EBUSY', 'EAGAIN', 'EXDEV'].includes(err.code)
+          
+          if (isFileAccessError && renameRetryCount < 4) {
+            console.warn(`   ⚠️ 重命名失败 [${err.code}]，重试中... (${renameRetryCount + 1}/5)`)
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            renameRetryCount++
+          } else if (err.code === 'EXDEV') {
+            // 跨设备移动，使用复制+删除
+            console.warn('   ⚠️ 跨设备移动，使用复制+删除方式...')
+            fs.copyFileSync(tempOutput, optimizedPath)
+            fs.unlinkSync(tempOutput)
+            renameSuccess = true
+            console.log(`   ✅ 优化文件已保存（复制模式）: ${path.basename(optimizedPath)}`)
+          } else {
+            throw new Error(`无法保存优化文件 [${err.code}]: ${err.message}`)
+          }
+        }
+      }
+      
+      if (!renameSuccess) {
+        throw new Error('保存优化文件失败：文件句柄被占用，已重试5次仍然失败')
+      }
+    }
+    
+    // ✅ 等待文件系统完全释放文件句柄
+    await new Promise(resolve => setTimeout(resolve, 500))
+  } catch (saveError) {
+    // 保存失败时清理临时文件
+    console.error('❌ 保存优化文件失败:', saveError.message)
+    if (fs.existsSync(tempOutput)) {
+      console.log('   清理临时文件:', tempOutput)
+      try {
+        fs.unlinkSync(tempOutput)
+      } catch (cleanupErr) {
+        console.warn('   ⚠️ 临时文件清理失败:', cleanupErr.message)
+      }
+    }
+    optimizationProgress.delete(id)
+    throw saveError
   }
-  
-  fs.renameSync(tempOutput, optimizedPath)
-  console.log(`✅ 优化文件已保存: ${path.basename(optimizedPath)}`)
-  
-  // ✅ 等待文件系统完全释放文件句柄
-  await new Promise(resolve => setTimeout(resolve, 500))
   
   // 更新进度：完成
   optimizationProgress.set(id, {
@@ -1673,8 +1914,17 @@ async function optimizeTifFile(id, options = {}) {
   })
   
   // 8. 更新元数据
+  console.log('\n📝 更新元数据...')
+  console.log(`   模式: ${shouldOverwriteOriginal ? '覆盖原文件' : '创建新文件'}`)
+  
   const currentMetadata = readMetadata()
   const currentImage = currentMetadata.images.find(img => img.id === id)
+  
+  if (!currentImage) {
+    throw new Error(`找不到ID为 ${id} 的影像记录`)
+  }
+  
+  console.log(`   找到原记录: ${currentImage.id} - ${currentImage.name}`)
   
   // 在if外定义变量，避免作用域问题
   // ✅ 使用重试逻辑获取文件状态（跨平台兼容）
@@ -1701,18 +1951,21 @@ async function optimizeTifFile(id, options = {}) {
   const compressionRatio = ((1 - optimizedStats.size / originalStats.size) * 100).toFixed(1)
   const savedSpaceMB = ((originalStats.size - optimizedStats.size) / (1024 * 1024)).toFixed(2)
   
-  if (currentImage) {
-    if (overwriteOriginal) {
-      // 覆盖原文件：直接更新原记录
-      currentImage.isOptimized = true
-      currentImage.status = 'processed'
-      currentImage.size = optimizedSizeMB + 'MB'
-      currentImage.originalSize = originalSizeMB + 'MB'
-      currentImage.optimizedSize = optimizedSizeMB + 'MB'
-      currentImage.filePath = `/data/data_tif/${image.name}`
-      currentImage.optimizedPath = `/data/data_tif/${image.name}`
-      currentImage.originalPath = `/data/data_tif/${image.name}`
-      currentImage.name = image.name
+  console.log(`   优化后文件大小: ${optimizedSizeMB}MB (原始: ${originalSizeMB}MB)`)
+  console.log(`   压缩率: ${compressionRatio}%, 节省: ${savedSpaceMB}MB`)
+  
+  if (shouldOverwriteOriginal) {
+    // ✅ 覆盖原文件模式：只更新原记录，不创建新记录
+    console.log(`   【覆盖模式】更新原记录: ${currentImage.id}`)
+    currentImage.isOptimized = true
+    currentImage.status = 'processed'
+    currentImage.size = optimizedSizeMB + 'MB'
+    currentImage.originalSize = originalSizeMB + 'MB'
+    currentImage.optimizedSize = optimizedSizeMB + 'MB'
+    currentImage.filePath = `/data/data_tif/${image.name}`
+    currentImage.optimizedPath = `/data/data_tif/${image.name}`
+    currentImage.originalPath = `/data/data_tif/${image.name}`
+    currentImage.name = image.name
       
       // 📊 分析优化后的TIF文件
       try {
@@ -1803,12 +2056,16 @@ async function optimizeTifFile(id, options = {}) {
     console.log(`   优化文件: ${finalFileName} (${optimizedSizeMB} MB)`)
     console.log(`   压缩率: ${compressionRatio}%`)
     console.log(`   节省空间: ${savedSpaceMB} MB`)
-    if (overwriteOriginal) {
-      console.log(`   ✅ 已覆盖原文件\n`)
+    if (shouldOverwriteOriginal) {
+      console.log(`   ✅ 【覆盖模式】已覆盖原文件，元数据已更新`)
+      console.log(`   文件系统中只有一个文件: ${finalFileName}`)
+      console.log(`   元数据记录数量不变`)
     } else {
-      console.log(`   ✅ 已保存为新文件: ${finalFileName}\n`)
+      console.log(`   ✅ 【新文件模式】已保存为新文件: ${finalFileName}`)
+      console.log(`   文件系统中有两个文件: 原文件 + 优化文件`)
+      console.log(`   元数据记录增加一条`)
     }
-  }
+    console.log()
   
   // 清理进度记录（5秒后）
   setTimeout(() => {
@@ -1822,7 +2079,7 @@ async function optimizeTifFile(id, options = {}) {
     originalSize: originalSizeMB + 'MB',
     optimizedSize: optimizedSizeMB + 'MB',
     compressionRatio: compressionRatio + '%',
-    overwriteOriginal
+    overwriteOriginal: shouldOverwriteOriginal
   }
 }
 
@@ -1838,8 +2095,12 @@ router.post('/optimize/:id', async (req, res) => {
     // 清理旧的临时文件（超过1小时的）
     try {
       const files = fs.readdirSync(TIF_DIR)
-      // 保留 temp_scaled_ 的清理逻辑，防止将来重新启用两步转换时有遗留文件
-      const tempFiles = files.filter(f => f.startsWith('temp_optimized_') || f.startsWith('temp_scaled_'))
+      // 清理临时文件和备份文件（保留 temp_scaled_ 的清理逻辑，防止将来重新启用两步转换时有遗留文件）
+      const tempFiles = files.filter(f => 
+        f.startsWith('temp_optimized_') || 
+        f.startsWith('temp_scaled_') || 
+        f.startsWith('backup_')
+      )
       const now = Date.now()
       tempFiles.forEach(file => {
         const filePath = path.join(TIF_DIR, file)
