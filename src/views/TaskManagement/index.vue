@@ -373,7 +373,7 @@
               <div class="step-content">
                 <h4>选择分析类型</h4>
                 <p><strong>种植差异检测：</strong>对比2期识别结果，查看作物类型变化<br/>
-                <strong>时序变化分析：</strong>对比多期（2期以上）识别结果，追踪作物种植轨迹</p>
+                <strong>时序变化分析：</strong>对比多期（2期以上）识别结果，系统将按年份期次自动排序，追踪作物种植轨迹</p>
               </div>
             </div>
             <div class="guide-step">
@@ -428,7 +428,7 @@
         :closable="false"
         style="margin-bottom: 20px;"
       >
-        从识别结果队列中选择两个<strong>相同格式</strong>的识别结果文件进行对比（SHP vs SHP 或 GeoJSON vs GeoJSON），时间早的作为原始图，时间晚的作为对比图
+        从识别结果队列中选择两个<strong>作物识别</strong>的识别结果文件进行对比，支持SHP和GeoJSON混合选择，时间早的作为原始图，时间晚的作为对比图
       </el-alert>
       
       <el-form :model="differenceConfig" label-width="100px">
@@ -441,17 +441,21 @@
             @change="handleBaseFileChange"
           >
             <el-option 
-              v-for="file in recognitionFiles" 
+              v-for="file in getCompatibleFiles(null)" 
               :key="file.id"
               :label="`${file.taskName} (${file.createTime})`" 
               :value="file.id"
               :disabled="file.id === differenceConfig.compareFileId"
             >
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="flex: 1;">{{ file.taskName }}</span>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <el-tag :type="file.type === 'SHP' ? 'warning' : 'success'" size="small">{{ file.type }}</el-tag>
-                  <span style="color: #8492a6; font-size: 12px;">{{ file.createTime }}</span>
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  <span style="font-size: 14px; color: #303133; font-weight: 500;">{{ file.taskName }}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                  <el-tag v-if="file.year" type="info" size="small">{{ file.year }}年</el-tag>
+                  <el-tag v-if="file.period" type="info" size="small">第{{ file.period }}期</el-tag>
+                  <el-tag v-if="file.recognitionType" type="success" size="small">{{ getRecognitionTypeLabel(file.recognitionType) }}</el-tag>
+                  <el-tag :type="file.type === 'SHP' ? 'warning' : 'primary'" size="small">{{ file.type }}</el-tag>
                 </div>
               </div>
             </el-option>
@@ -471,31 +475,27 @@
               :label="`${file.taskName} (${file.createTime})`" 
               :value="file.id"
             >
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="flex: 1;">{{ file.taskName }}</span>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <el-tag :type="file.type === 'SHP' ? 'warning' : 'success'" size="small">{{ file.type }}</el-tag>
-                  <span style="color: #8492a6; font-size: 12px;">{{ file.createTime }}</span>
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  <span style="font-size: 14px; color: #303133; font-weight: 500;">{{ file.taskName }}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                  <el-tag v-if="file.year" type="info" size="small">{{ file.year }}年</el-tag>
+                  <el-tag v-if="file.period" type="info" size="small">第{{ file.period }}期</el-tag>
+                  <el-tag v-if="file.recognitionType" type="success" size="small">{{ getRecognitionTypeLabel(file.recognitionType) }}</el-tag>
+                  <el-tag :type="file.type === 'SHP' ? 'warning' : 'primary'" size="small">{{ file.type }}</el-tag>
                 </div>
               </div>
             </el-option>
           </el-select>
         </el-form-item>
-        
-        <el-alert
-          v-if="differenceConfig.baseFileId && getSelectedFileType(differenceConfig.baseFileId)"
-          :title="`已选择${getSelectedFileType(differenceConfig.baseFileId)}格式，对比图将自动过滤为相同格式`"
-          type="warning"
-          :closable="false"
-          style="margin-top: 12px;"
-        />
 
         <el-divider />
 
-        <el-form-item label="分析名称">
+        <el-form-item label="任务名">
           <el-input 
             v-model="differenceConfig.analysisName" 
-            placeholder="选填：系统将自动生成默认名称"
+            placeholder="选填：系统将自动生成默认任务名"
             clearable
           />
         </el-form-item>
@@ -537,17 +537,10 @@
         :closable="false"
         style="margin-bottom: 20px;"
       >
-        从分析结果队列中选择多个<strong>相同格式</strong>的识别结果文件进行时序变化分析（至少2个），系统将按时间顺序自动排列
+        从分析结果队列中选择多个<strong>作物识别</strong>的识别结果文件进行时序变化分析（至少2个），支持SHP和GeoJSON混合选择，系统将按<strong>年份和期次</strong>自动排序（优先按年份，年份相同按期次）
       </el-alert>
       
       <el-form :model="temporalConfig" label-width="120px">
-        <el-form-item label="文件格式">
-          <el-radio-group v-model="temporalConfig.selectedFormat" @change="handleTemporalFormatChange">
-            <el-radio-button label="SHP">SHP格式</el-radio-button>
-            <el-radio-button label="GeoJSON">GeoJSON格式</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        
         <el-form-item label="选择文件">
           <el-select 
             v-model="temporalConfig.selectedFileIds" 
@@ -564,26 +557,30 @@
               :label="`${file.taskName} (${file.createTime})`" 
               :value="file.id"
             >
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="flex: 1;">{{ file.taskName }}</span>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <el-tag :type="file.type === 'SHP' ? 'warning' : 'success'" size="small">{{ file.type }}</el-tag>
-                  <span style="color: #8492a6; font-size: 12px;">{{ file.createTime }}</span>
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  <span style="font-size: 14px; color: #303133; font-weight: 500;">{{ file.taskName }}</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                  <el-tag v-if="file.year" type="info" size="small">{{ file.year }}年</el-tag>
+                  <el-tag v-if="file.period" type="info" size="small">第{{ file.period }}期</el-tag>
+                  <el-tag v-if="file.recognitionType" type="success" size="small">{{ getRecognitionTypeLabel(file.recognitionType) }}</el-tag>
+                  <el-tag :type="file.type === 'SHP' ? 'warning' : 'primary'" size="small">{{ file.type }}</el-tag>
                 </div>
               </div>
             </el-option>
           </el-select>
           <div style="margin-top: 8px; font-size: 12px; color: #909399;">
-            已选择 {{ temporalConfig.selectedFileIds.length }} 个{{ temporalConfig.selectedFormat }}文件
+            已选择 {{ temporalConfig.selectedFileIds.length }} 个作物识别文件
           </div>
         </el-form-item>
 
         <el-divider />
 
-        <el-form-item label="分析名称">
+        <el-form-item label="任务名">
           <el-input 
             v-model="temporalConfig.analysisName" 
-            placeholder="选填：系统将自动生成默认名称"
+            placeholder="选填：系统将自动生成默认任务名"
             clearable
           />
         </el-form-item>
@@ -829,7 +826,6 @@ const differenceConfig = ref({
 const temporalLoading = ref(false)
 const temporalConfig = ref({
   selectedFileIds: [],
-  selectedFormat: 'SHP', // 默认选择SHP格式
   analysisName: '',
   notes: ''
 })
@@ -995,25 +991,22 @@ const handleViewAnalysisQueue = () => {
 
 // 获取兼容的文件列表（差异检测用）
 const getCompatibleFiles = (baseFileId) => {
-  if (!baseFileId) {
-    return recognitionFiles.value
-  }
-  
-  const baseFile = recognitionFiles.value.find(f => f.id === baseFileId)
-  if (!baseFile) {
-    return recognitionFiles.value
-  }
-  
-  // 只返回相同类型且不是原始图的文件
-  return recognitionFiles.value.filter(f => 
-    f.id !== baseFileId && f.type === baseFile.type
+  // 🔧 只显示作物识别任务的文件
+  const cropRecognitionFiles = recognitionFiles.value.filter(f => 
+    f.recognitionType === 'crop_recognition'
   )
-}
-
-// 获取选中文件的类型
-const getSelectedFileType = (fileId) => {
-  const file = recognitionFiles.value.find(f => f.id === fileId)
-  return file ? file.type : null
+  
+  if (!baseFileId) {
+    return cropRecognitionFiles
+  }
+  
+  const baseFile = cropRecognitionFiles.find(f => f.id === baseFileId)
+  if (!baseFile) {
+    return cropRecognitionFiles
+  }
+  
+  // 只返回不是原始图的文件（可以是不同类型，因为会统一转换为GeoJSON）
+  return cropRecognitionFiles.filter(f => f.id !== baseFileId)
 }
 
 // 原始图选择变化时，清空对比图选择
@@ -1023,12 +1016,17 @@ const handleBaseFileChange = () => {
 
 // 获取时序分析兼容的文件列表
 const getTemporalCompatibleFiles = () => {
-  return recognitionFiles.value.filter(f => f.type === temporalConfig.value.selectedFormat)
+  // 🔧 只显示作物识别任务的文件（不限制格式，支持SHP和GeoJSON混合分析）
+  return recognitionFiles.value.filter(f => f.recognitionType === 'crop_recognition')
 }
 
-// 时序分析格式变化时，清空已选文件
-const handleTemporalFormatChange = () => {
-  temporalConfig.value.selectedFileIds = []
+// 将英文识别类型转换为中文显示
+const getRecognitionTypeLabel = (recognitionType) => {
+  const typeMap = {
+    'crop_recognition': '作物识别',
+    'planting_situation': '种植情况识别'
+  }
+  return typeMap[recognitionType] || recognitionType
 }
 
 // 格式化文件大小
@@ -1945,14 +1943,22 @@ const handleRunTemporalAnalysis = async () => {
   analysisStatusText.value = '正在加载多期识别结果...'
 
   try {
-    // 获取选择的文件并按时间排序
+    // 获取选择的文件并按年份和期次排序
     const selectedFiles = temporalConfig.value.selectedFileIds
       .map(id => recognitionFiles.value.find(f => f.id === id))
       .filter(f => f)
-      .sort((a, b) => new Date(a.createTime) - new Date(b.createTime))
+      .sort((a, b) => {
+        // 优先按年份排序
+        if (a.year !== b.year) {
+          return a.year - b.year
+        }
+        // 年份相同，按期次排序
+        return a.period - b.period
+      })
 
     console.log(`开始时序变化分析: ${selectedFiles.length}个时间点`)
-    console.log('选择的文件:', selectedFiles)
+    console.log('选择的文件（已按年份期次排序）:', selectedFiles.map(f => `${f.taskName} (${f.year}年第${f.period}期)`))
+    console.log('原始文件列表:', selectedFiles)
 
     // 1. 读取所有文件（支持SHP和GeoJSON）
     const geojsonDataList = []
@@ -2894,6 +2900,13 @@ const performTemporalAnalysis = (geojsonDataList) => {
 
 .rotating {
   animation: rotating 2s linear infinite;
+}
+
+// 时序分析文件选择选项样式优化
+:deep(.el-select-dropdown__item) {
+  height: auto;
+  padding: 10px 16px;
+  line-height: 1.6;
 }
 
 // 响应式设计

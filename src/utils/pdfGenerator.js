@@ -26,6 +26,8 @@ const THEME_COLORS = {
   // === 表格背景和边框 ===
   border: '#e5e7eb',       // 表格边框颜色
   grayBg: '#f9fafb',       // 表格交替行背景色
+  grayBgDark: '#f3f4f6',   // 深一点的灰色背景
+  gray: '#6b7280',         // 灰色文字
   
   // === 特殊数据颜色 ===
   success: '#10b981',      // 成功/增长数据（绿色）
@@ -36,13 +38,15 @@ const THEME_COLORS = {
   // === 背景颜色 ===
   successBg: '#d1fae5',    // 成功背景色（浅绿）
   warningBg: '#fef3c7',    // 警告背景色（浅黄）
-  infoBg: '#eff6ff'        // 信息背景色（浅蓝）
+  dangerBg: '#fee2e2',     // 危险背景色（浅红）
+  infoBg: '#eff6ff',       // 信息背景色（浅蓝）
+  primaryBg: '#eef2ff'     // 主色背景（浅色版本）
 }
 
 /**
- * 统一的字体大小
+ * 默认字体大小配置
  */
-const FONT_SIZES = {
+const DEFAULT_FONT_SIZES = {
   coverTitle: '40px',   // 封面标题 - 增大
   coverSubtitle: '24px', // 封面副标题 - 增大
   coverDate: '16px',    // 封面日期 - 增大
@@ -58,6 +62,13 @@ const FONT_SIZES = {
   miniCoverTitle: '36px',   // 简化版封面标题 - 增大
   miniCoverSubtitle: '20px', // 简化版封面副标题 - 增大
   miniCardValue: '28px'     // 简化版卡片数值 - 增大
+}
+
+/**
+ * 导出默认字体配置（供前端使用）
+ */
+export function getDefaultFontSizes() {
+  return { ...DEFAULT_FONT_SIZES }
 }
 
 /**
@@ -128,10 +139,54 @@ async function waitForMapToLoad(mapElement) {
  * 生成时序分析PDF报告（分段截图版本，避免内容跨页）
  * @param {Object} data - 分析数据
  * @param {string} activeTab - 当前活动标签页 ('timeline' | 'charts')
+ * @param {Object} customConfig - 自定义配置（字体+配色）
+ * @param {Function} onProgress - 进度回调函数 (current, total, message)
  * @returns {Promise<Blob>} PDF文件的Blob对象
  */
-export async function generateTemporalPDF(data, activeTab = 'timeline') {
+export async function generateTemporalPDF(data, activeTab = 'timeline', customConfig = null, onProgress = null) {
   console.log('📄 开始生成PDF报告（分段截图模式）...')
+  
+  // 提取配置
+  let FONT_SIZES = DEFAULT_FONT_SIZES
+  let COLORS = { ...THEME_COLORS } // 复制默认配色
+  
+  if (customConfig) {
+    // 如果配置中包含 colors，说明是新的配置格式
+    if (customConfig.colors) {
+      const { colors, ...fontConfig } = customConfig
+      FONT_SIZES = fontConfig
+      // 应用自定义配色，使用预定义的浅色背景
+      if (colors.primary) {
+        COLORS.primary = colors.primary
+        COLORS.primaryDark = colors.primary
+      }
+      if (colors.secondary) {
+        COLORS.secondary = colors.secondary
+      }
+      if (colors.success) {
+        COLORS.success = colors.success
+      }
+      if (colors.warning) {
+        COLORS.warning = colors.warning
+      }
+      if (colors.danger) {
+        COLORS.danger = colors.danger
+      }
+      
+      // 根据配色方案设置对应的浅色背景
+      // 由于我们使用的是预定义配色，直接使用固定的浅色背景即可
+      // 这些颜色对所有配色方案都适用
+      COLORS.primaryBg = '#eef2ff'   // 浅紫蓝色（适配所有主色）
+      COLORS.successBg = '#d1fae5'   // 浅绿色
+      COLORS.warningBg = '#fef3c7'   // 浅黄色
+      COLORS.dangerBg = '#fee2e2'    // 浅红色
+      
+      console.log('🎨 应用自定义配色方案:', colors.name, COLORS)
+    } else {
+      // 兼容旧的纯字体配置格式
+      FONT_SIZES = customConfig
+    }
+  }
   
   // 创建PDF
   const pdf = new jsPDF('p', 'mm', 'a4')
@@ -338,15 +393,17 @@ export async function generateTemporalPDF(data, activeTab = 'timeline') {
       `
       await addSectionToPDF(createTempContainer(coverHTML), { scale: 3 })
       console.log('  ✅ 封面已添加')
+      if (onProgress) onProgress(1, 15, '封面')
     } catch (error) {
       console.error('  ❌ 封面生成失败:', error.message)
+      if (onProgress) onProgress(1, 15, '封面（失败）')
     }
     
     // 2. 摘要信息
     console.log('📄 [2/14] 生成分析摘要...')
     try {
       const summaryHTML = `
-        <div style="padding: 25px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white;">
+        <div style="padding: 25px; background: linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.secondary} 100%); border-radius: 10px; color: white;">
           <h2 style="font-size: ${FONT_SIZES.title}; margin: 0 0 20px 0; border-bottom: 2px solid rgba(255,255,255,0.3); padding-bottom: 10px;">
             📊 分析摘要
           </h2>
@@ -372,12 +429,14 @@ export async function generateTemporalPDF(data, activeTab = 'timeline') {
       `
       await addSectionToPDF(createTempContainer(summaryHTML), { scale: 3 })
       console.log('  ✅ 摘要已添加')
+      if (onProgress) onProgress(2, 15, '分析摘要')
     } catch (error) {
       console.error('  ❌ 摘要生成失败:', error.message)
+      if (onProgress) onProgress(2, 15, '分析摘要（失败）')
     }
     
     // 生成所有内容（不再区分 timeline 和 charts）
-    await generateAllContentSections(pdf, data, { addSectionToPDF, createTempContainer, usableHeight })
+    await generateAllContentSections(pdf, data, { addSectionToPDF, createTempContainer, usableHeight, FONT_SIZES, COLORS, onProgress })
     
     console.log(`✅ PDF生成完成，共 ${pageIndex} 页`)
     return pdf.output('blob')
@@ -391,43 +450,54 @@ export async function generateTemporalPDF(data, activeTab = 'timeline') {
 /**
  * 生成所有内容（完整报告）
  */
-async function generateAllContentSections(pdf, data, { addSectionToPDF, createTempContainer, usableHeight }) {
+async function generateAllContentSections(pdf, data, { addSectionToPDF, createTempContainer, usableHeight, FONT_SIZES, COLORS, onProgress }) {
+  const totalSections = 15 // 总章节数
+  let currentSection = 2 // 从3开始，因为封面和摘要已经是1和2了
+  
+  // 进度更新辅助函数
+  const updateProgress = async (message) => {
+    currentSection++
+    if (onProgress) {
+      await onProgress(currentSection, totalSections, message)
+    }
+  }
+  
   // 3. 变化统计详情
   console.log('📄 [3/14] 生成变化统计详情...')
   try {
     const statsHTML = `
       <div>
-        <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid #4f46e5; padding-left: 10px;">
+        <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid ${COLORS.primary}; padding-left: 10px;">
           📈 变化统计详情
         </h2>
-        <table style="width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb;">
+        <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border};">
           <thead>
-            <tr style="background: #f9fafb;">
-              <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb; font-size: ${FONT_SIZES.tableHeader};">统计项</th>
-              <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-size: ${FONT_SIZES.tableHeader};">数值</th>
-              <th style="padding: 12px; text-align: right; border: 1px solid #e5e7eb; font-size: ${FONT_SIZES.tableHeader};">占比</th>
+            <tr style="background: ${COLORS.primary};">
+              <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white;">统计项</th>
+              <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white;">数值</th>
+              <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white;">占比</th>
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; font-size: ${FONT_SIZES.tableCell};">总地块数</td>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; text-align: right; font-size: ${FONT_SIZES.tableCell}; font-weight: bold;">${data.stats?.total || 0} 个</td>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; text-align: right; font-size: ${FONT_SIZES.tableCell};">100%</td>
+            <tr style="background: white;">
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">总地块数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell}; font-weight: bold;">${data.stats?.total || 0} 个</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">100%</td>
             </tr>
-            <tr style="background: #fef3c7;">
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; font-size: ${FONT_SIZES.tableCell};">变化地块</td>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; text-align: right; font-size: ${FONT_SIZES.tableCell}; font-weight: bold; color: #f59e0b;">${data.stats?.changed || 0} 个</td>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; text-align: right; font-size: ${FONT_SIZES.tableCell};">${((data.stats?.changed / data.stats?.total) * 100).toFixed(1)}%</td>
+            <tr style="background: ${COLORS.warningBg};">
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">变化地块</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell}; font-weight: bold; color: ${COLORS.warning};">${data.stats?.changed || 0} 个</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">${((data.stats?.changed / data.stats?.total) * 100).toFixed(1)}%</td>
             </tr>
-            <tr style="background: #d1fae5;">
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; font-size: ${FONT_SIZES.tableCell};">未变化地块</td>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; text-align: right; font-size: ${FONT_SIZES.tableCell}; font-weight: bold; color: #10b981;">${data.stats?.unchanged || 0} 个</td>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; text-align: right; font-size: ${FONT_SIZES.tableCell};">${((data.stats?.unchanged / data.stats?.total) * 100).toFixed(1)}%</td>
+            <tr style="background: ${COLORS.successBg};">
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">未变化地块</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell}; font-weight: bold; color: ${COLORS.success};">${data.stats?.unchanged || 0} 个</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">${((data.stats?.unchanged / data.stats?.total) * 100).toFixed(1)}%</td>
             </tr>
-            <tr>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; font-size: ${FONT_SIZES.tableCell};">总变化次数</td>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; text-align: right; font-size: ${FONT_SIZES.tableCell}; font-weight: bold;">${data.stats?.totalChanges || 0} 次</td>
-              <td style="padding: 10px 12px; border: 1px solid #e5e7eb; text-align: right; font-size: ${FONT_SIZES.tableCell};">-</td>
+            <tr style="background: ${COLORS.grayBg};">
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">总变化次数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell}; font-weight: bold;">${data.stats?.totalChanges || 0} 次</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">-</td>
             </tr>
           </tbody>
         </table>
@@ -435,8 +505,10 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
     `
     await addSectionToPDF(createTempContainer(statsHTML), { scale: 3 })
     console.log('  ✅ 统计表格已添加')
+    await updateProgress('变化统计详情')
   } catch (error) {
     console.error('  ❌ 统计表格生成失败:', error.message)
+    await updateProgress('变化统计详情（失败）')
   }
   
   // 4. 时序变化地图
@@ -494,22 +566,25 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
     console.log('  📍 尝试添加地图到PDF...')
     const mapHTML = `
       <div>
-        <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 20px 0; border-left: 4px solid #4f46e5; padding-left: 10px;">
+        <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 20px 0; border-left: 4px solid ${COLORS.primary}; padding-left: 10px;">
           🗺️ 时序变化地图
         </h2>
         <div style="border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: #f9fafb;">
           <img src="${mapImageData}" style="width: 100%; height: auto; display: block;" alt="时序变化地图" />
         </div>
-        <div style="padding: 12px; background: #eff6ff; border-radius: 6px; font-size: ${FONT_SIZES.description}; color: #1e40af; margin-top: 10px;">
-          <strong>说明：</strong>地图中不同颜色代表地块的变化程度，绿色表示无变化，橙色至深红色表示变化频率逐渐增加。
+        <div style="padding: 12px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px; font-size: ${FONT_SIZES.description}; margin-top: 10px;">
+          <strong style="color: ${COLORS.primary};">📌 说明：</strong>
+          <span style="color: ${COLORS.textLight};">地图中不同颜色代表地块的变化程度，绿色表示无变化，橙色至深红色表示变化频率逐渐增加。</span>
         </div>
       </div>
     `
     try {
       await addSectionToPDF(createTempContainer(mapHTML), { scale: 2.8, isMap: true })
       console.log('  ✅ 地图已添加到PDF')
+      await updateProgress('时序变化地图')
     } catch (error) {
       console.error('  ❌ 地图添加失败，跳过此部分:', error.message)
+      await updateProgress('时序变化地图（失败）')
     }
   } else {
     console.log('  ⚠️ 地图数据无效或过小，跳过地图部分')
@@ -544,14 +619,14 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
         if (freqNum === 0) {
           level = '完全稳定'
           emoji = '🟢'
-          bgColor = THEME_COLORS.successBg
-          textColor = THEME_COLORS.success
+          bgColor = COLORS.successBg
+          textColor = COLORS.success
           rating = '优秀'
         } else if (freqNum === 1) {
           level = '基本稳定'
           emoji = '🟡'
-          bgColor = THEME_COLORS.warningBg
-          textColor = THEME_COLORS.warning
+          bgColor = COLORS.warningBg
+          textColor = COLORS.warning
           rating = '良好'
         } else if (freqNum <= 3) {
           level = '稳定性一般'
@@ -562,8 +637,8 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
         } else {
           level = '稳定性较差'
           emoji = '🔴'
-          bgColor = THEME_COLORS.dangerBg
-          textColor = THEME_COLORS.danger
+          bgColor = COLORS.dangerBg
+          textColor = COLORS.danger
           rating = '较差'
         }
         
@@ -572,47 +647,47 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
       
       const stabilityHTML = `
         <div>
-          <h2 style="font-size: ${FONT_SIZES.title}; color: ${THEME_COLORS.text}; margin: 0 0 15px 0; font-weight: bold;">
+          <h2 style="font-size: ${FONT_SIZES.title}; color: ${COLORS.text}; margin: 0 0 15px 0; font-weight: bold;">
             📊 地块种植稳定性分析
           </h2>
           
-          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border}; margin-bottom: 20px;">
+          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border}; margin-bottom: 20px;">
             <thead>
-              <tr style="background: ${THEME_COLORS.primary};">
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">稳定性等级</th>
-                <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">变化次数</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">地块数量</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占比</th>
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">分布图</th>
-                <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">评价</th>
+              <tr style="background: ${COLORS.primary};">
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">稳定性等级</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">变化次数</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">地块数量</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占比</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">分布图</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">评价</th>
               </tr>
             </thead>
             <tbody>
               ${stabilityLevels.map((item, index) => `
                 <tr style="background: ${item.bgColor};">
-                  <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">
+                  <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell};">
                     <span style="font-size: ${FONT_SIZES.tableCell};">${item.emoji}</span>
                     <strong style="margin-left: 6px; color: ${item.textColor};">${item.level}</strong>
                     </td>
-                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${item.freq}次</td>
-                  <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${item.count}个</td>
-                  <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${item.percentage}%</td>
-                  <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border};">
-                    <div style="background: ${THEME_COLORS.primary}; height: 8px; width: ${item.barWidth}%; border-radius: 4px;"></div>
+                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${item.freq}次</td>
+                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${item.count}个</td>
+                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${item.percentage}%</td>
+                  <td style="padding: 10px 12px; border: 1px solid ${COLORS.border};">
+                    <div style="background: ${COLORS.primary}; height: 8px; width: ${item.barWidth}%; border-radius: 4px;"></div>
                   </td>
-                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; color: ${item.textColor}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${item.rating}</td>
+                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; color: ${item.textColor}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${item.rating}</td>
                   </tr>
               `).join('')}
-              <tr style="background: ${THEME_COLORS.grayBgDark}; font-weight: bold;">
-                <td colspan="2" style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; text-align: right; font-size: ${FONT_SIZES.tableCell};">合计</td>
-                <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${data.stats.total}个</td>
-                <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">100.0%</td>
-                <td colspan="2" style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border};"></td>
+              <tr style="background: ${COLORS.grayBgDark}; font-weight: bold;">
+                <td colspan="2" style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">合计</td>
+                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${data.stats.total}个</td>
+                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell};">100.0%</td>
+                <td colspan="2" style="padding: 10px 12px; border: 1px solid ${COLORS.border};"></td>
               </tr>
             </tbody>
           </table>
           
-          <div style="padding: 18px; background: linear-gradient(135deg, ${THEME_COLORS.primary} 0%, ${THEME_COLORS.secondary} 100%); border-radius: 8px; color: white; margin-bottom: 15px;">
+          <div style="padding: 18px; background: linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.secondary} 100%); border-radius: 8px; color: white; margin-bottom: 15px;">
             <h3 style="font-size: ${FONT_SIZES.subtitle}; margin: 0 0 15px 0; border-bottom: 2px solid rgba(255,255,255,0.3); padding-bottom: 8px;">
               📈 稳定性综合指标
             </h3>
@@ -635,28 +710,32 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
             </div>
           </div>
           
-          <div style="padding: 15px; background: ${THEME_COLORS.infoBg}; border-left: 4px solid ${THEME_COLORS.info}; border-radius: 6px; margin-bottom: 15px;">
-              <strong style="color: ${THEME_COLORS.info}; font-size: ${FONT_SIZES.normal};">💡 农业意义：</strong>
-            <ul style="margin: 8px 0 0 0; padding-left: 20px; line-height: 1.8; font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.textLight};">
+          <div style="padding: 15px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px; margin-bottom: 15px;">
+              <strong style="color: ${COLORS.primary}; font-size: ${FONT_SIZES.normal};">💡 农业意义：</strong>
+            <ul style="margin: 8px 0 0 0; padding-left: 20px; line-height: 1.8; font-size: ${FONT_SIZES.description}; color: ${COLORS.textLight};">
               <li><strong>完全稳定地块（${((changeFrequency[0] || 0) / data.stats.total * 100).toFixed(1)}%）：</strong>整个分析期间保持同一作物，可能是专业化种植或主导作物</li>
               <li><strong>基本稳定地块（${((changeFrequency[1] || 0) / data.stats.total * 100).toFixed(1)}%）：</strong>仅调整一次，符合正常的作物轮作规律</li>
               <li><strong>频繁变化地块（${(highFreqCount / data.stats.total * 100).toFixed(1)}%）：</strong>建议实地调研，了解频繁变化的原因（市场、政策、土壤等因素）</li>
             </ul>
           </div>
           
-          <div style="padding: 12px; background: ${THEME_COLORS.grayBg}; border-radius: 6px; font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.gray};">
-            <strong>📋 等级划分标准：</strong>
-            优秀（0次）- 整个分析期间保持同一作物 | 
-            良好（1次）- 仅调整一次 | 
-            一般（2-3次）- 有一定轮作但较频繁 | 
-            较差（4次+）- 变化过于频繁
+          <div style="padding: 12px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px; font-size: ${FONT_SIZES.description};">
+            <strong style="color: ${COLORS.primary};">📋 等级划分标准：</strong>
+            <span style="color: ${COLORS.textLight};">
+              优秀（0次）- 整个分析期间保持同一作物 | 
+              良好（1次）- 仅调整一次 | 
+              一般（2-3次）- 有一定轮作但较频繁 | 
+              较差（4次+）- 变化过于频繁
+            </span>
           </div>
         </div>
       `
       await addSectionToPDF(createTempContainer(stabilityHTML), { scale: 3 })
       console.log('  ✅ 种植稳定性分析已添加')
+      await updateProgress('地块种植稳定性分析')
     } catch (error) {
       console.error('  ❌ 种植稳定性分析生成失败:', error.message)
+      await updateProgress('地块种植稳定性分析（失败）')
     }
   }
   
@@ -672,19 +751,19 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
       
       const distributionHTML = `
         <div>
-          <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid #4f46e5; padding-left: 10px;">
+          <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid ${COLORS.primary}; padding-left: 10px;">
             🌾 作物分布趋势对比
           </h2>
-          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border}; table-layout: fixed;">
+          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border}; table-layout: fixed;">
             <thead>
-              <tr style="background: ${THEME_COLORS.primary};">
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; width: 15%; vertical-align: middle;">作物类型</th>
+              <tr style="background: ${COLORS.primary};">
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; width: 15%; vertical-align: middle;">作物类型</th>
                 ${distributionData.map(point => `
-                  <th style="padding: 12px 8px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; word-wrap: break-word; word-break: break-all; white-space: normal; line-height: 1.4; vertical-align: middle;">
+                  <th style="padding: 12px 8px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; word-wrap: break-word; word-break: break-all; white-space: normal; line-height: 1.4; vertical-align: middle;">
                     ${point.taskName || point.time || `时间${point.timeIndex + 1}`}
                   </th>
                 `).join('')}
-                <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; width: 12%; vertical-align: middle;">变化趋势</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; width: 12%; vertical-align: middle;">变化趋势</th>
               </tr>
             </thead>
             <tbody>
@@ -695,15 +774,15 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
                 })
                 const trend = values[values.length - 1] - values[0]
                 const trendSymbol = trend > 0 ? '↑' : trend < 0 ? '↓' : '→'
-                const trendColor = trend > 0 ? THEME_COLORS.success : trend < 0 ? THEME_COLORS.danger : THEME_COLORS.gray
+                const trendColor = trend > 0 ? COLORS.success : trend < 0 ? COLORS.danger : COLORS.gray
                 
                 return `
-                  <tr style="background: ${i % 2 === 0 ? '#ffffff' : THEME_COLORS.grayBg};">
-                    <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${cropName}</td>
+                  <tr style="background: ${i % 2 === 0 ? '#ffffff' : COLORS.grayBg};">
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${cropName}</td>
                     ${values.map(val => `
-                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${val}</td>
+                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${val}</td>
                     `).join('')}
-                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; color: ${trendColor}; font-size: ${FONT_SIZES.tableCell}; word-wrap: break-word;">
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; color: ${trendColor}; font-size: ${FONT_SIZES.tableCell}; word-wrap: break-word;">
                       ${trendSymbol} ${Math.abs(trend)}
                     </td>
                   </tr>
@@ -711,15 +790,18 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
               }).join('')}
             </tbody>
           </table>
-          <div style="padding: 10px; background: #f9fafb; border-radius: 6px; font-size: ${FONT_SIZES.description}; color: #6b7280; margin-top: 10px;">
-            <strong>说明：</strong>↑ 表示地块数增加，↓ 表示减少，→ 表示无变化
+          <div style="padding: 12px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px; font-size: ${FONT_SIZES.description}; margin-top: 10px;">
+            <strong style="color: ${COLORS.primary};">📌 说明：</strong>
+            <span style="color: ${COLORS.textLight};">↑ 表示地块数增加，↓ 表示减少，→ 表示无变化</span>
           </div>
         </div>
       `
       await addSectionToPDF(createTempContainer(distributionHTML), { scale: 3 })
       console.log('  ✅ 作物分布趋势已添加')
+      await updateProgress('作物分布趋势对比')
     } catch (error) {
       console.error('  ❌ 作物分布趋势生成失败:', error.message)
+      await updateProgress('作物分布趋势对比（失败）')
     }
   }
   
@@ -827,79 +909,79 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
       // 第一部分：标题 + 说明 + 一、各时期占比趋势
       const economicHTML1 = `
         <div>
-          <h2 style="font-size: ${FONT_SIZES.title}; color: ${THEME_COLORS.text}; margin: 0 0 15px 0; font-weight: bold;">
+          <h2 style="font-size: ${FONT_SIZES.title}; color: ${COLORS.text}; margin: 0 0 15px 0; font-weight: bold;">
             💰 经济作物与粮食作物转换分析
           </h2>
           
-          <div style="padding: 12px; background: ${THEME_COLORS.infoBg}; border-left: 4px solid ${THEME_COLORS.info}; border-radius: 6px; margin-bottom: 20px;">
-              <strong style="color: ${THEME_COLORS.info}; font-size: ${FONT_SIZES.normal};">📌 作物分类配置：</strong>
-            <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.textLight}; margin-top: 8px; line-height: 1.6;">
+          <div style="padding: 12px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px; margin-bottom: 20px;">
+              <strong style="color: ${COLORS.primary}; font-size: ${FONT_SIZES.normal};">📌 作物分类配置：</strong>
+            <div style="font-size: ${FONT_SIZES.description}; color: ${COLORS.textLight}; margin-top: 8px; line-height: 1.6;">
               <strong>粮食作物：</strong>${CROP_CATEGORIES.粮食作物.join('、')} | 
               <strong>经济作物：</strong>${CROP_CATEGORIES.经济作物.join('、')} | 
               <strong>其他：</strong>${CROP_CATEGORIES.其他.join('、')}
             </div>
           </div>
           
-          <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${THEME_COLORS.textLight}; margin: 20px 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid ${THEME_COLORS.border};">
+          <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${COLORS.textLight}; margin: 20px 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid ${COLORS.border};">
             📈 一、各时期占比趋势
           </h3>
           
-          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border}; margin-bottom: 20px; table-layout: fixed;">
+          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border}; margin-bottom: 20px; table-layout: fixed;">
             <thead>
-              <tr style="background: ${THEME_COLORS.primary};">
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; width: 15%; vertical-align: middle;">作物类型</th>
+              <tr style="background: ${COLORS.primary};">
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; width: 15%; vertical-align: middle;">作物类型</th>
                 ${categoryTrend.map(period => `
-                  <th style="padding: 12px 8px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; word-wrap: break-word; word-break: break-all; white-space: normal; line-height: 1.4; vertical-align: middle;">
+                  <th style="padding: 12px 8px; text-align: center; border: 1px solid ${COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; word-wrap: break-word; word-break: break-all; white-space: normal; line-height: 1.4; vertical-align: middle;">
                     ${period.name}
                   </th>
                 `).join('')}
-                <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; width: 12%; vertical-align: middle;">变化趋势</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; width: 12%; vertical-align: middle;">变化趋势</th>
               </tr>
             </thead>
             <tbody>
-              <tr style="background: ${THEME_COLORS.warningBg};">
-                <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
-                  <span style="color: ${THEME_COLORS.warning};">🌾 粮食作物</span>
+              <tr style="background: ${COLORS.warningBg};">
+                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
+                  <span style="color: ${COLORS.warning};">🌾 粮食作物</span>
                 </td>
                 ${categoryTrend.map((period, i) => `
-                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border};">
+                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border};">
                     <div style="font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${period.grain.count}个</div>
-                    <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.gray};">${period.grain.percentage}%</div>
+                    <div style="font-size: ${FONT_SIZES.description}; color: ${COLORS.gray};">${period.grain.percentage}%</div>
                   </td>
                 `).join('')}
-                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell}; word-wrap: break-word;">
-                  <span style="color: ${parseFloat(grainChange) >= 0 ? THEME_COLORS.success : THEME_COLORS.danger}; font-size: ${FONT_SIZES.tableCell};">
+                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell}; word-wrap: break-word;">
+                  <span style="color: ${parseFloat(grainChange) >= 0 ? COLORS.success : COLORS.danger}; font-size: ${FONT_SIZES.tableCell};">
                     ${parseFloat(grainChange) >= 0 ? '↑' : '↓'}${Math.abs(grainChange)}%
                   </span>
                 </td>
               </tr>
-              <tr style="background: ${THEME_COLORS.successBg};">
-                <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
-                  <span style="color: ${THEME_COLORS.success};">💰 经济作物</span>
+              <tr style="background: ${COLORS.successBg};">
+                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
+                  <span style="color: ${COLORS.success};">💰 经济作物</span>
                 </td>
                 ${categoryTrend.map((period, i) => `
-                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border};">
+                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border};">
                     <div style="font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${period.economic.count}个</div>
-                    <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.gray};">${period.economic.percentage}%</div>
+                    <div style="font-size: ${FONT_SIZES.description}; color: ${COLORS.gray};">${period.economic.percentage}%</div>
                   </td>
                 `).join('')}
-                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell}; word-wrap: break-word;">
-                  <span style="color: ${parseFloat(economicChange) >= 0 ? THEME_COLORS.success : THEME_COLORS.danger}; font-size: ${FONT_SIZES.tableCell};">
+                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell}; word-wrap: break-word;">
+                  <span style="color: ${parseFloat(economicChange) >= 0 ? COLORS.success : COLORS.danger}; font-size: ${FONT_SIZES.tableCell};">
                     ${parseFloat(economicChange) >= 0 ? '↑' : '↓'}${Math.abs(economicChange)}%
                   </span>
                 </td>
               </tr>
-              <tr style="background: ${THEME_COLORS.grayBg};">
-                <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
-                  <span style="color: ${THEME_COLORS.gray};">⚪ 其他</span>
+              <tr style="background: ${COLORS.grayBg};">
+                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
+                  <span style="color: ${COLORS.gray};">⚪ 其他</span>
                 </td>
                 ${categoryTrend.map((period, i) => `
-                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border};">
+                  <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border};">
                     <div style="font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${period.other.count}个</div>
-                    <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.gray};">${period.other.percentage}%</div>
+                    <div style="font-size: ${FONT_SIZES.description}; color: ${COLORS.gray};">${period.other.percentage}%</div>
                   </td>
                 `).join('')}
-                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};"></td>
+                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell};"></td>
               </tr>
             </tbody>
           </table>
@@ -911,19 +993,19 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
       if (data.filesCount >= 2) {
         const economicHTML2 = `
           <div>
-            <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${THEME_COLORS.textLight}; margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid ${THEME_COLORS.border};">
+            <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${COLORS.textLight}; margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid ${COLORS.border};">
               🔄 二、转换流向统计
             </h3>
             
-            <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border}; margin-bottom: 20px;">
+            <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border}; margin-bottom: 20px;">
               <thead>
-                <tr style="background: ${THEME_COLORS.primary};">
-                  <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">转换方向</th>
+                <tr style="background: ${COLORS.primary};">
+                  <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">转换方向</th>
                   ${transitions['粮食→粮食'].map((t, i) => `
-                    <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; vertical-align: middle;">${t.period}期</th>
+                    <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; vertical-align: middle;">${t.period}期</th>
                   `).join('')}
-                  <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">合计</th>
-                  <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占比</th>
+                  <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">合计</th>
+                  <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占比</th>
                 </tr>
               </thead>
               <tbody>
@@ -931,16 +1013,16 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
                   const total = periods.reduce((sum, p) => sum + p.count, 0)
                   const allTransitions = Object.values(transitions).flat().reduce((sum, p) => sum + p.count, 0)
                   const percentage = ((total / allTransitions) * 100).toFixed(1)
-                  const bgColor = index % 2 === 0 ? '#ffffff' : THEME_COLORS.grayBg
+                  const bgColor = index % 2 === 0 ? '#ffffff' : COLORS.grayBg
                   
                   return `
                     <tr style="background: ${bgColor};">
-                      <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${key}</td>
+                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${key}</td>
                       ${periods.map(p => `
-                        <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${p.count}次</td>
+                        <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${p.count}次</td>
                       `).join('')}
-                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; color: ${THEME_COLORS.primary}; font-size: ${FONT_SIZES.tableCell};">${total}次</td>
-                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${percentage}%</td>
+                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; color: ${COLORS.primary}; font-size: ${FONT_SIZES.tableCell};">${total}次</td>
+                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${percentage}%</td>
                     </tr>
                   `
                 }).join('')}
@@ -954,17 +1036,17 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
       // 第三部分：三、地块完整路径分类 + 综合评估
       const economicHTML3 = `
         <div>
-          <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${THEME_COLORS.textLight}; margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid ${THEME_COLORS.border};">
+          <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${COLORS.textLight}; margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid ${COLORS.border};">
             🗺️ 三、地块完整路径分类
           </h3>
           
-          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border}; margin-bottom: 20px;">
+          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border}; margin-bottom: 20px;">
             <thead>
-              <tr style="background: ${THEME_COLORS.primary};">
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">路径类型</th>
-                <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">示例</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">地块数</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占比</th>
+              <tr style="background: ${COLORS.primary};">
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">路径类型</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">示例</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">地块数</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占比</th>
               </tr>
             </thead>
             <tbody>
@@ -980,31 +1062,31 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
                 }
                 
                 const colors = {
-                  '始终粮食作物': { bg: THEME_COLORS.warningBg, emoji: '🟡' },
-                  '始终经济作物': { bg: THEME_COLORS.successBg, emoji: '🟢' },
+                  '始终粮食作物': { bg: COLORS.warningBg, emoji: '🟡' },
+                  '始终经济作物': { bg: COLORS.successBg, emoji: '🟢' },
                   '粮食→经济转型': { bg: '#dbeafe', emoji: '🔵' },
                   '经济→粮食转型': { bg: '#dbeafe', emoji: '🔵' },
                   '多次粮经互换': { bg: '#fed7aa', emoji: '🟠' },
-                  '其他混合路径': { bg: THEME_COLORS.grayBg, emoji: '🟣' }
+                  '其他混合路径': { bg: COLORS.grayBg, emoji: '🟣' }
                 }
                 
                 return `
                   <tr style="background: ${colors[type].bg};">
-                    <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
                       <span style="font-size: ${FONT_SIZES.tableCell};">${colors[type].emoji}</span> ${type}
                     </td>
-                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-family: monospace; font-size: ${FONT_SIZES.description};">
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-family: monospace; font-size: ${FONT_SIZES.description};">
                       ${examples[type]}
                     </td>
-                    <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${count}个</td>
-                    <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${percentage}%</td>
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${count}个</td>
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${percentage}%</td>
                   </tr>
                 `
               }).join('')}
             </tbody>
           </table>
           
-          <div style="padding: 18px; background: linear-gradient(135deg, ${THEME_COLORS.primary} 0%, ${THEME_COLORS.secondary} 100%); border-radius: 8px; color: white; margin-bottom: 15px;">
+          <div style="padding: 18px; background: linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.secondary} 100%); border-radius: 8px; color: white; margin-bottom: 15px;">
             <h3 style="font-size: ${FONT_SIZES.subtitle}; margin: 0 0 12px 0; border-bottom: 2px solid rgba(255,255,255,0.3); padding-bottom: 8px;">
               📊 综合评估
             </h3>
@@ -1017,9 +1099,9 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
             </ul>
           </div>
           
-          <div style="padding: 15px; background: ${THEME_COLORS.infoBg}; border-left: 4px solid ${THEME_COLORS.info}; border-radius: 6px;">
-              <strong style="color: ${THEME_COLORS.info}; font-size: ${FONT_SIZES.normal};">💡 政策建议：</strong>
-            <ul style="margin: 8px 0 0 0; padding-left: 20px; line-height: 1.8; font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.textLight};">
+          <div style="padding: 15px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px;">
+              <strong style="color: ${COLORS.primary}; font-size: ${FONT_SIZES.normal};">💡 政策建议：</strong>
+            <ul style="margin: 8px 0 0 0; padding-left: 20px; line-height: 1.8; font-size: ${FONT_SIZES.description}; color: ${COLORS.textLight};">
               <li>关注粮食作物种植面积变化，确保区域粮食安全</li>
               <li>经济作物增长应与市场需求和风险承受能力相匹配</li>
               <li>建议保持合理的粮经比例，避免过度单一化</li>
@@ -1029,8 +1111,10 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
       `
       await addSectionToPDF(createTempContainer(economicHTML3), { scale: 3 })
       console.log('  ✅ 经济作物与粮食作物转换分析已添加')
+      await updateProgress('经济作物与粮食作物转换分析')
     } catch (error) {
       console.error('  ❌ 经济作物与粮食作物转换分析生成失败:', error.message)
+      await updateProgress('经济作物与粮食作物转换分析（失败）')
     }
   }
   
@@ -1042,48 +1126,43 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
       const filesCount = data.filesCount || 2
       const transitionHTML = `
         <div>
-          <h2 style="font-size: ${FONT_SIZES.title}; color: ${THEME_COLORS.text}; margin: 0 0 15px 0; font-weight: bold;">
+          <h2 style="font-size: ${FONT_SIZES.title}; color: ${COLORS.text}; margin: 0 0 15px 0; font-weight: bold;">
             🔄 作物转换流向TOP20
           </h2>
           
-          ${filesCount <= 2 ? `
-          <div style="padding: 12px; background: ${THEME_COLORS.warningBg}; border-left: 4px solid ${THEME_COLORS.warning}; border-radius: 6px; margin-bottom: 15px;">
-              <strong style="color: ${THEME_COLORS.warning}; font-size: ${FONT_SIZES.normal};">📌 说明：</strong>
-            <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.textLight}; margin-top: 6px; line-height: 1.6;">
-              当前为 <strong>${filesCount}期</strong> 分析。转换流向统计的是<strong>相邻时期间的作物变化方向</strong>。
-              ${filesCount === 2 ? '两期分析时，此表与下方轮作模式表内容相同（建议使用3期及以上数据以体现轮作规律）。' : ''}
+          <div style="padding: 12px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px; margin-bottom: 15px;">
+              <strong style="color: ${COLORS.primary}; font-size: ${FONT_SIZES.normal};">📌 说明：</strong>
+            <div style="font-size: ${FONT_SIZES.description}; color: ${COLORS.textLight}; margin-top: 6px; line-height: 1.6;">
+              ${filesCount <= 2 ? `
+                当前为 <strong>${filesCount}期</strong> 分析。转换流向统计的是<strong>相邻时期间的作物变化方向</strong>。
+                ${filesCount === 2 ? '两期分析时，此表与下方轮作模式表内容相同（建议使用3期及以上数据以体现轮作规律）。' : ''}
+              ` : `
+                统计 <strong>${filesCount}期</strong> 数据中，所有相邻时期间的作物转换次数。
+                例如："小麦 → 玉米"出现150次，表示有150个地块在某个时期从小麦转为玉米。
+              `}
             </div>
           </div>
-          ` : `
-          <div style="padding: 12px; background: ${THEME_COLORS.infoBg}; border-left: 4px solid ${THEME_COLORS.info}; border-radius: 6px; margin-bottom: 15px;">
-              <strong style="color: ${THEME_COLORS.info}; font-size: ${FONT_SIZES.normal};">📌 说明：</strong>
-            <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.textLight}; margin-top: 6px; line-height: 1.6;">
-              统计 <strong>${filesCount}期</strong> 数据中，所有相邻时期间的作物转换次数。
-              例如："小麦 → 玉米"出现150次，表示有150个地块在某个时期从小麦转为玉米。
-            </div>
-          </div>
-          `}
           
-          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border};">
+          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border};">
             <thead>
-              <tr style="background: ${THEME_COLORS.primary};">
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">排名</th>
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">转换类型</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">次数</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占比</th>
+              <tr style="background: ${COLORS.primary};">
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">排名</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">转换类型</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">次数</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占比</th>
               </tr>
             </thead>
             <tbody>
               ${transitions.map(([key, count], i) => {
                 const percentage = ((count / (data.stats?.totalChanges || 1)) * 100).toFixed(1)
                 return `
-                  <tr style="background: ${i % 2 === 0 ? '#ffffff' : THEME_COLORS.grayBg};">
-                    <td style="padding: 8px 10px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; color: ${i < 3 ? THEME_COLORS.danger : THEME_COLORS.gray}; font-size: ${FONT_SIZES.tableCell};">
+                  <tr style="background: ${i % 2 === 0 ? '#ffffff' : COLORS.grayBg};">
+                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; color: ${i < 3 ? COLORS.primary : COLORS.gray}; font-size: ${FONT_SIZES.tableCell};">
                       ${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                     </td>
-                    <td style="padding: 8px 10px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${key}</td>
-                    <td style="padding: 8px 10px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${count} 次</td>
-                    <td style="padding: 8px 10px; text-align: right; border: 1px solid ${THEME_COLORS.border}; color: ${THEME_COLORS.primary}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${percentage}%</td>
+                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${key}</td>
+                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell}; color: ${COLORS.text};">${count} 次</td>
+                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell}; color: ${COLORS.text};">${percentage}%</td>
                   </tr>
                 `
               }).join('')}
@@ -1093,8 +1172,10 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
       `
       await addSectionToPDF(createTempContainer(transitionHTML), { scale: 3 })
       console.log('  ✅ 作物转换流向已添加')
+      await updateProgress('作物转换流向TOP20')
     } catch (error) {
       console.error('  ❌ 作物转换流向生成失败:', error.message)
+      await updateProgress('作物转换流向TOP20（失败）')
     }
   }
   
@@ -1142,68 +1223,67 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
     if (topPatterns.length > 0) {
       const rotationHTML = `
         <div>
-          <h2 style="font-size: ${FONT_SIZES.title}; color: ${THEME_COLORS.text}; margin: 0 0 15px 0; font-weight: bold;">
+          <h2 style="font-size: ${FONT_SIZES.title}; color: ${COLORS.text}; margin: 0 0 15px 0; font-weight: bold;">
             🔁 作物轮作模式分析 TOP15
           </h2>
           
-          ${filesCount <= 2 ? `
-          <div style="padding: 12px; background: ${THEME_COLORS.warningBg}; border-left: 4px solid ${THEME_COLORS.warning}; border-radius: 6px; margin-bottom: 15px;">
-              <strong style="color: ${THEME_COLORS.warning}; font-size: ${FONT_SIZES.normal};">📌 说明：</strong>
-            <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.textLight}; margin-top: 6px; line-height: 1.6;">
-              当前为 <strong>${filesCount}期</strong> 分析。轮作模式显示的是<strong>地块完整的种植路径</strong>。
-              ${filesCount === 2 ? `
-              两期分析时，轮作模式即为"起始作物 → 结束作物"。<br>
-              <strong>💡 建议：</strong>使用3期及以上数据，可分析出"小麦 → 玉米 → 水稻"等多年轮作策略。
-              ` : ''}
+          <div style="padding: 12px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px; margin-bottom: 15px;">
+              <strong style="color: ${COLORS.primary}; font-size: ${FONT_SIZES.normal};">📌 说明：</strong>
+            <div style="font-size: ${FONT_SIZES.description}; color: ${COLORS.textLight}; margin-top: 6px; line-height: 1.6;">
+              ${filesCount <= 2 ? `
+                当前为 <strong>${filesCount}期</strong> 分析。轮作模式显示的是<strong>地块完整的种植路径</strong>。
+                ${filesCount === 2 ? `
+                两期分析时，轮作模式即为"起始作物 → 结束作物"。<br>
+                <strong>💡 建议：</strong>使用3期及以上数据，可分析出"小麦 → 玉米 → 水稻"等多年轮作策略。
+                ` : ''}
+              ` : `
+                统计 <strong>${filesCount}期</strong> 数据中，地块的<strong>完整种植序列</strong>。
+                例如："小麦 → 玉米 → 水稻"出现45次，表示有45个地块按此顺序完整轮作了${filesCount}期。
+                <br><strong>区别于转换流向：</strong>轮作模式关注整体策略，转换流向关注单步变化。
+              `}
             </div>
           </div>
-          ` : `
-          <div style="padding: 12px; background: ${THEME_COLORS.infoBg}; border-left: 4px solid ${THEME_COLORS.info}; border-radius: 6px; margin-bottom: 15px;">
-              <strong style="color: ${THEME_COLORS.info}; font-size: ${FONT_SIZES.normal};">📌 说明：</strong>
-            <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.textLight}; margin-top: 6px; line-height: 1.6;">
-              统计 <strong>${filesCount}期</strong> 数据中，地块的<strong>完整种植序列</strong>。
-              例如："小麦 → 玉米 → 水稻"出现45次，表示有45个地块按此顺序完整轮作了${filesCount}期。
-              <br><strong>区别于转换流向：</strong>轮作模式关注整体策略，转换流向关注单步变化。
-            </div>
-          </div>
-          `}
-          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border};">
+          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border};">
             <thead>
-              <tr style="background: ${THEME_COLORS.primary};">
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">排名</th>
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">轮作模式</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">地块数</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">周期</th>
+              <tr style="background: ${COLORS.primary};">
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">排名</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">轮作模式</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">地块数</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">周期</th>
               </tr>
             </thead>
             <tbody>
               ${topPatterns.map(([pattern, count], i) => {
                 const cycle = pattern.split(' → ').length
                 return `
-                  <tr style="background: ${i % 2 === 0 ? '#ffffff' : THEME_COLORS.grayBg};">
-                    <td style="padding: 8px 10px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; color: ${i < 3 ? THEME_COLORS.danger : THEME_COLORS.gray}; font-size: ${FONT_SIZES.tableCell};">
+                  <tr style="background: ${i % 2 === 0 ? '#ffffff' : COLORS.grayBg};">
+                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; color: ${i < 3 ? COLORS.primary : COLORS.gray}; font-size: ${FONT_SIZES.tableCell};">
                       ${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                     </td>
-                    <td style="padding: 8px 10px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${pattern}</td>
-                    <td style="padding: 8px 10px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${count} 个</td>
-                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${THEME_COLORS.border}; color: ${THEME_COLORS.primary}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${cycle}期</td>
+                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${pattern}</td>
+                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell}; color: ${COLORS.text};">${count} 个</td>
+                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell}; color: ${COLORS.text};">${cycle}期</td>
                   </tr>
                 `
               }).join('')}
             </tbody>
           </table>
-          <div style="padding: 10px; background: ${THEME_COLORS.infoBg}; border-radius: 6px; font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.primary}; margin-top: 10px;">
-            <strong>说明：</strong>轮作模式表示地块在各时期种植的作物序列，箭头表示时间顺序
+          <div style="padding: 12px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px; font-size: ${FONT_SIZES.description}; margin-top: 10px;">
+            <strong style="color: ${COLORS.primary};">📋 等级划分标准：</strong>
+            <span style="color: ${COLORS.textLight};">轮作模式表示地块在各时期种植的作物序列，箭头表示时间顺序</span>
           </div>
         </div>
       `
       await addSectionToPDF(createTempContainer(rotationHTML), { scale: 3 })
       console.log('  ✅ 轮作模式分析已添加')
+      await updateProgress('作物轮作模式分析')
     } else {
       console.log('  ⚠️ 无轮作模式数据，跳过此部分')
+      await updateProgress('作物轮作模式分析（无数据）')
     }
   } catch (error) {
     console.error('  ❌ 轮作模式分析生成失败:', error.message)
+    await updateProgress('作物轮作模式分析（失败）')
   }
   
   // 10. 未变化地块作物类型分析
@@ -1233,16 +1313,16 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
       
       const unchangedHTML = `
         <div>
-          <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid #4f46e5; padding-left: 10px;">
+          <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid ${COLORS.primary}; padding-left: 10px;">
             🟢 未变化地块作物类型分析
           </h2>
-          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border};">
+          <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border};">
             <thead>
-              <tr style="background: ${THEME_COLORS.primary};">
-                <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">作物类型</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">地块数量</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占未变化地块比例</th>
-                <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占总地块比例</th>
+              <tr style="background: ${COLORS.primary};">
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">作物类型</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">地块数量</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占未变化地块比例</th>
+                <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">占总地块比例</th>
               </tr>
             </thead>
             <tbody>
@@ -1250,25 +1330,27 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
                 const percentageUnchanged = ((count / unchangedTrajectories.length) * 100).toFixed(1)
                 const percentageTotal = ((count / (data.stats?.total || 1)) * 100).toFixed(1)
                 return `
-                  <tr style="background: ${i % 2 === 0 ? '#ffffff' : THEME_COLORS.grayBg};">
-                    <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${crop}</td>
-                    <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${count} 个</td>
-                    <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; color: ${THEME_COLORS.success}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${percentageUnchanged}%</td>
-                    <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; color: ${THEME_COLORS.gray}; font-size: ${FONT_SIZES.tableCell};">${percentageTotal}%</td>
+                  <tr style="background: ${i % 2 === 0 ? '#ffffff' : COLORS.grayBg};">
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${crop}</td>
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${count} 个</td>
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; color: ${COLORS.text}; font-size: ${FONT_SIZES.tableCell};">${percentageUnchanged}%</td>
+                    <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; color: ${COLORS.gray}; font-size: ${FONT_SIZES.tableCell};">${percentageTotal}%</td>
                   </tr>
                 `
               }).join('')}
             </tbody>
           </table>
-          <div style="padding: 10px; background: ${THEME_COLORS.infoBg}; border-radius: 6px; font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.primary}; margin-top: 10px;">
+          <div style="padding: 10px; background: ${COLORS.infoBg}; border-radius: 6px; font-size: ${FONT_SIZES.description}; color: ${COLORS.primary}; margin-top: 10px;">
             <strong>说明：</strong>这些地块在整个分析期间保持同一作物种植，表现出较强的种植稳定性
           </div>
         </div>
       `
       await addSectionToPDF(createTempContainer(unchangedHTML), { scale: 3 })
       console.log('  ✅ 未变化地块分析已添加')
+      await updateProgress('未变化地块作物类型分析')
     } catch (error) {
       console.error('  ❌ 未变化地块分析生成失败:', error.message)
+      await updateProgress('未变化地块作物类型分析（失败）')
     }
   }
   
@@ -1281,7 +1363,7 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
         const cropHTML = `
           <div>
             ${index === 0 ? `
-            <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 20px 0; border-left: 4px solid #4f46e5; padding-left: 10px;">
+            <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 20px 0; border-left: 4px solid ${COLORS.primary}; padding-left: 10px;">
               📅 各时期作物分布详情
             </h2>
             ` : ''}
@@ -1289,25 +1371,25 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
               <div style="background: #f3f4f6; padding: 12px 15px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">
                 ${point.taskName || point.time || `时间点${point.timeIndex + 1}`}（共${point.crops.length}种作物）
               </div>
-              <table style="width: 100%; border-collapse: collapse;">
+              <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border};">
                 <thead>
-                  <tr style="background: ${THEME_COLORS.primary};">
-                    <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; vertical-align: middle;">作物类型</th>
-                    <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; vertical-align: middle;">地块数</th>
-                    <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; vertical-align: middle;">占比</th>
+                  <tr style="background: ${COLORS.primary};">
+                    <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; vertical-align: middle;">作物类型</th>
+                    <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; vertical-align: middle;">地块数</th>
+                    <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; vertical-align: middle;">占比</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${topCrops.map((crop, i) => `
                     <tr style="${i % 2 === 0 ? 'background: #ffffff;' : 'background: #f9fafb;'}">
-                      <td style="padding: 10px 12px; font-size: ${FONT_SIZES.tableCell};">${crop.crop}</td>
-                      <td style="padding: 10px 12px; text-align: right; font-size: ${FONT_SIZES.tableCell}; font-weight: bold;">${crop.count} 个</td>
-                      <td style="padding: 10px 12px; text-align: right; font-size: ${FONT_SIZES.tableCell}; color: ${THEME_COLORS.primary}; font-weight: bold;">${crop.percentage}%</td>
+                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${crop.crop}</td>
+                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell}; font-weight: bold;">${crop.count} 个</td>
+                      <td style="padding: 10px 12px; text-align: center; border: 1px solid ${COLORS.border}; font-size: ${FONT_SIZES.tableCell}; color: ${COLORS.text};">${crop.percentage}%</td>
                     </tr>
                   `).join('')}
                   ${point.crops.length > 10 ? `
                     <tr style="background: #f9fafb;">
-                      <td colspan="3" style="padding: 8px 12px; text-align: center; font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.gray}; border-top: 1px solid ${THEME_COLORS.border};">
+                      <td colspan="3" style="padding: 8px 12px; text-align: center; font-size: ${FONT_SIZES.description}; color: ${COLORS.gray}; border-top: 1px solid ${COLORS.border};">
                         ... 其他${point.crops.length - 10}种作物
                       </td>
                     </tr>
@@ -1320,8 +1402,10 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
         await addSectionToPDF(createTempContainer(cropHTML), { scale: 3 })
         console.log(`  ✅ 时期 ${index + 1}/${distributionData.length} 作物分布已添加`)
       }
+      await updateProgress('各时期作物分布详情')
     } catch (error) {
       console.error('  ❌ 各时期作物分布生成失败:', error.message)
+      await updateProgress('各时期作物分布详情（失败）')
     }
   }
   
@@ -1330,57 +1414,57 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
   try {
     const summaryStatsHTML = `
       <div>
-        <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid #4f46e5; padding-left: 10px;">
+        <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid ${COLORS.primary}; padding-left: 10px;">
           📊 数据统计汇总
         </h2>
-        <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border};">
+        <table style="width: 100%; border-collapse: collapse; border: 1px solid ${COLORS.border};">
           <thead>
-            <tr style="background: ${THEME_COLORS.primary};">
-              <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; width: 40%; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">统计项</th>
-              <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; width: 30%; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">数值</th>
-              <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; width: 30%; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">说明</th>
+            <tr style="background: ${COLORS.primary};">
+              <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; width: 40%; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">统计项</th>
+              <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; width: 30%; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">数值</th>
+              <th style="padding: 12px; text-align: center; border: 1px solid ${COLORS.primaryDark}; width: 30%; color: white; font-size: ${FONT_SIZES.tableHeader}; vertical-align: middle;">说明</th>
             </tr>
           </thead>
           <tbody>
-            <tr style="background: ${THEME_COLORS.grayBg};">
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">分析时期数</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; text-align: right; font-size: ${FONT_SIZES.tableCell};">${data.filesCount || distributionData.length} 期</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.description};">分析覆盖的时间周期数</td>
+            <tr style="background: ${COLORS.grayBg};">
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">分析时期数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">${data.filesCount || distributionData.length} 期</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.description};">分析覆盖的时间周期数</td>
             </tr>
             <tr>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">总地块数</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; text-align: right; font-size: ${FONT_SIZES.tableCell};">${data.stats?.total || 0} 个</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.description};">所有分析的地块数量</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">总地块数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">${data.stats?.total || 0} 个</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.description};">所有分析的地块数量</td>
             </tr>
-            <tr style="background: ${THEME_COLORS.grayBg};">
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">变化地块数</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; text-align: right; color: ${THEME_COLORS.warning}; font-size: ${FONT_SIZES.tableCell};">${data.stats?.changed || 0} 个</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.description};">至少发生一次作物变化的地块</td>
-            </tr>
-            <tr>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">未变化地块数</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; text-align: right; color: ${THEME_COLORS.success}; font-size: ${FONT_SIZES.tableCell};">${data.stats?.unchanged || 0} 个</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.description};">始终保持同一作物的地块</td>
-            </tr>
-            <tr style="background: ${THEME_COLORS.grayBg};">
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">总变化次数</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; text-align: right; font-size: ${FONT_SIZES.tableCell};">${data.stats?.totalChanges || 0} 次</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.description};">所有地块的变化次数总和</td>
+            <tr style="background: ${COLORS.grayBg};">
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">变化地块数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; color: ${COLORS.warning}; font-size: ${FONT_SIZES.tableCell};">${data.stats?.changed || 0} 个</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.description};">至少发生一次作物变化的地块</td>
             </tr>
             <tr>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">平均变化次数</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; text-align: right; font-size: ${FONT_SIZES.tableCell};">${((data.stats?.totalChanges || 0) / (data.stats?.total || 1)).toFixed(2)} 次/地块</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.description};">每个地块平均变化次数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">未变化地块数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; color: ${COLORS.success}; font-size: ${FONT_SIZES.tableCell};">${data.stats?.unchanged || 0} 个</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.description};">始终保持同一作物的地块</td>
             </tr>
-            <tr style="background: ${THEME_COLORS.grayBg};">
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">作物转换模式数</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; text-align: right; font-size: ${FONT_SIZES.tableCell};">${Object.keys(data.transitionMatrix || {}).length} 种</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.description};">不同的作物转换类型数</td>
+            <tr style="background: ${COLORS.grayBg};">
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">总变化次数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">${data.stats?.totalChanges || 0} 次</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.description};">所有地块的变化次数总和</td>
             </tr>
             <tr>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">作物类型数</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; text-align: right; font-size: ${FONT_SIZES.tableCell};">${new Set((distributionData[0]?.crops || []).map(c => c.crop)).size} 种</td>
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.description};">分析区域种植的作物种类</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">平均变化次数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">${((data.stats?.totalChanges || 0) / (data.stats?.total || 1)).toFixed(2)} 次/地块</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.description};">每个地块平均变化次数</td>
+            </tr>
+            <tr style="background: ${COLORS.grayBg};">
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">作物转换模式数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">${Object.keys(data.transitionMatrix || {}).length} 种</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.description};">不同的作物转换类型数</td>
+            </tr>
+            <tr>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">作物类型数</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.tableCell};">${new Set((distributionData[0]?.crops || []).map(c => c.crop)).size} 种</td>
+              <td style="padding: 10px 12px; border: 1px solid ${COLORS.border}; text-align: center; font-size: ${FONT_SIZES.description};">分析区域种植的作物种类</td>
             </tr>
           </tbody>
         </table>
@@ -1388,8 +1472,10 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
     `
     await addSectionToPDF(createTempContainer(summaryStatsHTML), { scale: 3 })
     console.log('  ✅ 数据统计汇总已添加')
+    await updateProgress('数据统计汇总')
   } catch (error) {
     console.error('  ❌ 数据统计汇总生成失败:', error.message)
+    await updateProgress('数据统计汇总（失败）')
   }
   
   // 15. 报告说明
@@ -1397,16 +1483,17 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
   try {
     const notesHTML = `
       <div>
-        <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid #4f46e5; padding-left: 10px;">
+        <h2 style="font-size: ${FONT_SIZES.title}; color: #1f2937; margin: 0 0 15px 0; border-left: 4px solid ${COLORS.primary}; padding-left: 10px;">
           📝 报告说明
         </h2>
-        <div style="padding: 20px; background: #f9fafb; border-radius: 8px; border-left: 4px solid #6b7280;">
-          <h3 style="font-size: ${FONT_SIZES.subtitle}; color: #374151; margin: 0 0 12px 0;">本报告包含以下分析内容：</h3>
-          <ul style="margin: 0; padding-left: 20px; line-height: 2; color: #4b5563;">
+        <div style="padding: 20px; background: ${COLORS.primaryBg}; border-radius: 8px; border-left: 4px solid ${COLORS.primary};">
+          <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${COLORS.primary}; margin: 0 0 12px 0;">本报告包含以下分析内容：</h3>
+          <ul style="margin: 0; padding-left: 20px; line-height: 2; color: ${COLORS.textLight}; font-size: ${FONT_SIZES.description};">
             <li><strong>变化统计详情：</strong>地块变化的基本统计数据</li>
             <li><strong>时序变化地图：</strong>地块变化的空间分布可视化</li>
-            <li><strong>地块变化频率分布：</strong>不同变化频次的地块数量统计</li>
+            <li><strong>地块种植稳定性分析：</strong>不同稳定性等级的地块数量统计与评价</li>
             <li><strong>作物分布趋势对比：</strong>各时期作物种植面积的横向对比</li>
+            <li><strong>经济作物与粮食作物转换分析：</strong>粮经作物占比趋势与转换流向</li>
             <li><strong>作物转换流向：</strong>最常见的TOP20作物转换模式</li>
             <li><strong>作物轮作模式：</strong>完整的多期作物轮作序列分析（TOP15）</li>
             <li><strong>未变化地块分析：</strong>种植稳定性及作物类型分布</li>
@@ -1414,8 +1501,8 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
             <li><strong>数据统计汇总：</strong>全面的数据统计指标</li>
           </ul>
           
-          <h3 style="font-size: ${FONT_SIZES.subtitle}; color: #374151; margin: 20px 0 12px 0;">关键术语说明：</h3>
-          <ul style="margin: 0; padding-left: 20px; line-height: 2; color: #4b5563; font-size: ${FONT_SIZES.tableCell};">
+          <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${COLORS.primary}; margin: 20px 0 12px 0;">关键术语说明：</h3>
+          <ul style="margin: 0; padding-left: 20px; line-height: 2; color: ${COLORS.textLight}; font-size: ${FONT_SIZES.description};">
             <li><strong>变化地块：</strong>在分析期间至少发生一次作物转换的地块</li>
             <li><strong>未变化地块：</strong>始终保持同一作物种植的地块</li>
             <li><strong>变化次数：</strong>地块在相邻时期间发生作物转换的次数</li>
@@ -1423,16 +1510,19 @@ async function generateAllContentSections(pdf, data, { addSectionToPDF, createTe
             <li><strong>转换流向：</strong>从某一作物转换到另一作物的模式</li>
           </ul>
           
-          <div style="margin-top: 20px; padding: 12px; background: #eff6ff; border-radius: 6px; font-size: ${FONT_SIZES.description}; color: #1e40af;">
-            <strong>💡 提示：</strong>本报告基于时序分析自动生成，所有统计数据和图表均基于实际分析结果。建议结合实地调研进行综合分析。
+          <div style="margin-top: 20px; padding: 12px; background: ${COLORS.primaryBg}; border-left: 4px solid ${COLORS.primary}; border-radius: 6px; font-size: ${FONT_SIZES.description};">
+            <strong style="color: ${COLORS.primary};">💡 提示：</strong>
+            <span style="color: ${COLORS.textLight};">本报告基于时序分析自动生成，所有统计数据和图表均基于实际分析结果。建议结合实地调研进行综合分析。</span>
           </div>
         </div>
       </div>
     `
     await addSectionToPDF(createTempContainer(notesHTML), { scale: 3 })
     console.log('  ✅ 报告说明已添加')
+    await updateProgress('报告说明')
   } catch (error) {
     console.error('  ❌ 报告说明生成失败:', error.message)
+    await updateProgress('报告说明（失败）')
   }
   
   console.log('  📍 所有内容生成完成')
@@ -1452,726 +1542,4 @@ export function downloadPDFBlob(blob, filename) {
   URL.revokeObjectURL(url)
 }
 
-/**
- * 生成PDF预览HTML（完整版 - 与PDF内容100%一致）
- * @param {Object} data - 分析数据
- * @param {String} viewType - 视图类型 ('timeline' | 'charts' | 'all')
- * @returns {String} HTML字符串
- */
-export function generatePreviewHTML(data, viewType = 'all') {
-  console.log('🔍 生成PDF完整预览...')
-  const timestamp = new Date().toLocaleString('zh-CN')
-  const changeRate = data.stats?.total > 0 
-    ? ((data.stats.changed / data.stats.total) * 100).toFixed(1) 
-    : '0'
-  
-  // 收集所有HTML片段（完全按照PDF生成顺序）
-  const sections = []
-  
-  // ==================== 1. 封面 ====================
-  sections.push(`
-    <div class="page">
-      <h1 style="font-size: ${FONT_SIZES.coverTitle}; text-align: center; color: #1f2937; margin: 40px 0;">
-        时序分析完整报告
-      </h1>
-      <div style="text-align: center; font-size: ${FONT_SIZES.coverSubtitle}; color: #6b7280; margin: 20px 0;">
-        地图、统计与图表分析
-      </div>
-      <div style="text-align: center; font-size: ${FONT_SIZES.coverDate}; color: #9ca3af; margin: 40px 0;">
-        生成时间：${timestamp}
-      </div>
-    </div>
-  `)
-  
-  // 2. 分析摘要
-  sections.push(`
-    <div class="page">
-      <h2>📊 分析摘要</h2>
-      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin: 20px 0;">
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 18px; border-radius: 8px; color: white;">
-          <div style="font-size: ${FONT_SIZES.cardLabel}; opacity: 0.9;">分析周期</div>
-          <div style="font-size: ${FONT_SIZES.cardValue}; font-weight: bold; margin-top: 8px;">${data.filesCount || 0} 期</div>
-        </div>
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 18px; border-radius: 8px; color: white;">
-          <div style="font-size: ${FONT_SIZES.cardLabel}; opacity: 0.9;">总地块数</div>
-          <div style="font-size: ${FONT_SIZES.cardValue}; font-weight: bold; margin-top: 8px;">${data.stats?.total || 0} 个</div>
-        </div>
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 18px; border-radius: 8px; color: white;">
-          <div style="font-size: ${FONT_SIZES.cardLabel}; opacity: 0.9;">变化地块</div>
-          <div style="font-size: ${FONT_SIZES.cardValue}; font-weight: bold; margin-top: 8px;">${data.stats?.changed || 0} 个</div>
-        </div>
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 18px; border-radius: 8px; color: white;">
-          <div style="font-size: ${FONT_SIZES.cardLabel}; opacity: 0.9;">变化率</div>
-          <div style="font-size: ${FONT_SIZES.cardValue}; font-weight: bold; margin-top: 8px;">${changeRate}%</div>
-        </div>
-      </div>
-    </div>
-  `)
-  
-  // 3. 变化统计详情
-  sections.push(`
-    <div class="page">
-      <h2>📈 变化统计详情</h2>
-      <table>
-        <thead>
-          <tr style="background: #f9fafb;">
-            <th style="text-align: left;">统计项</th>
-            <th style="text-align: right;">数值</th>
-            <th style="text-align: right;">占比</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>总地块数</td>
-            <td style="text-align: right; font-weight: bold;">${data.stats?.total || 0} 个</td>
-            <td style="text-align: right;">100%</td>
-          </tr>
-          <tr style="background: #fef3c7;">
-            <td>变化地块</td>
-            <td style="text-align: right; font-weight: bold; color: #f59e0b;">${data.stats?.changed || 0} 个</td>
-            <td style="text-align: right;">${((data.stats?.changed / data.stats?.total) * 100).toFixed(1)}%</td>
-          </tr>
-          <tr style="background: #d1fae5;">
-            <td>未变化地块</td>
-            <td style="text-align: right; font-weight: bold; color: #10b981;">${data.stats?.unchanged || 0} 个</td>
-            <td style="text-align: right;">${((data.stats?.unchanged / data.stats?.total) * 100).toFixed(1)}%</td>
-          </tr>
-          <tr>
-            <td>总变化次数</td>
-            <td style="text-align: right; font-weight: bold;">${data.stats?.totalChanges || 0} 次</td>
-            <td style="text-align: right;">-</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  `)
-  
-  // 4. 地图说明（预览无法显示地图）
-  sections.push(`
-    <div class="page">
-      <h2>🗺️ 时序变化地图</h2>
-      <div style="padding: 40px; background: #f5f7fa; border: 2px dashed #cbd5e0; border-radius: 8px; text-align: center;">
-        <p style="font-size: ${FONT_SIZES.subtitle}; color: #718096; margin: 20px 0;">
-          📍 地图预览功能暂不支持<br/>
-          实际PDF中会显示完整的地图
-        </p>
-      </div>
-      <div class="description" style="margin-top: 15px;">
-        <strong>说明：</strong>地图中不同颜色代表地块的变化程度，绿色表示无变化，橙色至深红色表示变化频率逐渐增加。
-      </div>
-    </div>
-  `)
-  
-  // 5. 地块稳定性分析
-  if (data.features && data.features.length > 0) {
-    const changeFrequency = {}
-    data.features.forEach(feature => {
-      const changeCount = feature.properties.changeCount || 0
-      changeFrequency[changeCount] = (changeFrequency[changeCount] || 0) + 1
-    })
-    
-    const stabilityLevels = []
-    const maxFreq = Math.max(...Object.keys(changeFrequency).map(Number))
-    
-    for (let freq = 0; freq <= maxFreq; freq++) {
-      const count = changeFrequency[freq] || 0
-      if (count === 0) continue
-      
-      const percentage = ((count / data.stats.total) * 100).toFixed(1)
-      const barWidth = (count / data.stats.total) * 100
-      
-      let level, emoji, bgColor, textColor, rating
-      if (freq === 0) {
-        level = '完全稳定'
-        emoji = '🟢'
-        bgColor = THEME_COLORS.successBgLight
-        textColor = THEME_COLORS.success
-        rating = '优秀'
-      } else if (freq === 1) {
-        level = '基本稳定'
-        emoji = '🟡'
-        bgColor = THEME_COLORS.successBg
-        textColor = THEME_COLORS.successLight
-        rating = '良好'
-      } else if (freq <= 3) {
-        level = '稳定性一般'
-        emoji = '🟠'
-        bgColor = THEME_COLORS.warningBg
-        textColor = THEME_COLORS.warning
-        rating = '一般'
-      } else {
-        level = '稳定性较差'
-        emoji = '🔴'
-        bgColor = THEME_COLORS.dangerBg
-        textColor = THEME_COLORS.danger
-        rating = '较差'
-      }
-      
-      stabilityLevels.push({ freq, count, percentage, barWidth, level, emoji, bgColor, textColor, rating })
-    }
-    
-    const highFreqCount = Object.entries(changeFrequency)
-      .filter(([freq]) => Number(freq) >= 4)
-      .reduce((sum, [_, count]) => sum + count, 0)
-    const totalChanges = Object.entries(changeFrequency)
-      .reduce((sum, [freq, count]) => sum + (Number(freq) * count), 0)
-    const avgChange = (totalChanges / data.stats.total).toFixed(2)
-    const stabilityIndex = (((changeFrequency[0] || 0) + (changeFrequency[1] || 0)) / data.stats.total * 100).toFixed(1)
-    
-    sections.push(`
-      <div class="page">
-        <h2>📊 地块种植稳定性分析</h2>
-        <table style="margin-top: 20px;">
-          <thead>
-            <tr style="background: ${THEME_COLORS.primary};">
-              <th style="color: white;">稳定性等级</th>
-              <th style="text-align: center; color: white;">变化次数</th>
-              <th style="text-align: right; color: white;">地块数量</th>
-              <th style="text-align: right; color: white;">占比</th>
-              <th style="color: white;">分布图</th>
-              <th style="text-align: center; color: white;">评价</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${stabilityLevels.map(item => `
-              <tr style="background: ${item.bgColor};">
-                <td>
-                  <span style="font-size: ${FONT_SIZES.subtitle};">${item.emoji}</span>
-                  <strong style="margin-left: 6px; color: ${item.textColor};">${item.level}</strong>
-                </td>
-                <td style="text-align: center; font-weight: bold;">${item.freq}次</td>
-                <td style="text-align: right; font-weight: bold;">${item.count}个</td>
-                <td style="text-align: right; font-weight: bold;">${item.percentage}%</td>
-                <td>
-                  <div style="background: ${THEME_COLORS.primary}; height: 8px; width: ${item.barWidth}%; border-radius: 4px;"></div>
-                </td>
-                <td style="text-align: center; color: ${item.textColor}; font-weight: bold;">${item.rating}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-        
-        <div style="padding: 18px; background: linear-gradient(135deg, ${THEME_COLORS.primary} 0%, ${THEME_COLORS.secondary} 100%); border-radius: 8px; color: white; margin: 20px 0;">
-          <h3 style="font-size: ${FONT_SIZES.subtitle}; margin: 0 0 15px 0;">📈 稳定性综合指标</h3>
-          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
-            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px;">
-              <div style="font-size: ${FONT_SIZES.description};">稳定性指数</div>
-              <div style="font-size: ${FONT_SIZES.title}; font-weight: bold; margin: 8px 0;">${stabilityIndex}%</div>
-            </div>
-            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px;">
-              <div style="font-size: ${FONT_SIZES.description};">平均变化频率</div>
-              <div style="font-size: ${FONT_SIZES.title}; font-weight: bold; margin: 8px 0;">${avgChange}次/地块</div>
-            </div>
-            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 6px;">
-              <div style="font-size: ${FONT_SIZES.description};">需关注地块</div>
-              <div style="font-size: ${FONT_SIZES.title}; font-weight: bold; margin: 8px 0;">${highFreqCount}个</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `)
-  }
-  
-  // 6. 作物分布趋势对比（完整版）
-  if (data.cropDistribution && data.cropDistribution.length > 0) {
-    const distributionData = data.cropDistribution
-    const allCrops = new Set()
-    distributionData.forEach(point => {
-      point.crops.forEach(crop => allCrops.add(crop.crop))
-    })
-    
-    sections.push(`
-      <div class="page">
-        <h2>🌾 作物分布趋势对比</h2>
-        <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.description}; table-layout: fixed;">
-          <thead>
-            <tr style="background: ${THEME_COLORS.primary};">
-              <th style="padding: 10px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; width: 15%;">作物类型</th>
-              ${distributionData.slice(0, 5).map(point => `
-                <th style="padding: 8px 6px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: 12px; color: white; word-wrap: break-word; word-break: break-all; white-space: normal; line-height: 1.3;">
-                  ${point.taskName || point.time || `时间${point.timeIndex + 1}`}
-                </th>
-              `).join('')}
-              <th style="padding: 10px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; width: 12%;">变化趋势</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${Array.from(allCrops).slice(0, 10).map((cropName, i) => {
-              const values = distributionData.slice(0, 5).map(point => {
-                const crop = point.crops.find(c => c.crop === cropName)
-                return crop ? crop.count : 0
-              })
-              const trend = values[values.length - 1] - values[0]
-              const trendSymbol = trend > 0 ? '↑' : trend < 0 ? '↓' : '→'
-              const trendColor = trend > 0 ? THEME_COLORS.success : trend < 0 ? THEME_COLORS.danger : THEME_COLORS.gray
-              
-              return `
-                <tr style="background: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
-                  <td style="padding: 8px 10px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${cropName}</td>
-                  ${values.map(val => `
-                    <td style="padding: 8px 10px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${val}</td>
-                  `).join('')}
-                  <td style="padding: 8px 10px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; color: ${trendColor}; font-size: ${FONT_SIZES.tableCell};">
-                    ${trendSymbol} ${Math.abs(trend)}
-                  </td>
-                </tr>
-              `
-            }).join('')}
-          </tbody>
-        </table>
-        <div style="padding: 10px; background: #f9fafb; border-radius: 6px; font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.gray}; margin-top: 10px;">
-          <strong>说明：</strong>↑ 表示地块数增加，↓ 表示减少，→ 表示无变化。此处显示前10种作物和前5个时期。
-        </div>
-      </div>
-    `)
-  }
-  
-  // 7. 经济作物与粮食作物转换分析
-  if (data.cropDistribution && data.cropDistribution.length > 0) {
-    const distributionData = data.cropDistribution
-    const categoryTrend = []
-    
-    distributionData.forEach((point, index) => {
-      const stat = {
-        period: index + 1,
-        name: point.taskName || point.time || `时期${index + 1}`,
-        grain: { count: 0, percentage: 0 },
-        economic: { count: 0, percentage: 0 },
-        other: { count: 0, percentage: 0 }
-      }
-      
-      point.crops.forEach(crop => {
-        const category = getCropCategory(crop.crop)
-        if (category === '粮食作物') {
-          stat.grain.count += crop.count
-        } else if (category === '经济作物') {
-          stat.economic.count += crop.count
-        } else {
-          stat.other.count += crop.count
-        }
-      })
-      
-      const total = stat.grain.count + stat.economic.count + stat.other.count
-      stat.grain.percentage = ((stat.grain.count / total) * 100).toFixed(1)
-      stat.economic.percentage = ((stat.economic.count / total) * 100).toFixed(1)
-      stat.other.percentage = ((stat.other.count / total) * 100).toFixed(1)
-      
-      categoryTrend.push(stat)
-    })
-    
-    const firstPeriod = categoryTrend[0]
-    const lastPeriod = categoryTrend[categoryTrend.length - 1]
-    const grainChange = ((lastPeriod.grain.count - firstPeriod.grain.count) / firstPeriod.grain.count * 100).toFixed(1)
-    const economicChange = ((lastPeriod.economic.count - firstPeriod.economic.count) / firstPeriod.economic.count * 100).toFixed(1)
-    
-    sections.push(`
-      <div class="page">
-        <h2>💰 经济作物与粮食作物转换分析</h2>
-        
-        <div style="padding: 12px; background: ${THEME_COLORS.infoBg}; border-left: 4px solid ${THEME_COLORS.info}; border-radius: 6px; margin-bottom: 20px;">
-          <strong style="color: ${THEME_COLORS.info}; font-size: ${FONT_SIZES.normal};">📌 作物分类配置：</strong>
-          <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.textLight}; margin-top: 8px; line-height: 1.6;">
-            <strong>粮食作物：</strong>${CROP_CATEGORIES.粮食作物.slice(0, 5).join('、')} 等 | 
-            <strong>经济作物：</strong>${CROP_CATEGORIES.经济作物.slice(0, 5).join('、')} 等
-          </div>
-        </div>
-        
-        <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${THEME_COLORS.textLight}; margin: 20px 0 12px 0;">一、各时期占比趋势</h3>
-        
-        <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border}; table-layout: fixed;">
-          <thead>
-            <tr style="background: ${THEME_COLORS.primary};">
-              <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; width: 15%;">作物类型</th>
-              ${categoryTrend.slice(0, 4).map(period => `
-                <th style="padding: 8px 6px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: 12px; color: white; word-wrap: break-word; word-break: break-all; white-space: normal; line-height: 1.3;">
-                  ${period.name}
-                </th>
-              `).join('')}
-              <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; font-size: ${FONT_SIZES.tableHeader}; color: white; width: 12%;">变化趋势</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr style="background: ${THEME_COLORS.warningBg};">
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
-                <span style="color: ${THEME_COLORS.warning};">🌾 粮食作物</span>
-              </td>
-              ${categoryTrend.slice(0, 4).map(period => `
-                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border};">
-                  <div style="font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${period.grain.count}个</div>
-                  <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.gray};">${period.grain.percentage}%</div>
-                </td>
-              `).join('')}
-              <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
-                <span style="color: ${parseFloat(grainChange) >= 0 ? THEME_COLORS.success : THEME_COLORS.danger}; font-size: ${FONT_SIZES.trendArrow};">
-                  ${parseFloat(grainChange) >= 0 ? '↑' : '↓'}${Math.abs(grainChange)}%
-                </span>
-              </td>
-            </tr>
-            <tr style="background: ${THEME_COLORS.successBg};">
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
-                <span style="color: ${THEME_COLORS.success};">💰 经济作物</span>
-              </td>
-              ${categoryTrend.slice(0, 4).map(period => `
-                <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border};">
-                  <div style="font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${period.economic.count}个</div>
-                  <div style="font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.gray};">${period.economic.percentage}%</div>
-                </td>
-              `).join('')}
-              <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">
-                <span style="color: ${parseFloat(economicChange) >= 0 ? THEME_COLORS.success : THEME_COLORS.danger}; font-size: ${FONT_SIZES.trendArrow};">
-                  ${parseFloat(economicChange) >= 0 ? '↑' : '↓'}${Math.abs(economicChange)}%
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <h3 style="font-size: ${FONT_SIZES.subtitle}; color: ${THEME_COLORS.textLight}; margin: 20px 0 12px 0;">三、地块完整路径分类</h3>
-        
-        <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border};">
-          <thead>
-            <tr style="background: ${THEME_COLORS.primary};">
-              <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader};">路径类型</th>
-              <th style="padding: 12px; text-align: center; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader};">示例</th>
-              <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader};">地块数</th>
-              <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.primaryDark}; color: white; font-size: ${FONT_SIZES.tableHeader};">占比</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr style="background: ${THEME_COLORS.warningBg};">
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};"><span style="font-size: ${FONT_SIZES.tableHeader};">🟡</span> 始终粮食作物</td>
-              <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-family: monospace; font-size: ${FONT_SIZES.description};">粮-粮-粮-粮</td>
-              <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">示例数据</td>
-              <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">示例数据</td>
-            </tr>
-            <tr style="background: ${THEME_COLORS.successBg};">
-              <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};"><span style="font-size: ${FONT_SIZES.tableHeader};">🟢</span> 始终经济作物</td>
-              <td style="padding: 10px 12px; text-align: center; border: 1px solid ${THEME_COLORS.border}; font-family: monospace; font-size: ${FONT_SIZES.description};">经-经-经-经</td>
-              <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">示例数据</td>
-              <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">示例数据</td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <div style="padding: 15px; background: ${THEME_COLORS.infoBg}; border-left: 4px solid ${THEME_COLORS.info}; border-radius: 6px; margin-top: 20px;">
-          <strong style="color: ${THEME_COLORS.info}; font-size: ${FONT_SIZES.normal};">💡 政策建议：</strong>
-          <ul style="margin: 8px 0 0 0; padding-left: 20px; line-height: 1.8; font-size: ${FONT_SIZES.description}; color: ${THEME_COLORS.textLight};">
-            <li>关注粮食作物种植面积变化，确保区域粮食安全</li>
-            <li>经济作物增长应与市场需求和风险承受能力相匹配</li>
-            <li>建议保持合理的粮经比例，避免过度单一化</li>
-          </ul>
-        </div>
-      </div>
-    `)
-  }
-  
-  // 8. 未变化地块分析
-  if (data.trajectories && data.trajectories.length > 0) {
-    const unchangedTrajectories = data.trajectories.filter(t => (t.changeCount || 0) === 0)
-    const unchangedCrops = {}
-    
-    unchangedTrajectories.forEach(traj => {
-      const crop = traj.cropHistory ? traj.cropHistory[0] : traj.currentCrop
-      unchangedCrops[crop] = (unchangedCrops[crop] || 0) + 1
-    })
-    
-    const unchangedList = Object.entries(unchangedCrops)
-      .map(([crop, count]) => ({
-        crop,
-        count,
-        percentage: ((count / unchangedTrajectories.length) * 100).toFixed(1)
-      }))
-      .sort((a, b) => b.count - a.count)
-    
-    sections.push(`
-      <div class="page">
-        <h2>🔒 未变化地块作物类型分析</h2>
-        <div class="description">
-          共有 ${unchangedTrajectories.length} 个地块在分析期间保持种植同一作物（占总地块的 ${((unchangedTrajectories.length / data.stats.total) * 100).toFixed(1)}%）
-        </div>
-        
-        <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border}; margin-top: 15px;">
-          <thead>
-            <tr style="background: ${THEME_COLORS.success}; color: white;">
-              <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.successLight}; font-size: ${FONT_SIZES.tableHeader};">作物类型</th>
-              <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.successLight}; font-size: ${FONT_SIZES.tableHeader};">地块数量</th>
-              <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.successLight}; font-size: ${FONT_SIZES.tableHeader};">占未变化地块比例</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${unchangedList.slice(0, 15).map((item, i) => `
-              <tr style="background: ${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
-                <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${item.crop}</td>
-                <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${item.count} 个</td>
-                <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">${item.percentage}%</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `)
-  }
-  
-  // 9. 数据统计汇总
-  sections.push(`
-    <div class="page">
-      <h2>📊 数据统计汇总</h2>
-      <table style="width: 100%; border-collapse: collapse; border: 1px solid ${THEME_COLORS.border};">
-        <thead>
-          <tr style="background: #f9fafb;">
-            <th style="padding: 12px; text-align: left; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableHeader};">统计指标</th>
-            <th style="padding: 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableHeader};">数值</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">分析周期</td>
-            <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${data.filesCount || 0} 期</td>
-          </tr>
-          <tr style="background: #f9fafb;">
-            <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">总地块数</td>
-            <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${data.stats?.total || 0} 个</td>
-          </tr>
-          <tr>
-            <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">变化地块数</td>
-            <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; color: ${THEME_COLORS.warning}; font-size: ${FONT_SIZES.tableCell};">${data.stats?.changed || 0} 个</td>
-          </tr>
-          <tr style="background: #f9fafb;">
-            <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">未变化地块数</td>
-            <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; color: ${THEME_COLORS.success}; font-size: ${FONT_SIZES.tableCell};">${data.stats?.unchanged || 0} 个</td>
-          </tr>
-          <tr>
-            <td style="padding: 10px 12px; border: 1px solid ${THEME_COLORS.border}; font-size: ${FONT_SIZES.tableCell};">变化率</td>
-            <td style="padding: 10px 12px; text-align: right; border: 1px solid ${THEME_COLORS.border}; font-weight: bold; font-size: ${FONT_SIZES.tableCell};">${changeRate}%</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  `)
-  
-  // 10. 报告说明
-  sections.push(`
-    <div class="page">
-      <h2>📋 报告说明</h2>
-      <div class="description">
-        <p><strong>📝 文档信息：</strong></p>
-        <ul style="font-size: ${FONT_SIZES.description};">
-          <li>报告类型：时序分析完整报告</li>
-          <li>生成时间：${timestamp}</li>
-          <li>数据周期：${data.filesCount || 0} 期</li>
-          <li>地块总数：${data.stats?.total || 0} 个</li>
-        </ul>
-      </div>
-      
-      <div class="description" style="margin-top: 15px; background: #e0f2fe;">
-        <p><strong>✅ 预览已包含的章节：</strong></p>
-        <ol style="font-size: ${FONT_SIZES.description}; line-height: 1.8;">
-          <li>封面</li>
-          <li>分析摘要</li>
-          <li>变化统计详情表格</li>
-          <li>地图说明（实际PDF包含地图截图）</li>
-          <li>地块种植稳定性分析表格</li>
-          <li>作物分布趋势对比表格</li>
-          <li>经济作物与粮食作物转换分析表格</li>
-          <li>未变化地块作物类型分析表格</li>
-          <li>数据统计汇总表格</li>
-          <li>报告说明</li>
-        </ol>
-        <p style="margin-top: 10px; font-size: ${FONT_SIZES.description};"><strong>💡 提示：</strong>预览已包含10个主要章节，所有表格字体使用FONT_SIZES配置！</p>
-      </div>
-      
-      <div class="description" style="margin-top: 15px; background: #fff3cd;">
-        <p><strong>⚠️ 注意事项：</strong></p>
-        <ul style="font-size: ${FONT_SIZES.description};">
-          <li>修改FONT_SIZES后，需要<strong>刷新预览</strong>才能看到效果</li>
-          <li>预览字体大小 = 实际PDF字体大小</li>
-          <li>地图和部分动态图表在预览中无法显示</li>
-        </ul>
-      </div>
-    </div>
-  `)
-  
-  // 组合所有片段
-  let html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <title>PDF完整预览</title>
-      <style>
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-          margin: 0;
-          padding: 20px;
-          background: #f5f5f5;
-        }
-        .page {
-          background: white;
-          max-width: 800px;
-          margin: 0 auto 20px;
-          padding: 40px;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-          page-break-after: always;
-        }
-        .font-info {
-          position: fixed;
-          top: 10px;
-          right: 10px;
-          background: #409eff;
-          color: white;
-          padding: 15px 20px;
-          border-radius: 8px;
-          font-size: 13px;
-          z-index: 1000;
-          box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-          max-width: 250px;
-        }
-        .font-info h3 {
-          margin: 0 0 10px 0;
-          font-size: 15px;
-          font-weight: bold;
-        }
-        .font-info p {
-          margin: 4px 0;
-          font-size: 12px;
-          line-height: 1.5;
-        }
-        .font-info code {
-          background: rgba(255,255,255,0.25);
-          padding: 2px 6px;
-          border-radius: 3px;
-          font-family: 'Consolas', 'Monaco', monospace;
-          font-weight: bold;
-        }
-        h2 { 
-          font-size: ${FONT_SIZES.title}; 
-          color: ${THEME_COLORS.text}; 
-          margin: 0 0 15px 0; 
-          border-left: 4px solid #4f46e5; 
-          padding-left: 10px; 
-        }
-        h3 { 
-          font-size: ${FONT_SIZES.subtitle}; 
-          color: ${THEME_COLORS.textLight}; 
-          margin: 20px 0 12px 0; 
-        }
-        table { 
-          width: 100%; 
-          border-collapse: collapse; 
-          border: 1px solid ${THEME_COLORS.border}; 
-          margin: 15px 0;
-        }
-        th { 
-          padding: 12px; 
-          border: 1px solid ${THEME_COLORS.border}; 
-          font-size: ${FONT_SIZES.tableHeader}; 
-          text-align: left;
-        }
-        td { 
-          padding: 10px 12px; 
-          border: 1px solid ${THEME_COLORS.border}; 
-          font-size: ${FONT_SIZES.tableCell}; 
-        }
-        .description { 
-          font-size: ${FONT_SIZES.description}; 
-          color: ${THEME_COLORS.textLight}; 
-          line-height: 1.6; 
-          padding: 12px; 
-          background: ${THEME_COLORS.infoBg}; 
-          border-radius: 6px; 
-          margin: 10px 0;
-        }
-        ul {
-          font-size: ${FONT_SIZES.description};
-          line-height: 1.8;
-        }
-      </style>
-    </head>
-    <body>
-      <!-- 字体信息面板 -->
-      <div class="font-info">
-        <h3>📝 字体大小配置</h3>
-        <p>主标题: <code>${FONT_SIZES.title}</code></p>
-        <p>小标题: <code>${FONT_SIZES.subtitle}</code></p>
-        <p>表格表头: <code>${FONT_SIZES.tableHeader}</code></p>
-        <p>表格内容: <code>${FONT_SIZES.tableCell}</code></p>
-        <p>说明文字: <code>${FONT_SIZES.description}</code></p>
-        <p style="margin-top: 10px; font-size: 12px; border-top: 1px solid rgba(255,255,255,0.3); padding-top: 10px;">
-          💡 修改pdfGenerator.js第44行<br>
-          保存后点"刷新预览"
-        </p>
-      </div>
-      
-      <!-- 插入所有内容片段 -->
-      ${sections.join('\n')}
-      
-      <!-- 调试说明页 -->
-      <div class="page">
-        <h2>🔧 如何调整字体大小？</h2>
-        <div class="description" style="background: #fff3cd; border-left: 4px solid #ff9800;">
-          <p><strong>📝 完整步骤：</strong></p>
-          <ol style="margin: 10px 0; padding-left: 20px; line-height: 2;">
-            <li>打开文件：<code>src/utils/pdfGenerator.js</code></li>
-            <li>找到第 <strong>44-60 行</strong>的 <code>FONT_SIZES</code> 对象</li>
-            <li>修改你想调整的字体大小</li>
-            <li>保存文件 (Ctrl+S)</li>
-            <li>回到预览窗口，点击"刷新预览"按钮</li>
-            <li>查看新效果，不满意继续修改</li>
-            <li>满意后，点击"导出PDF"</li>
-          </ol>
-        </div>
-        
-        <h3>📋 可调整的字体项：</h3>
-        <table style="margin-top: 15px;">
-          <thead>
-            <tr>
-              <th>配置项</th>
-              <th style="text-align: center;">当前值</th>
-              <th>应用位置</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>title</code></td>
-              <td style="text-align: center; font-weight: bold;">${FONT_SIZES.title}</td>
-              <td>主标题（如"📊 分析摘要"）</td>
-            </tr>
-            <tr>
-              <td><code>subtitle</code></td>
-              <td style="text-align: center; font-weight: bold;">${FONT_SIZES.subtitle}</td>
-              <td>小标题（如"作物分类配置"）</td>
-            </tr>
-            <tr>
-              <td><code>tableHeader</code></td>
-              <td style="text-align: center; font-weight: bold;">${FONT_SIZES.tableHeader}</td>
-              <td>表格表头文字</td>
-            </tr>
-            <tr>
-              <td><code>tableCell</code></td>
-              <td style="text-align: center; font-weight: bold;">${FONT_SIZES.tableCell}</td>
-              <td>表格内容文字</td>
-            </tr>
-            <tr>
-              <td><code>description</code></td>
-              <td style="text-align: center; font-weight: bold;">${FONT_SIZES.description}</td>
-              <td>说明文字、备注</td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <div class="description" style="margin-top: 20px; background: #e3f2fd;">
-          <p><strong>⚡ 快速测试建议：</strong></p>
-          <ul style="margin: 10px 0; padding-left: 20px;">
-            <li>想让所有字体都大一些？把每个值都增加 2-4px</li>
-            <li>只想让表格清晰？只改 tableHeader 和 tableCell</li>
-            <li>想突出标题？只改 title 和 subtitle</li>
-          </ul>
-          <p style="margin-top: 10px;"><strong>💡提示：</strong> 预览显示的就是实际PDF的样子，修改后刷新预览立即看到效果！</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `
-  
-  return html
-}
+
