@@ -382,7 +382,7 @@
                 </template>
               </el-table-column>
               <el-table-column prop="createTime" label="创建时间" width="180" align="center" />
-              <el-table-column prop="name" label="文件名称" min-width="280" show-overflow-tooltip />
+              <el-table-column prop="name" label="文件名称" min-width="220" show-overflow-tooltip />
               <el-table-column prop="type" label="格式" width="80" align="center">
                 <template #default="scope">
                   <el-tag 
@@ -515,6 +515,31 @@
                     <el-option label="PDF" value="PDF" />
                   </el-select>
                 </el-form-item>
+                <el-form-item label="分析类型">
+                  <el-select 
+                    v-model="analysisFilterForm.type" 
+                    placeholder="全部类型" 
+                    style="width: 140px" 
+                    clearable
+                  >
+                    <el-option label="全部" value="" />
+                    <el-option label="时序分析" value="temporal" />
+                    <el-option label="差异检测" value="difference" />
+                    <el-option label="时序报表" value="report" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="用途">
+                  <el-select 
+                    v-model="analysisFilterForm.usage" 
+                    placeholder="全部用途" 
+                    style="width: 140px" 
+                    clearable
+                  >
+                    <el-option label="全部" value="" />
+                    <el-option label="可视化" value="visualization" />
+                    <el-option label="仅查看" value="viewOnly" />
+                  </el-select>
+                </el-form-item>
                 <el-form-item label="搜索">
                   <el-input
                     v-model="analysisSearchKeyword"
@@ -540,7 +565,7 @@
               @selection-change="handleResultSelectionChange"
             >
               <el-table-column type="selection" width="55" />
-              <el-table-column prop="filename" label="文件名称" min-width="300" show-overflow-tooltip />
+              <el-table-column prop="filename" label="文件名称" min-width="240" show-overflow-tooltip />
               <el-table-column prop="format" label="格式" width="100" align="center">
                 <template #default="scope">
                   <el-tag 
@@ -556,6 +581,12 @@
                   <el-tag size="small" :type="getAnalysisTypeTagType(scope.row.type)">
                     {{ getAnalysisTypeText(scope.row.type) }}
                   </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="taskName" label="任务名" min-width="200" align="center" show-overflow-tooltip>
+                <template #default="scope">
+                  <span v-if="scope.row.taskName">{{ scope.row.taskName }}</span>
+                  <span v-else style="color: #909399;">-</span>
                 </template>
               </el-table-column>
               <el-table-column label="用途" width="110" align="center">
@@ -1621,6 +1652,7 @@ import {
   saveRecognitionMetadata,
   checkFileConflict
 } from '@/api/analysis'
+import request from '@/api/index'
 import { autoDetectMetadata } from '@/config/regionMapping'
 import * as GeoTIFF from 'geotiff'
 
@@ -1676,7 +1708,9 @@ const analysisSearchKeyword = ref('') // 分析结果搜索关键词
 
 // 分析结果筛选表单
 const analysisFilterForm = ref({
-  format: ''  // 格式筛选
+  format: '',  // 格式筛选
+  type: '',    // 分析类型筛选
+  usage: ''    // 用途筛选
 })
 
 // 结果队列选中的行
@@ -1735,6 +1769,20 @@ const filteredAnalysisResults = computed(() => {
   // 格式筛选
   if (analysisFilterForm.value.format) {
     data = data.filter(item => item.format === analysisFilterForm.value.format)
+  }
+  
+  // 分析类型筛选
+  if (analysisFilterForm.value.type) {
+    data = data.filter(item => item.type === analysisFilterForm.value.type)
+  }
+  
+  // 用途筛选
+  if (analysisFilterForm.value.usage) {
+    if (analysisFilterForm.value.usage === 'visualization') {
+      data = data.filter(item => item.canLoadToMap === true)
+    } else if (analysisFilterForm.value.usage === 'viewOnly') {
+      data = data.filter(item => item.canLoadToMap === false)
+    }
   }
   
   // 关键词搜索
@@ -1882,7 +1930,14 @@ const handleConvertToKmz = async (row) => {
   try {
     ElMessage.info('🔄 开始转换为KMZ格式...')
     
-    const response = await convertShpToKmz(row.name, row.relativePath)
+    // 🔧 修复：传递recognitionType，确保转换时保持原有的任务类型
+    const requestData = {
+      shpFilename: row.name,
+      relativePath: row.relativePath,
+      recognitionType: row.recognitionType  // 保持原有的任务类型
+    }
+    
+    const response = await request.post('/analysis/convert-shp-to-kmz', requestData)
     
     if (response.code === 200) {
       const { kmzFilename, geojsonFilename, kmzSize, geojsonSize, featureCount, hasAreaData } = response.data
@@ -2101,8 +2156,8 @@ const handleBatchDeleteResults = async () => {
     
     for (const row of selectedResultRows.value) {
       try {
-        // 如果是识别结果（SHP、GeoJSON、KMZ），调用后端API删除
-        if (queueType === 'recognition' && (row.type === 'SHP' || row.type === 'GeoJSON' || row.type === 'KMZ')) {
+        if (queueType === 'recognition') {
+          // 识别结果（SHP、GeoJSON、KMZ），调用后端API删除
           let fileType = 'geojson'
           if (row.type === 'SHP') {
             fileType = 'shp'
@@ -2117,18 +2172,16 @@ const handleBatchDeleteResults = async () => {
             failCount++
           }
         } else {
-          // 分析结果，从localStorage删除
-          const QUEUE_KEY = 'analysis_result_queue'
-          const stored = localStorage.getItem(QUEUE_KEY)
-          if (stored) {
-            let allQueue = JSON.parse(stored)
-            allQueue = allQueue.filter(item => item.id !== row.id)
-            localStorage.setItem(QUEUE_KEY, JSON.stringify(allQueue))
+          // 🔧 修复：分析结果通过后端API删除
+          const response = await deleteAnalysisResult(row.type, row.filename)
+          if (response.code === 200) {
             successCount++
+          } else {
+            failCount++
           }
         }
       } catch (error) {
-        console.error(`删除失败: ${row.name}`, error)
+        console.error(`删除失败: ${row.name || row.filename}`, error)
         failCount++
       }
     }
@@ -2446,7 +2499,7 @@ const startUpload = async () => {
   }
 }
 
-// 删除单个分析结果
+// 删除单个识别结果（保留用于识别结果tab）
 const handleDeleteResult = async (row, queueType) => {
   try {
     await ElMessageBox.confirm(
@@ -2459,31 +2512,18 @@ const handleDeleteResult = async (row, queueType) => {
       }
     )
     
-    // 如果是识别结果（SHP、GeoJSON、KMZ），调用后端API删除
-    if (queueType === 'recognition' && (row.type === 'SHP' || row.type === 'GeoJSON' || row.type === 'KMZ')) {
-      let fileType = 'geojson'
-      if (row.type === 'SHP') {
-        fileType = 'shp'
-      } else if (row.type === 'KMZ') {
-        fileType = 'kmz'
-      }
-      
-      const response = await deleteAnalysisFile(fileType, row.name)
-      if (response.code === 200) {
-        ElMessage.success('删除成功')
-        await loadAllResults() // 刷新列表
-      }
-    } else {
-      // 分析结果，从localStorage删除
-      const QUEUE_KEY = 'analysis_result_queue'
-      const stored = localStorage.getItem(QUEUE_KEY)
-      if (stored) {
-        let allQueue = JSON.parse(stored)
-        allQueue = allQueue.filter(item => item.id !== row.id)
-        localStorage.setItem(QUEUE_KEY, JSON.stringify(allQueue))
-        ElMessage.success('删除成功')
-        await loadAllResults()
-      }
+    // 识别结果（SHP、GeoJSON、KMZ），调用后端API删除
+    let fileType = 'geojson'
+    if (row.type === 'SHP') {
+      fileType = 'shp'
+    } else if (row.type === 'KMZ') {
+      fileType = 'kmz'
+    }
+    
+    const response = await deleteAnalysisFile(fileType, row.name)
+    if (response.code === 200) {
+      ElMessage.success('删除成功')
+      await loadAllResults() // 刷新列表
     }
   } catch (error) {
     if (error !== 'cancel') {
@@ -2884,7 +2924,9 @@ const handleSaveRecognitionEdit = async () => {
 // 重置分析结果筛选条件
 const resetAnalysisFilter = () => {
   analysisFilterForm.value = {
-    format: ''
+    format: '',
+    type: '',
+    usage: ''
   }
   analysisSearchKeyword.value = ''
   analysisCurrentPage.value = 1
@@ -3864,7 +3906,8 @@ watch(resultSearchKeyword, () => {
 const getAnalysisTypeText = (type) => {
   const map = {
     'temporal': '时序分析',
-    'difference': '差异检测'
+    'difference': '差异检测',
+    'report': '时序报表'
   }
   return map[type] || type
 }

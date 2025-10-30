@@ -748,8 +748,22 @@ router.get('/results', (req, res) => {
           console.warn(`读取GeoJSON元数据失败: ${filename}`, error.message)
         }
         
+        // 🔧 修复：优先使用元数据中的createdAt字段作为创建时间
+        let createTime = stats.mtime.toLocaleString('zh-CN')
+        let timestamp = stats.mtimeMs
+        
+        if (metadata.createdAt) {
+          const createdDate = new Date(metadata.createdAt)
+          createTime = createdDate.toLocaleString('zh-CN')
+          timestamp = createdDate.getTime()
+        } else if (metadata.uploadTime) {
+          const uploadDate = new Date(metadata.uploadTime)
+          createTime = uploadDate.toLocaleString('zh-CN')
+          timestamp = uploadDate.getTime()
+        }
+        
         results.push({
-          id: `geojson_${basename}_${stats.mtimeMs}`,
+          id: `geojson_${basename}_${timestamp}`,
           name: filename,
           type: 'GeoJSON',
           format: 'geojson',
@@ -757,13 +771,12 @@ router.get('/results', (req, res) => {
           analysisType: 'recognition',
           recognitionType: metadata.recognitionType || 'crop_recognition',
           size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
-          createTime: stats.mtime.toLocaleString('zh-CN'),
-          timestamp: stats.mtimeMs,
+          createTime: createTime,
+          timestamp: timestamp,
           regionCode: metadata.regionCode || '',
           regionName: metadata.regionName || '未知任务',
           year: metadata.year || '',
-          period: metadata.period || '',
-          source: metadata.source || '未知任务'
+          period: metadata.period || ''
         })
       })
     }
@@ -834,10 +847,11 @@ router.get('/results', (req, res) => {
             }
             
             // 方案3：检查是否有同名JSON元数据文件
+            let metadata = {}
             const metadataPath = path.join(itemPath.replace('.kmz', '.json'))
             if (fs.existsSync(metadataPath)) {
               try {
-                const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+                metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
                 year = year || metadata.year
                 period = period || metadata.period
                 regionCode = metadata.regionCode || regionCode
@@ -854,21 +868,35 @@ router.get('/results', (req, res) => {
               recognitionType = 'planting_situation' // 种植情况识别
             }
             
+            // 🔧 修复：优先使用元数据中的createdAt字段作为创建时间
+            let createTime = stats.mtime.toLocaleString('zh-CN')
+            let timestamp = stats.mtimeMs
+            
+            if (metadata.createdAt) {
+              const createdDate = new Date(metadata.createdAt)
+              createTime = createdDate.toLocaleString('zh-CN')
+              timestamp = createdDate.getTime()
+            } else if (metadata.uploadTime) {
+              const uploadDate = new Date(metadata.uploadTime)
+              createTime = uploadDate.toLocaleString('zh-CN')
+              timestamp = uploadDate.getTime()
+            }
+            
             results.push({
-              id: `kmz_${basename}_${stats.mtimeMs}`,
+              id: `kmz_${basename}_${timestamp}`,
               name: item,
               type: 'KMZ',
               format: 'kmz',
-              taskName: basename,
+              taskName: metadata.taskName || basename,
               analysisType: 'recognition',
-              recognitionType: recognitionType, // 识别任务类型
+              recognitionType: metadata.recognitionType || recognitionType, // 优先使用元数据中的识别类型
               regionCode: regionCode.toUpperCase(), // 区域代码
               regionName: regionName, // 区域中文名称
               year: year, // 年份
               period: period, // 期次
               size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
-              createTime: stats.mtime.toLocaleString('zh-CN'),
-              timestamp: stats.mtimeMs,
+              createTime: createTime,
+              timestamp: timestamp,
               relativePath: relativePath // 相对路径
             })
           }
@@ -1662,8 +1690,26 @@ router.post('/convert-shp-to-kmz', async (req, res) => {
     const basename = path.basename(shpFilename, '.shp')
     const kmzFilename = `${basename}.kmz`
     
-    // 🆕 在planting_situation下创建以SHP文件名命名的文件夹
-    const kmzSubDir = path.join(KMZ_DIR, 'planting_situation', basename)
+    // 🔧 修复：读取SHP元数据，根据recognitionType决定保存文件夹
+    const shpMetadataPath = path.join(path.dirname(shpPath), `${basename}.json`)
+    let recognitionType = 'planting_situation'  // 默认为种植情况识别
+    
+    if (fs.existsSync(shpMetadataPath)) {
+      try {
+        const shpMetadata = JSON.parse(fs.readFileSync(shpMetadataPath, 'utf-8'))
+        recognitionType = shpMetadata.recognitionType || 'planting_situation'
+        console.log(`   📋 读取到SHP元数据，recognitionType: ${recognitionType}`)
+      } catch (err) {
+        console.warn(`   ⚠️ 读取SHP元数据失败: ${err.message}`)
+      }
+    }
+    
+    // 🆕 根据recognitionType确定文件夹
+    const taskFolder = recognitionType === 'crop_recognition' 
+      ? 'crop_identification' 
+      : 'planting_situation'
+    
+    const kmzSubDir = path.join(KMZ_DIR, taskFolder, basename)
     if (!fs.existsSync(kmzSubDir)) {
       fs.mkdirSync(kmzSubDir, { recursive: true })
       console.log(`   📁 创建文件夹: ${kmzSubDir}`)
@@ -1830,25 +1876,25 @@ except Exception as e:
       console.warn(`   ⚠️ 将继续转换但不包含面积数据`)
     }
     
-    // 🆕 读取SHP的元数据（如果存在）
-    const shpMetadataPath = path.join(path.dirname(shpPath), `${basename}.json`)
+    // 🆕 读取SHP的元数据（如果存在）- 注意：前面已经读取过一次，这里只是再次确认并保存到GeoJSON
     let shpMetadata = null
     
     if (fs.existsSync(shpMetadataPath)) {
       shpMetadata = JSON.parse(fs.readFileSync(shpMetadataPath, 'utf-8'))
       console.log(`   📋 找到SHP元数据文件（年份: ${shpMetadata.year}, 期次: ${shpMetadata.period}, 区域: ${shpMetadata.regionName || '未指定'}）`)
       
-      // 🆕 将元数据保存到GeoJSON的根级别（方便前端读取）
+      // 🆕 将元数据保存到GeoJSON的根级别（方便前端读取）- 只保留recognitionType，删除source字段
+      // 🔧 修复：转换时使用真实的创建时间，而不是继承SHP的创建时间
+      const currentTime = new Date().toISOString()
       geojson.metadata = {
         year: shpMetadata.year,
         period: shpMetadata.period,
         regionCode: shpMetadata.regionCode,
         regionName: shpMetadata.regionName,
-        recognitionType: shpMetadata.recognitionType,
+        recognitionType: shpMetadata.recognitionType || recognitionType,  // 使用前面读取的recognitionType
         taskName: shpMetadata.taskName || basename,
-        source: shpMetadata.source || '作物识别',
-        createdAt: shpMetadata.createdAt,
-        updatedAt: new Date().toISOString()
+        createdAt: currentTime,  // 使用转换时的真实时间
+        updatedAt: currentTime
       }
       console.log(`   📋 已将元数据添加到GeoJSON根级别`)
     } else {
@@ -1882,12 +1928,23 @@ except Exception as e:
     fs.writeFileSync(kmzPath, kmzBuffer)
     const stats = fs.statSync(kmzPath)
     
-    // 🆕 复制或创建元数据JSON文件到KMZ文件夹
+    // 🆕 复制或创建元数据JSON文件到KMZ文件夹（只保留必要字段，删除source字段）
     const kmzMetadataPath = path.join(kmzSubDir, `${basename}.json`)
     
     if (shpMetadata) {
-      // 如果SHP文件夹有元数据，复制过来（继承所有字段）
-      const kmzMeta = { ...shpMetadata, updatedAt: new Date().toISOString() }
+      // 🔧 修复：如果SHP文件夹有元数据，只复制必要字段，删除source字段
+      // 🔧 修复：使用转换时的真实时间作为创建时间
+      const currentTime = new Date().toISOString()
+      const kmzMeta = {
+        year: shpMetadata.year,
+        period: shpMetadata.period,
+        regionCode: shpMetadata.regionCode,
+        regionName: shpMetadata.regionName,
+        recognitionType: shpMetadata.recognitionType || recognitionType,
+        taskName: shpMetadata.taskName || basename,
+        createdAt: currentTime,  // 使用转换时的真实时间
+        updatedAt: currentTime
+      }
       fs.writeFileSync(kmzMetadataPath, JSON.stringify(kmzMeta, null, 2))
       console.log(`   📋 已复制SHP元数据到KMZ文件夹（年份: ${kmzMeta.year}, 期次: ${kmzMeta.period}, 区域: ${kmzMeta.regionName || '未指定'}）`)
     } else {
@@ -1898,7 +1955,7 @@ except Exception as e:
         period: 1,
         regionCode: '',
         regionName: '',
-        recognitionType: 'planting_situation',
+        recognitionType: recognitionType,  // 使用前面读取的recognitionType
         taskName: basename,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -1918,7 +1975,7 @@ except Exception as e:
         kmzSize: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
         geojsonSize: `${(geojsonStats.size / (1024 * 1024)).toFixed(2)} MB`,
         featureCount: geojson.features.length,
-        relativePath: `planting_situation/${basename}`,
+        relativePath: `${taskFolder}/${basename}`,  // 🔧 修复：根据recognitionType动态生成路径
         hasAreaData: hasAreaData
       }
     })
@@ -2769,6 +2826,7 @@ router.get('/saved-analysis-results', (req, res) => {
             filename,
             type: 'temporal',
             format: 'JSON',
+            taskName: metadata.title || filename,  // 将metadata.title映射到taskName
             canLoadToMap: true,  // 可以加载到地图
             metadata,
             size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
@@ -2784,6 +2842,7 @@ router.get('/saved-analysis-results', (req, res) => {
             filename,
             type: 'temporal',
             format: 'JSON',
+            taskName: filename,  // 解析失败时使用文件名
             canLoadToMap: true,
             metadata: { title: '解析失败', error: err.message },
             size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
@@ -2819,6 +2878,7 @@ router.get('/saved-analysis-results', (req, res) => {
             filename,
             type: 'difference',
             format: 'JSON',
+            taskName: metadata.title || filename,  // 将metadata.title映射到taskName
             canLoadToMap: true,
             metadata,
             size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
@@ -2834,6 +2894,7 @@ router.get('/saved-analysis-results', (req, res) => {
             filename,
             type: 'difference',
             format: 'JSON',
+            taskName: filename,  // 解析失败时使用文件名
             canLoadToMap: true,
             metadata: { title: '解析失败', error: err.message },
             size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
@@ -3044,69 +3105,216 @@ router.post('/save-recognition-metadata', async (req, res) => {
       })
     }
     
-    // 🔧 修复：根据文件类型确定保存目录
-    let targetDir
     const fileExt = path.extname(filename).toLowerCase()
-    
-    if (fileExt === '.shp') {
-      // SHP文件保存到 data_shp 目录
-      targetDir = relativePath ? path.join(SHP_DIR, relativePath) : SHP_DIR
-    } else if (fileExt === '.geojson' || fileExt === '.json') {
-      // GeoJSON文件保存到 data_geojson 目录（但元数据一般不需要）
-      targetDir = GEOJSON_DIR
-    } else {
-      // KMZ等其他文件保存到 data_kmz 目录
-      targetDir = relativePath ? path.join(KMZ_DIR, relativePath) : KMZ_DIR
-    }
-    
-    // 生成元数据文件名（与数据文件同名，但扩展名为.json）
-    const metadataFilename = filename.replace(/\.(kmz|shp|geojson)$/i, '.json')
-    const metadataPath = path.join(targetDir, metadataFilename)
     
     console.log(`💾 保存识别结果元数据:`)
     console.log(`   文件: ${filename}`)
-    console.log(`   元数据路径: ${metadataPath}`)
-    console.log(`   数据:`, metadata)
+    console.log(`   原路径: ${relativePath}`)
+    console.log(`   元数据:`, metadata)
     
-    // 确保目录存在
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true })
-    }
-    
-    // 🆕 读取已有的元数据文件（如果存在），保留时间戳
-    let existingMetadata = {}
-    if (fs.existsSync(metadataPath)) {
-      try {
-        const existingContent = fs.readFileSync(metadataPath, 'utf-8')
-        existingMetadata = JSON.parse(existingContent)
-        console.log(`   读取到已有元数据:`, existingMetadata)
-      } catch (err) {
-        console.warn(`   ⚠️ 读取已有元数据失败:`, err.message)
+    // 🔧 修复：根据文件类型采用不同的保存策略
+    if (fileExt === '.geojson') {
+      // 🆕 GeoJSON文件：直接修改文件的metadata字段，不生成单独的JSON文件
+      const geojsonPath = path.join(GEOJSON_DIR, filename)
+      
+      if (!fs.existsSync(geojsonPath)) {
+        return res.status(404).json({
+          code: 404,
+          message: 'GeoJSON文件不存在'
+        })
       }
-    }
-    
-    // 🆕 合并元数据，保留原有的 createdAt 和 uploadTime
-    const completeMetadata = {
-      ...metadata,
-      // 保留原有的时间戳（如果存在）
-      createdAt: existingMetadata.createdAt || metadata.createdAt || new Date().toISOString(),
-      uploadTime: existingMetadata.uploadTime || metadata.uploadTime,
-      updatedAt: new Date().toISOString()
-    }
-    
-    // 写入元数据文件
-    fs.writeFileSync(metadataPath, JSON.stringify(completeMetadata, null, 2), 'utf-8')
-    
-    console.log(`✅ 元数据保存成功: ${metadataFilename}`)
-    
-    res.json({
-      code: 200,
-      message: '保存成功',
-      data: {
-        metadataFile: metadataFilename,
-        metadataPath: metadataPath
+      
+      // 读取GeoJSON文件
+      const geojsonContent = fs.readFileSync(geojsonPath, 'utf-8')
+      const geojson = JSON.parse(geojsonContent)
+      
+      // 🔧 修复：保留原有的createdAt字段
+      const originalCreatedAt = geojson.metadata?.createdAt
+      
+      // 更新metadata字段（只保留必要的字段，移除source字段）
+      geojson.metadata = {
+        year: metadata.year,
+        period: metadata.period,
+        regionCode: metadata.regionCode,
+        regionName: metadata.regionName,
+        recognitionType: metadata.recognitionType,
+        taskName: metadata.taskName,
+        createdAt: originalCreatedAt || metadata.createdAt || new Date().toISOString(),  // 保留原创建时间
+        updatedAt: new Date().toISOString()  // 更新修改时间
       }
-    })
+      
+      // 写回GeoJSON文件
+      fs.writeFileSync(geojsonPath, JSON.stringify(geojson, null, 2), 'utf-8')
+      
+      console.log(`✅ GeoJSON元数据已更新: ${filename}`)
+      
+      return res.json({
+        code: 200,
+        message: '保存成功',
+        data: {
+          type: 'geojson',
+          filename: filename,
+          updated: true
+        }
+      })
+    } else if (fileExt === '.kmz') {
+      // 🆕 KMZ文件：更新JSON元数据，并根据recognitionType移动到正确的文件夹
+      const oldDir = relativePath ? path.join(KMZ_DIR, relativePath) : KMZ_DIR
+      const oldKmzPath = path.join(oldDir, filename)
+      const oldJsonPath = path.join(oldDir, filename.replace('.kmz', '.json'))
+      
+      // 确定新的目标文件夹
+      const taskFolder = metadata.recognitionType === 'crop_recognition' 
+        ? 'crop_identification' 
+        : 'planting_situation'
+      
+      const baseNameWithoutExt = filename.replace('.kmz', '')
+      const newDir = path.join(KMZ_DIR, taskFolder, baseNameWithoutExt)
+      const newKmzPath = path.join(newDir, filename)
+      const newJsonPath = path.join(newDir, filename.replace('.kmz', '.json'))
+      
+      console.log(`   旧路径: ${oldKmzPath}`)
+      console.log(`   新路径: ${newKmzPath}`)
+      
+      // 如果recognitionType改变，需要移动文件
+      const needMove = oldDir !== newDir
+      
+      if (needMove) {
+        // 确保新目录存在
+        if (!fs.existsSync(newDir)) {
+          fs.mkdirSync(newDir, { recursive: true })
+        }
+        
+        // 移动KMZ文件
+        if (fs.existsSync(oldKmzPath)) {
+          fs.renameSync(oldKmzPath, newKmzPath)
+          console.log(`   ✅ KMZ文件已移动`)
+        }
+        
+        // 移动JSON元数据文件（如果存在）
+        if (fs.existsSync(oldJsonPath)) {
+          fs.renameSync(oldJsonPath, newJsonPath)
+          console.log(`   ✅ JSON元数据文件已移动`)
+        }
+        
+        // 🔧 修复：删除原来的整个文件夹（仅在修改来源任务时）
+        try {
+          if (fs.existsSync(oldDir)) {
+            // 检查文件夹是否为空
+            const files = fs.readdirSync(oldDir)
+            if (files.length === 0) {
+              fs.rmdirSync(oldDir)
+              console.log(`   ✅ 已删除空文件夹: ${path.relative(KMZ_DIR, oldDir)}`)
+            } else {
+              console.log(`   ⚠️ 原文件夹不为空，保留: ${files.join(', ')}`)
+            }
+          }
+        } catch (err) {
+          console.warn(`   ⚠️ 删除原文件夹失败:`, err.message)
+        }
+      }
+      
+      // 读取或创建元数据
+      let existingMetadata = {}
+      const jsonPath = needMove ? newJsonPath : oldJsonPath
+      
+      if (fs.existsSync(jsonPath)) {
+        try {
+          const existingContent = fs.readFileSync(jsonPath, 'utf-8')
+          existingMetadata = JSON.parse(existingContent)
+        } catch (err) {
+          console.warn(`   ⚠️ 读取已有元数据失败:`, err.message)
+        }
+      }
+      
+      // 🆕 更新元数据（只保留必要的字段，移除source字段）
+      const completeMetadata = {
+        year: metadata.year,
+        period: metadata.period,
+        regionCode: metadata.regionCode,
+        regionName: metadata.regionName,
+        recognitionType: metadata.recognitionType,
+        taskName: metadata.taskName,
+        createdAt: existingMetadata.createdAt || metadata.createdAt || new Date().toISOString(),
+        uploadTime: existingMetadata.uploadTime || metadata.uploadTime,
+        updatedAt: new Date().toISOString()
+      }
+      
+      // 确保目录存在
+      const targetDir = needMove ? newDir : oldDir
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true })
+      }
+      
+      // 写入元数据文件
+      fs.writeFileSync(jsonPath, JSON.stringify(completeMetadata, null, 2), 'utf-8')
+      
+      console.log(`✅ KMZ元数据已保存${needMove ? '并移动到新文件夹' : ''}`)
+      
+      return res.json({
+        code: 200,
+        message: '保存成功',
+        data: {
+          type: 'kmz',
+          filename: filename,
+          moved: needMove,
+          newPath: needMove ? path.relative(KMZ_DIR, newDir) : relativePath
+        }
+      })
+    } else if (fileExt === '.shp') {
+      // SHP文件：继续使用JSON元数据文件
+      const targetDir = relativePath ? path.join(SHP_DIR, relativePath) : SHP_DIR
+      const metadataFilename = filename.replace('.shp', '.json')
+      const metadataPath = path.join(targetDir, metadataFilename)
+      
+      // 确保目录存在
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true })
+      }
+      
+      // 读取已有的元数据文件（如果存在）
+      let existingMetadata = {}
+      if (fs.existsSync(metadataPath)) {
+        try {
+          const existingContent = fs.readFileSync(metadataPath, 'utf-8')
+          existingMetadata = JSON.parse(existingContent)
+        } catch (err) {
+          console.warn(`   ⚠️ 读取已有元数据失败:`, err.message)
+        }
+      }
+      
+      // 🆕 更新元数据（只保留必要的字段，移除source字段）
+      const completeMetadata = {
+        year: metadata.year,
+        period: metadata.period,
+        regionCode: metadata.regionCode,
+        regionName: metadata.regionName,
+        recognitionType: metadata.recognitionType,
+        taskName: metadata.taskName,
+        createdAt: existingMetadata.createdAt || metadata.createdAt || new Date().toISOString(),
+        uploadTime: existingMetadata.uploadTime || metadata.uploadTime,
+        updatedAt: new Date().toISOString()
+      }
+      
+      // 写入元数据文件
+      fs.writeFileSync(metadataPath, JSON.stringify(completeMetadata, null, 2), 'utf-8')
+      
+      console.log(`✅ SHP元数据已保存: ${metadataFilename}`)
+      
+      return res.json({
+        code: 200,
+        message: '保存成功',
+        data: {
+          type: 'shp',
+          metadataFile: metadataFilename
+        }
+      })
+    } else {
+      return res.status(400).json({
+        code: 400,
+        message: '不支持的文件类型'
+      })
+    }
   } catch (error) {
     console.error('❌ 保存元数据失败:', error)
     res.status(500).json({
