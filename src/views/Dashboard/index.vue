@@ -465,15 +465,6 @@
                 </div>
               </div>
               
-              <!-- 总面积 -->
-              <div class="info-item" v-if="currentImageData.statistics">
-                <div class="info-label">
-                  <el-icon><DataLine /></el-icon>
-                  <span>总覆盖面积</span>
-                </div>
-                <div class="info-value">{{ formatNumber(currentImageData.statistics.totalAreaMu) }} 亩</div>
-              </div>
-              
               <!-- 上传时间 -->
               <div class="info-item">
                 <div class="info-label">
@@ -597,10 +588,14 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import { Search, Refresh, Grid, SuccessFilled, WarningFilled, DocumentChecked, Location, ZoomIn, ZoomOut, Position, PieChart, DataLine, TrendCharts, ArrowDown, Loading, DataAnalysis, Document, Calendar, Camera, Sunny, Folder, View as ViewIcon, Clock, Memo } from '@element-plus/icons-vue'
 import { RefreshCw } from 'lucide-vue-next'
 import * as echarts from 'echarts'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+// 路由
+const router = useRouter()
 
 // OpenLayers 导入
 import Map from 'ol/Map'
@@ -741,6 +736,10 @@ let map = null // OpenLayers 地图实例
 let tiffLayers = [] // TIF 图层数组（支持多个）
 let kmzLayers = [] // KMZ 图层数组（支持多个）
 const loadedImages = ref([]) // 已加载的影像数据
+
+// 🚀 性能优化：图层范围缓存和防抖
+let layerExtentCache = new Map() // 图层范围缓存（避免重复获取）
+let zoomToExtentTimer = null // 缩放防抖定时器
 
 // 底图图层（多种类型）
 let baseMapLayers = {
@@ -2250,92 +2249,228 @@ const hexToRgb = (hex) => {
   ] : [0, 0, 0]
 }
 
-// 重新加载多个 TIF 图层
+// 🚀 优化版：重新加载多个 TIF 图层（支持大数据，添加错误恢复）
 const reloadMultipleTiffLayers = async (images) => {
+  // 限制同时加载的影像数量（避免浏览器崩溃）
+  const MAX_LAYERS = 10
+  if (images.length > MAX_LAYERS) {
+    ElMessage.warning(`一次最多加载 ${MAX_LAYERS} 个影像，已自动选择前 ${MAX_LAYERS} 个`)
+    images = images.slice(0, MAX_LAYERS)
+  }
+  
+  // 🌐 严格检查：禁止加载未优化影像（避免卡死和坐标错误）
+  const unoptimizedImages = images.filter(img => {
+    const path = img.optimizedPath || img.filePath || img.originalPath
+    return !img.isOptimized && path && !path.includes('_optimized')
+  })
+  
+  if (unoptimizedImages.length > 0) {
+    const names = unoptimizedImages.map(img => img.name).join('、')
+    
+    ElMessageBox.alert(
+      `${names}\n\n需要先优化才能加载`,
+      '影像需要优化',
+      {
+        confirmButtonText: '前往优化',
+        type: 'warning'
+      }
+    ).then(() => {
+      // 点击"前往优化"后跳转到数据管理页面
+      router.push('/image-management')
+    })
+    
+    console.error('❌ 禁止加载未优化影像')
+    console.error('🌐 未优化影像列表:', names)
+    console.error('💡 必须先优化：前往"数据管理" → 点击"优化" → 等待完成')
+    
+    // 🔒 直接返回，不加载任何影像
+    return
+  }
+  
+  const loadingMsg = ElMessage.info({
+    message: `正在加载 ${images.length} 个影像...`,
+    duration: 0
+  })
+  
   try {
     // 移除所有旧图层
     tiffLayers.forEach(layer => {
       if (layer && map) {
-        map.removeLayer(layer)
+        try {
+          map.removeLayer(layer)
+        } catch (e) {
+          console.warn('移除图层失败:', e)
+        }
       }
     })
     tiffLayers = []
     
+    const isDev = import.meta.env.DEV
+    if (isDev) {
+      console.log(`📂 开始加载 ${images.length} 个影像`)
+    }
+    
+    let successCount = 0
+    let failCount = 0
+    
     // 为每个影像创建图层
     for (let i = 0; i < images.length; i++) {
       const image = images[i]
-      // 🔧 优先使用优化后的路径，其次使用原始路径
-      let pathToLoad = image.optimizedPath || image.filePath || image.originalPath
       
-      // 🔧 修复：将 /data/ 路径转换为 /api/image/file/ API路径
-      if (pathToLoad && pathToLoad.startsWith('/data/')) {
-        const filename = pathToLoad.replace('/data/', '')
-        pathToLoad = `/api/image/file/${encodeURIComponent(filename)}`
-      }
-      
-      // 🎨 检测是否为 RGB 影像（根据文件名）
-      const isRGB = image.name.toUpperCase().includes('RGB')
-      
-      console.log(`📂 加载第 ${i + 1}/${images.length} 个影像:`)
-      console.log(`   文件名: ${image.name}`)
-      console.log(`   影像类型: ${isRGB ? 'RGB影像' : '单波段影像'}`)
-      console.log(`   是否已优化: ${image.isOptimized}`)
-      console.log(`   优化路径: ${image.optimizedPath}`)
-      console.log(`   文件路径: ${image.filePath}`)
-      console.log(`   原始路径: ${image.originalPath}`)
-      console.log(`   ✅ 转换后使用路径: ${pathToLoad}`)
-      
-      // 创建 GeoTIFF 数据源
-      const source = new GeoTIFF({
-        sources: [{
-          url: pathToLoad
-        }],
-        normalize: isRGB ? false : false,  // RGB影像不需要归一化
-        interpolate: false,
-        transition: 0,
-        wrapX: false
-      })
-      
-      // 🎨 根据影像类型选择不同的样式
-      let layerStyle
-      if (isRGB) {
-        // RGB 影像：直接归一化（后端已做独立波段拉伸）
-        layerStyle = {
+      try {
+        // 🔧 从完整路径中提取文件名，转换为API路径
+        let pathToLoad = image.optimizedPath || image.filePath || image.originalPath
+        
+        if (!pathToLoad) {
+          console.warn(`⚠️ 影像 ${image.name} 缺少路径信息，跳过`)
+          failCount++
+          continue
+        }
+        
+        if (pathToLoad.startsWith('/data/')) {
+          const filename = pathToLoad.split('/').pop()
+          pathToLoad = `/api/image/file/${encodeURIComponent(filename)}`
+        }
+        
+        // 🎨 检测是否为 RGB 影像（根据文件名）
+        const isRGB = image.name.toUpperCase().includes('RGB')
+        
+        if (isDev) {
+          console.log(`   [${i + 1}/${images.length}] ${image.name} (${isRGB ? 'RGB' : '分类'})`)
+        }
+        
+        // 创建 GeoTIFF 数据源（支持COG分块加载）
+        const source = new GeoTIFF({
+          sources: [{
+            url: pathToLoad
+          }],
+          // 🔧 关键修复：对于RGB影像，不使用normalize（会导致错误的归一化）
+          normalize: false,
+          interpolate: false,
+          transition: 0,
+          wrapX: false,
+          convertToRGB: false,  // 关闭自动转换，手动控制RGB渲染
+          // 🚀 性能优化：COG分块加载配置
+          sourceOptions: {
+            allowFullFile: true,  // Fallback：允许加载完整文件（仅用于非COG格式）
+            // COG文件会自动使用HTTP Range请求进行分块加载
+            // 原始TIF文件会触发全文件下载（可能导致卡死）
+          }
+        })
+        
+        // 📊 监听数据源加载事件（调试用）
+        if (isDev) {
+          let hasLoggedLoadType = false
+          source.on('change', function() {
+            if (!hasLoggedLoadType && source.getState() === 'ready') {
+              hasLoggedLoadType = true
+              // 尝试判断是否为COG（通过检查是否使用了分块）
+              const view = source.getView()
+              if (view) {
+                console.log(`   📦 ${image.name} 加载模式: ${pathToLoad.includes('_optimized') ? 'COG分块加载 ✅' : '完整文件加载 ⚠️'}`)
+                
+                // 🔍 RGB影像诊断：检查实际数据
+                if (isRGB) {
+                  console.log(`   🎨 RGB影像配置: convertToRGB=true, normalize=false`)
+                  
+                  // 监听第一个瓦片加载，检查实际的像素值范围
+                  let tileChecked = false
+                  source.on('tileloadend', function(event) {
+                    if (!tileChecked && event.tile && event.tile.getData) {
+                      tileChecked = true
+                      try {
+                        const tileData = event.tile.getData()
+                        if (tileData && tileData.data) {
+                          const bandData = tileData.data
+                          console.log(`   🔍 瓦片数据诊断:`)
+                          console.log(`      - 波段数量: ${bandData.length}`)
+                          console.log(`      - 数据类型: ${bandData[0]?.constructor.name}`)
+                          
+                          // 采样前100个像素值
+                          if (bandData[0] && bandData[0].length > 0) {
+                            const samples = []
+                            for (let i = 0; i < Math.min(100, bandData[0].length); i++) {
+                              if (bandData[0][i] > 0) { // 跳过NoData
+                                samples.push(bandData[0][i])
+                              }
+                            }
+                            if (samples.length > 0) {
+                              const min = Math.min(...samples)
+                              const max = Math.max(...samples)
+                              console.log(`      - 波段1值域范围: ${min.toFixed(4)} - ${max.toFixed(4)}`)
+                            }
+                          }
+                        }
+                      } catch (e) {
+                        console.warn(`      - 无法读取瓦片数据: ${e.message}`)
+                      }
+                    }
+                  })
+                }
+              }
+            }
+          })
+        }
+        
+        // 🎨 根据影像类型选择不同的样式
+        const layerStyle = isRGB ? {
+          // 🔧 RGB影像样式：使用clamp强制归一化
+          // clamp表达式可以处理任意数据范围，自动拉伸到0-1
           color: [
             'array',
-            ['/', ['band', 1], 255],  // Red: 归一化到0-1
-            ['/', ['band', 2], 255],  // Green: 归一化到0-1
-            ['/', ['band', 3], 255],  // Blue: 归一化到0-1
-            1                          // Alpha
+            // 🎯 方案：使用clamp + 除法来处理不同数据类型
+            // - 对于Byte (0-255): 直接除以255
+            // - 对于UInt16 (0-65535): OpenLayers会自动归一化
+            // - 对于Float: clamp会限制在0-1范围内
+            ['clamp', ['/', ['band', 1], 255], 0, 1],  // Red
+            ['clamp', ['/', ['band', 2], 255], 0, 1],  // Green  
+            ['clamp', ['/', ['band', 3], 255], 0, 1],  // Blue
+            1   // 不透明度
           ]
+        } : {
+          color: generateColorStyle()  // 作物分类
         }
-        console.log('   🎨 使用 RGB 样式（直接归一化，后端已做独立波段拉伸）')
-      } else {
-        // 单波段影像：使用作物分类颜色映射
-        layerStyle = {
-          color: generateColorStyle()
-        }
-        console.log('   📊 使用作物分类样式')
+        
+        // 创建 WebGL Tile 图层（优化配置）
+        const layer = new WebGLTile({
+          source: source,
+          visible: true,
+          style: layerStyle,
+          opacity: isRGB ? 1.0 : (0.85 / (i + 1)),
+          zIndex: 10 + i,
+          // 🚀 性能优化
+          preload: 0,  // 不预加载（减少内存占用）
+          useInterimTilesOnError: true  // 错误时使用临时瓦片
+        })
+        
+        // 添加到地图
+        map.addLayer(layer)
+        tiffLayers.push(layer)
+        successCount++
+        
+      } catch (error) {
+        console.error(`❌ 影像 ${image.name} 加载失败:`, error)
+        failCount++
       }
-      
-      // 创建 WebGL Tile 图层
-      const layer = new WebGLTile({
-        source: source,
-        visible: true,
-        style: layerStyle,
-        opacity: isRGB ? 1.0 : (0.85 / (i + 1)), // RGB影像使用完全不透明
-        zIndex: 10 + i
-      })
-      
-      // 添加到地图
-      map.addLayer(layer)
-      tiffLayers.push(layer)
     }
     
-    console.log(`${images.length} 个TIF图层加载成功`)
-    ElMessage.success(`${images.length} 个影像加载成功`)
+    loadingMsg.close()
+    
+    // 根据结果显示不同的消息
+    if (failCount === 0) {
+      ElMessage.success(`✅ 成功加载 ${successCount} 个影像`)
+    } else if (successCount > 0) {
+      ElMessage.warning(`⚠️ 成功加载 ${successCount} 个影像，${failCount} 个失败`)
+    } else {
+      ElMessage.error(`❌ 所有影像加载失败`)
+    }
+    
+    if (isDev) {
+      console.log(`✅ 加载完成: 成功 ${successCount}, 失败 ${failCount}`)
+    }
   } catch (error) {
-    console.error('TIF 图层加载失败:', error)
+    loadingMsg.close()
+    console.error('❌ TIF 图层加载失败:', error)
     ElMessage.error('影像加载失败：' + error.message)
   }
 }
@@ -2509,133 +2644,58 @@ const updateStatistics = async (imageData) => {
     return
   }
   
-  console.log('影像数据:', imageData)
+  // ⚡ 优化：只在开发模式下打印日志
+  const isDev = import.meta.env.DEV
+  if (isDev) {
+    console.log('更新统计数据:', imageData.name)
+  }
   
   let stats = null
   
-  // 优先使用元数据中的统计数据（后端已预分析）
   if (imageData.statistics) {
     stats = imageData.statistics
-    console.log('✅ 使用元数据中的统计数据（后端已预分析）')
-    console.log('   分析时间:', stats.analyzedAt || '未知')
-    // 显示快速加载提示
-    ElMessage.success({
-      message: '查询成功，请打开图例查询影像',
-      duration: 2000
-    })
+    if (isDev) {
+      console.log('✅ 使用缓存的统计数据')
+    }
+    // 静默加载，不显示提示
   } else {
-    // 元数据中没有统计数据，使用前端实时分析（较慢）
-    console.log('⚠️ 元数据中无统计数据，开始实时分析（较慢）')
+    // ⚠️ 性能警告：前端分析TIF文件会很慢！
+    if (isDev) {
+      console.warn('⚠️ 元数据缺失，跳过实时分析（性能优化）')
+    }
     
-    // 🔍 输出详细的影像信息
-    console.log('📂 影像详细信息:')
-    console.log('   - ID:', imageData.id)
-    console.log('   - 文件名:', imageData.name)
-    console.log('   - 年份:', imageData.year)
-    console.log('   - 期次:', imageData.period)
-    console.log('   - filePath:', imageData.filePath)
-    console.log('   - originalPath:', imageData.originalPath)
-    console.log('   - optimizedPath:', imageData.optimizedPath)
-    console.log('   - isOptimized:', imageData.isOptimized)
-    
-    const loadingMsg = ElMessage.info({
-      message: '正在分析影像数据，请稍候...',
-      duration: 0
-    })
-    
-    // 在 try 外部定义 tifUrl，方便 catch 块使用
-    // 🔧 修复：对文件名进行URL编码，处理括号等特殊字符
-    const encodedFileName = encodeURIComponent(imageData.name)
-    const tifUrl = `/api/image/file/${encodedFileName}`
-    
-    try {
-      // 🔧 修复：构建TIF文件URL，使用后端 API 路径
-      console.log('🔗 原始文件名:', imageData.name)
-      console.log('🔗 编码后文件名:', encodedFileName)
-      console.log('🔗 构建的TIF文件URL:', tifUrl)
-      console.log('🌐 当前页面URL:', window.location.href)
-      console.log('🌐 完整请求URL:', new URL(tifUrl, window.location.href).href)
-      
-      // 使用geotiff.js分析
-      stats = await analyzeTifFile(tifUrl)
-      
-      loadingMsg.close()
-      
-      // 缓存statistics到imageData（下次不用重新分析）
-      imageData.statistics = stats
-      
-      ElMessage.success({
-        message: '✅ 影像分析完成',
-        duration: 2000
+    // ⚡ 优化：RGB影像不需要统计数据，直接跳过
+    const isRGB = imageData.name.toUpperCase().includes('RGB')
+    if (isRGB) {
+      if (isDev) {
+        console.log('ℹ️ RGB影像无需统计数据')
+      }
+      // 设置默认值
+      stats = {
+        totalArea: '—',
+        plotCount: '—',
+        matchRate: '—',
+        diffCount: '—',
+        cropDistribution: {}
+      }
+    } else {
+      // 非RGB影像，提示用户等待后端分析
+      ElMessage.warning({
+        message: '统计数据生成中，请稍后刷新页面查看',
+        duration: 3000
       })
       
-    } catch (error) {
-      loadingMsg.close()
-      console.error('❌ 前端TIF分析失败:', error)
-      console.error('   错误类型:', error.constructor.name)
-      console.error('   错误消息:', error.message)
-      console.error('   错误堆栈:', error.stack)
-      
-      // 根据错误类型提供具体的解决方案
-      let errorMessage = '影像分析失败'
-      let solution = ''
-      
-      if (error.message.includes('404') || error.message.includes('不可访问')) {
-        errorMessage = `文件不存在: ${imageData.name}`
-        solution = `
-        
-请检查：
-1️⃣ 后端服务是否正在运行（npm run server）
-2️⃣ 文件是否存在于 public/data/ 目录
-3️⃣ 文件名是否正确: ${imageData.name}
-
-完整URL: ${tifUrl}`
-      } else if (error.message.includes('Range') || error.message.includes('不支持')) {
-        errorMessage = '服务器不支持 Range 请求'
-        solution = `
-
-解决方法：
-1️⃣ 停止后端服务（Ctrl+C）
-2️⃣ 确保 server/routes/image.js 已保存最新代码
-3️⃣ 重新启动后端: npm run server`
-      } else if (error.name === 'AggregateError' || error.message.includes('Request failed')) {
-        errorMessage = '网络请求失败'
-        solution = `
-
-可能的原因：
-1️⃣ 后端服务未运行或端口不对
-2️⃣ 文件不存在或路径错误
-3️⃣ 服务器不支持 Range 请求（需要更新后端代码并重启）
-
-已尝试的URL: ${tifUrl}
-后端地址: http://localhost:8080`
-      } else {
-        errorMessage = `分析失败: ${error.message}`
-        solution = '\n\n请查看控制台了解详细错误信息'
+      // 设置默认值
+      stats = {
+        totalArea: '—',
+        plotCount: '—',
+        matchRate: '—',
+        diffCount: '—',
+        cropDistribution: {}
       }
       
-      ElMessage.error({
-        message: errorMessage + solution,
-        duration: 10000
-      })
-      
-      // 重置为空状态
-      kpiData.value = {
-        totalArea: '0',
-        matchRate: '0',
-        diffCount: '0',
-        plotCount: '0'
-      }
-      
-      if (cropChart) {
-        cropChart.setOption({
-          series: [{
-            name: '作物类型',
-            data: [{ value: 1, name: '暂无统计数据' }]
-          }]
-        }, true)  // 使用notMerge确保完全替换
-      }
-      return
+      // ⚡ 关键优化：不再调用前端分析（太慢）
+      // 用户应该等待后端自动分析完成后再查询
     }
   }
   
@@ -2657,8 +2717,10 @@ const updateStatistics = async (imageData) => {
   if (cropChart) {
     let cropData = []
     
-    console.log('📊 统计数据 cropDistribution:', stats.cropDistribution)
-    console.log('📊 原始像元统计 counts:', stats.counts)
+    // ⚡ 优化：只在开发模式下打印调试信息
+    if (isDev && stats.cropDistribution) {
+      console.log('📊 作物分布:', Object.keys(stats.cropDistribution).length, '种')
+    }
     
     if (stats.cropDistribution && Object.keys(stats.cropDistribution).length > 0) {
       // 提取作物类型到availableCropTypes（用于图例显示）
@@ -2676,26 +2738,17 @@ const updateStatistics = async (imageData) => {
       cropData = Object.entries(stats.cropDistribution).map(([name, value]) => {
         // 从cropLegend中找到对应的颜色
         const cropInfo = cropLegend.find(c => c.label === name)
-        const dataItem = {
+        return {
           value: Number(value),
           name: name,
           itemStyle: {
-            color: cropInfo ? cropInfo.color : '#999999'  // 🔧 关键：设置每个扇区的颜色
+            color: cropInfo ? cropInfo.color : '#999999'
           }
         }
-        console.log(`🎨 作物[${name}]: 颜色=${cropInfo ? cropInfo.color : '#999999'}, 值=${value}%`)
-        return dataItem
       })
       
       // 按百分比排序，方便查看
       cropData.sort((a, b) => b.value - a.value)
-      
-      // 🔧 修复：饼图始终显示所有有数据的作物类型，不受筛选影响
-      // 筛选条件只影响地图显示，不影响饼图统计
-      // 如果需要筛选，建议单独在饼图上添加筛选功能
-      
-      console.log('📊 最终饼图数据（按百分比排序）:', JSON.stringify(cropData, null, 2))
-      console.log(`   共 ${cropData.length} 个作物类型`)
     }
     
     // 如果没有数据，显示提示
@@ -2758,11 +2811,16 @@ const updateStatistics = async (imageData) => {
     }
     
     cropChart.setOption(option, true)  // true表示不合并，完全替换
-    console.log('✅ 饼图已完全重新设置，数据项数:', cropData.length)
-    console.log('🎨 使用的颜色数组:', cropLegend.map(item => item.color))
+    
+    // ⚡ 优化：只在开发模式下打印日志
+    if (isDev) {
+      console.log('✅ 饼图已更新，数据项数:', cropData.length)
+    }
   }
   
-  console.log('统计数据已更新')
+  if (isDev) {
+    console.log('✅ 统计数据已更新')
+  }
 }
 
 // 格式化数字（添加千位分隔符）
@@ -3090,6 +3148,15 @@ const clearMapLayers = () => {
   // 🔧 修复：清空响应式可见性状态
   kmzLayerVisibility.value = {}
   
+  // 🚀 清除图层范围缓存（添加防御性检查）
+  if (layerExtentCache && typeof layerExtentCache.clear === 'function') {
+    layerExtentCache.clear()
+    console.log('🗑️ 已清除图层范围缓存')
+  } else {
+    console.warn('⚠️ 缓存对象无效，重新初始化')
+    layerExtentCache = new Map()
+  }
+  
   // 关闭图层显示
   tiffLayerVisible.value = false
   
@@ -3120,44 +3187,143 @@ const handleZoomOut = () => {
   }
 }
 
+// 🚀 优化版：缩放至图层范围（添加缓存 + 防抖 + 快速响应）
 const handleZoomToExtent = () => {
-  if (map) {
-    const view = map.getView()
+  if (!map) return
+  
+  // 🔧 防御性检查：确保缓存对象有效（解决浏览器缓存问题）
+  if (!layerExtentCache || typeof layerExtentCache.has !== 'function') {
+    console.warn('⚠️ 缓存对象无效，重新初始化')
+    layerExtentCache = new Map()
+  }
+  
+  // 🚀 防抖：取消之前的延迟操作
+  if (zoomToExtentTimer) {
+    clearTimeout(zoomToExtentTimer)
+  }
+  
+  const view = map.getView()
+  
+  // 影像数据：缩放到TIF图层
+  if (dataSource.value === 'image' && tiffLayerVisible.value && tiffLayers.length > 0) {
+    const firstLayer = tiffLayers[0]
+    const source = firstLayer.getSource()
     
-    // 如果TIF图层打开，尝试缩放到TIF范围
-    if (tiffLayerVisible.value && tiffLayers.length > 0) {
-      // 获取第一个图层的源
-      const firstLayer = tiffLayers[0]
-      const source = firstLayer.getSource()
-      
-      if (source) {
-        source.getView().then((viewConfig) => {
-        if (viewConfig && viewConfig.extent) {
-          view.fit(viewConfig.extent, {
-            padding: [50, 50, 50, 50],
-            duration: 500
-          })
-          ElMessage.success('已缩放至图层范围')
-        }
-      }).catch(() => {
-        // 如果获取失败，使用默认范围
-        view.animate({
-          center: fromLonLat([87.6, 43.8]),
-          zoom: 6,
-          duration: 500
-        })
-        ElMessage.info('已缩放至默认视图')
-      })
-      }
-    } else {
-      // 重置到新疆中心区域
+    if (!source) {
       view.animate({
         center: fromLonLat([87.6, 43.8]),
         zoom: 6,
-        duration: 500
+        duration: 300
       })
-      ElMessage.success('已重置到默认视图')
+      ElMessage.info('已重置到默认视图')
+      return
     }
+    
+    // 🚀 优化1：生成缓存键（基于当前加载的影像名称）
+    const cacheKey = `tif_${loadedImages.value.map(img => img.id).join('_')}`
+    
+    // 🚀 优化2：检查缓存
+    if (layerExtentCache.has(cacheKey)) {
+      const cachedExtent = layerExtentCache.get(cacheKey)
+      console.log('✅ 使用缓存的图层范围')
+      
+      // 立即缩放（无延迟）
+      view.fit(cachedExtent, {
+        padding: [80, 80, 80, 80],
+        duration: 400,  // 缩短动画时间：800ms -> 400ms
+        maxZoom: 15
+      })
+      ElMessage.success('✅ 已缩放至图层范围')
+      return
+    }
+    
+    // 🚀 优化3：无缓存时异步获取（只在首次）
+    const loadingMsg = ElMessage.info({
+      message: '正在定位图层...',
+      duration: 0
+    })
+    
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('timeout')), 2000)  // 缩短超时：3秒 -> 2秒
+    )
+    
+    const viewPromise = source.getView()
+    
+    Promise.race([viewPromise, timeoutPromise])
+      .then((viewConfig) => {
+        loadingMsg.close()
+        if (viewConfig && viewConfig.extent) {
+          // 🚀 优化4：缓存范围数据
+          layerExtentCache.set(cacheKey, viewConfig.extent)
+          console.log('💾 已缓存图层范围:', cacheKey)
+          
+          view.fit(viewConfig.extent, {
+            padding: [80, 80, 80, 80],
+            duration: 400,  // 缩短动画时间
+            maxZoom: 15
+          })
+          ElMessage.success('✅ 已缩放至图层范围')
+        } else {
+          view.animate({
+            center: fromLonLat([87.6, 43.8]),
+            zoom: 6,
+            duration: 300
+          })
+          ElMessage.info('已重置到默认视图')
+        }
+      })
+      .catch((error) => {
+        loadingMsg.close()
+        console.warn('获取图层范围超时:', error)
+        view.animate({
+          center: fromLonLat([87.6, 43.8]),
+          zoom: 6,
+          duration: 300
+        })
+        ElMessage.warning('图层范围获取超时，已重置到默认视图')
+      })
+  } 
+  // 识别结果：缩放到KMZ图层
+  else if (dataSource.value === 'recognition' && kmzLayers.length > 0) {
+    const visibleLayers = kmzLayers.filter(layer => layer.getVisible())
+    
+    if (visibleLayers.length > 0) {
+      const firstLayer = visibleLayers[0]
+      const extent = firstLayer.getSource().getExtent()
+      
+      if (extent && extent.every(coord => isFinite(coord))) {
+        // 🚀 优化：缩短动画时间
+        view.fit(extent, {
+          padding: [80, 80, 80, 80],
+          duration: 400,  // 缩短动画时间：800ms -> 400ms
+          maxZoom: 15
+        })
+        ElMessage.success('✅ 已缩放至图层范围')
+      } else {
+        view.animate({
+          center: fromLonLat([87.6, 43.8]),
+          zoom: 6,
+          duration: 300
+        })
+        ElMessage.info('已重置到默认视图')
+      }
+    } else {
+      view.animate({
+        center: fromLonLat([87.6, 43.8]),
+        zoom: 6,
+        duration: 300
+      })
+      ElMessage.info('已重置到默认视图')
+    }
+  } 
+  // 无图层：重置到默认视图
+  else {
+    view.animate({
+      center: fromLonLat([87.6, 43.8]),
+      zoom: 6,
+      duration: 300
+    })
+    ElMessage.success('✅ 已重置到默认视图')
   }
 }
 
