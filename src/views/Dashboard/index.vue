@@ -737,10 +737,6 @@ let tiffLayers = [] // TIF 图层数组（支持多个）
 let kmzLayers = [] // KMZ 图层数组（支持多个）
 const loadedImages = ref([]) // 已加载的影像数据
 
-// 🚀 性能优化：图层范围缓存和防抖
-let layerExtentCache = new Map() // 图层范围缓存（避免重复获取）
-let zoomToExtentTimer = null // 缩放防抖定时器
-
 // 底图图层（多种类型）
 let baseMapLayers = {
   'amap-vector': null,      // 高德路网图
@@ -2342,7 +2338,9 @@ const reloadMultipleTiffLayers = async (images) => {
         // 创建 GeoTIFF 数据源（支持COG分块加载）
         const source = new GeoTIFF({
           sources: [{
-            url: pathToLoad
+            url: pathToLoad,
+            // 🔧 设置NoData值（NaN会被自动处理为透明）
+            nodata: NaN
           }],
           // 🔧 关键修复：对于RGB影像，不使用normalize（会导致错误的归一化）
           normalize: false,
@@ -2358,6 +2356,123 @@ const reloadMultipleTiffLayers = async (images) => {
           }
         })
         
+        // 🔍 RGB影像：动态计算极值并应用归一化
+        let rgbMinMax = null // 存储计算出的min/max
+        
+        if (isRGB) {
+          console.log(`   🎨 RGB影像配置: 动态极值归一化`)
+          
+          // 等待数据源准备就绪后读取元数据并计算极值
+          source.on('change', async function checkMetadata() {
+            if (source.getState() === 'ready') {
+              try {
+                console.log(`   🔍 ========== 计算RGB影像极值 ==========`)
+                
+                // 使用 geotiff.js 直接读取 TIF 文件
+                const { fromUrl } = await import('geotiff')
+                const tiff = await fromUrl(pathToLoad)
+                const imageGT = await tiff.getImage()
+                
+                const width = imageGT.getWidth()
+                const height = imageGT.getHeight()
+                
+                // 读取中心区域进行采样（避免边缘NoData）
+                const centerX = Math.floor(width / 2)
+                const centerY = Math.floor(height / 2)
+                const sampleSize = 256
+                
+                const rasters = await imageGT.readRasters({ 
+                  window: [
+                    Math.max(0, centerX - sampleSize / 2),
+                    Math.max(0, centerY - sampleSize / 2),
+                    Math.min(width, centerX + sampleSize / 2),
+                    Math.min(height, centerY + sampleSize / 2)
+                  ]
+                })
+                
+                // 🎯 计算每个波段的2%-98%百分位数（标准遥感拉伸方法）
+                const bandStats = []
+                for (let b = 0; b < 3; b++) {
+                  const bandData = rasters[b]
+                  const validValues = []
+                  
+                  for (let i = 0; i < bandData.length; i++) {
+                    const val = bandData[i]
+                    if (!isNaN(val) && isFinite(val) && val !== 0) {
+                      validValues.push(val)
+                    }
+                  }
+                  
+                  if (validValues.length > 0) {
+                    // 排序以计算百分位数
+                    validValues.sort((a, b) => a - b)
+                    
+                    const p2Index = Math.floor(validValues.length * 0.02)
+                    const p98Index = Math.floor(validValues.length * 0.98)
+                    
+                    const p2 = validValues[p2Index]
+                    const p98 = validValues[p98Index]
+                    const absMin = validValues[0]
+                    const absMax = validValues[validValues.length - 1]
+                    
+                    bandStats.push({ 
+                      min: p2,      // 使用2%百分位作为min
+                      max: p98,     // 使用98%百分位作为max
+                      range: p98 - p2,
+                      absMin,
+                      absMax
+                    })
+                    
+                    console.log(`      - 波段${b + 1}:`)
+                    console.log(`        绝对范围: ${absMin.toFixed(0)} ~ ${absMax.toFixed(0)}`)
+                    console.log(`        2%-98%: ${p2.toFixed(0)} ~ ${p98.toFixed(0)} ⭐(用于拉伸)`)
+                  }
+                }
+                
+                if (bandStats.length === 3) {
+                  rgbMinMax = bandStats
+                  
+                  // 🔧 使用2%-98%百分位拉伸（标准遥感显示方法）
+                  const threshold = Math.min(bandStats[0].absMin, bandStats[1].absMin, bandStats[2].absMin) * 0.5
+                  
+                  console.log(`   📊 归一化方式: 2%-98% 百分位拉伸`)
+                  console.log(`   R波段: (value - ${bandStats[0].min.toFixed(0)}) / ${bandStats[0].range.toFixed(0)}`)
+                  console.log(`   G波段: (value - ${bandStats[1].min.toFixed(0)}) / ${bandStats[1].range.toFixed(0)}`)
+                  console.log(`   B波段: (value - ${bandStats[2].min.toFixed(0)}) / ${bandStats[2].range.toFixed(0)}`)
+                  console.log(`   透明度阈值: ${threshold.toFixed(1)}`)
+                  
+                  layer.setStyle({
+                    color: [
+                      'array',
+                      // 百分位拉伸：(value - p2) / (p98 - p2)，超出范围的会被截断
+                      ['clamp', ['/', ['-', ['band', 1], bandStats[0].min], bandStats[0].range], 0, 1],
+                      ['clamp', ['/', ['-', ['band', 2], bandStats[1].min], bandStats[1].range], 0, 1],
+                      ['clamp', ['/', ['-', ['band', 3], bandStats[2].min], bandStats[2].range], 0, 1],
+                      // Alpha通道：阈值透明
+                      ['case',
+                        ['all',
+                          ['<', ['band', 1], threshold],
+                          ['<', ['band', 2], threshold],
+                          ['<', ['band', 3], threshold]
+                        ],
+                        0,  // 透明
+                        1   // 不透明
+                      ]
+                    ]
+                  })
+                  
+                  console.log(`   ✅ 已应用百分位拉伸 (2%-98%) + 阈值透明`)
+                  console.log(`   ========================================`)
+                }
+              } catch (e) {
+                console.error(`   ❌ 极值计算失败: ${e.message}`)
+              }
+              
+              source.un('change', checkMetadata)
+            }
+          })
+        }
+        
         // 📊 监听数据源加载事件（调试用）
         if (isDev) {
           let hasLoggedLoadType = false
@@ -2368,45 +2483,6 @@ const reloadMultipleTiffLayers = async (images) => {
               const view = source.getView()
               if (view) {
                 console.log(`   📦 ${image.name} 加载模式: ${pathToLoad.includes('_optimized') ? 'COG分块加载 ✅' : '完整文件加载 ⚠️'}`)
-                
-                // 🔍 RGB影像诊断：检查实际数据
-                if (isRGB) {
-                  console.log(`   🎨 RGB影像配置: convertToRGB=true, normalize=false`)
-                  
-                  // 监听第一个瓦片加载，检查实际的像素值范围
-                  let tileChecked = false
-                  source.on('tileloadend', function(event) {
-                    if (!tileChecked && event.tile && event.tile.getData) {
-                      tileChecked = true
-                      try {
-                        const tileData = event.tile.getData()
-                        if (tileData && tileData.data) {
-                          const bandData = tileData.data
-                          console.log(`   🔍 瓦片数据诊断:`)
-                          console.log(`      - 波段数量: ${bandData.length}`)
-                          console.log(`      - 数据类型: ${bandData[0]?.constructor.name}`)
-                          
-                          // 采样前100个像素值
-                          if (bandData[0] && bandData[0].length > 0) {
-                            const samples = []
-                            for (let i = 0; i < Math.min(100, bandData[0].length); i++) {
-                              if (bandData[0][i] > 0) { // 跳过NoData
-                                samples.push(bandData[0][i])
-                              }
-                            }
-                            if (samples.length > 0) {
-                              const min = Math.min(...samples)
-                              const max = Math.max(...samples)
-                              console.log(`      - 波段1值域范围: ${min.toFixed(4)} - ${max.toFixed(4)}`)
-                            }
-                          }
-                        }
-                      } catch (e) {
-                        console.warn(`      - 无法读取瓦片数据: ${e.message}`)
-                      }
-                    }
-                  })
-                }
               }
             }
           })
@@ -2414,18 +2490,14 @@ const reloadMultipleTiffLayers = async (images) => {
         
         // 🎨 根据影像类型选择不同的样式
         const layerStyle = isRGB ? {
-          // 🔧 RGB影像样式：使用clamp强制归一化
-          // clamp表达式可以处理任意数据范围，自动拉伸到0-1
+          // 🔧 RGB影像：初始使用简单归一化，等待动态极值计算后更新
+          // 初始样式：假设0-65535范围（会在极值计算后动态更新为实际范围）
           color: [
             'array',
-            // 🎯 方案：使用clamp + 除法来处理不同数据类型
-            // - 对于Byte (0-255): 直接除以255
-            // - 对于UInt16 (0-65535): OpenLayers会自动归一化
-            // - 对于Float: clamp会限制在0-1范围内
-            ['clamp', ['/', ['band', 1], 255], 0, 1],  // Red
-            ['clamp', ['/', ['band', 2], 255], 0, 1],  // Green  
-            ['clamp', ['/', ['band', 3], 255], 0, 1],  // Blue
-            1   // 不透明度
+            ['/', ['band', 1], 65535],
+            ['/', ['band', 2], 65535],
+            ['/', ['band', 3], 65535],
+            1
           ]
         } : {
           color: generateColorStyle()  // 作物分类
@@ -2708,13 +2780,17 @@ const updateStatistics = async (imageData) => {
   }
   
   // 更新作物分布饼图（根据选中的作物类型过滤）
-  // 确保cropChart已初始化
-  if (!cropChart) {
-    console.warn('⚠️ cropChart未初始化，尝试初始化...')
-    initCropChart()
+  // ⚡ 优化：只在识别结果模式下才需要cropChart
+  // 影像数据模式使用影像信息卡片，不需要饼图
+  if (dataSource.value === 'recognition') {
+    // 确保cropChart已初始化
+    if (!cropChart) {
+      console.warn('⚠️ cropChart未初始化，尝试初始化...')
+      initCropChart()
+    }
   }
   
-  if (cropChart) {
+  if (cropChart && dataSource.value === 'recognition') {
     let cropData = []
     
     // ⚡ 优化：只在开发模式下打印调试信息
@@ -3148,15 +3224,6 @@ const clearMapLayers = () => {
   // 🔧 修复：清空响应式可见性状态
   kmzLayerVisibility.value = {}
   
-  // 🚀 清除图层范围缓存（添加防御性检查）
-  if (layerExtentCache && typeof layerExtentCache.clear === 'function') {
-    layerExtentCache.clear()
-    console.log('🗑️ 已清除图层范围缓存')
-  } else {
-    console.warn('⚠️ 缓存对象无效，重新初始化')
-    layerExtentCache = new Map()
-  }
-  
   // 关闭图层显示
   tiffLayerVisible.value = false
   
@@ -3187,29 +3254,24 @@ const handleZoomOut = () => {
   }
 }
 
-// 🚀 优化版：缩放至图层范围（添加缓存 + 防抖 + 快速响应）
-const handleZoomToExtent = () => {
-  if (!map) return
-  
-  // 🔧 防御性检查：确保缓存对象有效（解决浏览器缓存问题）
-  if (!layerExtentCache || typeof layerExtentCache.has !== 'function') {
-    console.warn('⚠️ 缓存对象无效，重新初始化')
-    layerExtentCache = new Map()
-  }
-  
-  // 🚀 防抖：取消之前的延迟操作
-  if (zoomToExtentTimer) {
-    clearTimeout(zoomToExtentTimer)
+// 🚀 优化版：缩放至图层范围（修复失效问题）
+const handleZoomToExtent = async () => {
+  if (!map) {
+    console.warn('⚠️ 地图实例不存在')
+    return
   }
   
   const view = map.getView()
   
   // 影像数据：缩放到TIF图层
   if (dataSource.value === 'image' && tiffLayerVisible.value && tiffLayers.length > 0) {
+    console.log('📍 尝试缩放到TIF图层范围...')
+    
     const firstLayer = tiffLayers[0]
     const source = firstLayer.getSource()
     
     if (!source) {
+      console.warn('⚠️ TIF图层数据源不存在')
       view.animate({
         center: fromLonLat([87.6, 43.8]),
         zoom: 6,
@@ -3219,105 +3281,108 @@ const handleZoomToExtent = () => {
       return
     }
     
-    // 🚀 优化1：生成缓存键（基于当前加载的影像名称）
-    const cacheKey = `tif_${loadedImages.value.map(img => img.id).join('_')}`
-    
-    // 🚀 优化2：检查缓存
-    if (layerExtentCache.has(cacheKey)) {
-      const cachedExtent = layerExtentCache.get(cacheKey)
-      console.log('✅ 使用缓存的图层范围')
-      
-      // 立即缩放（无延迟）
-      view.fit(cachedExtent, {
-        padding: [80, 80, 80, 80],
-        duration: 400,  // 缩短动画时间：800ms -> 400ms
-        maxZoom: 15
-      })
-      ElMessage.success('✅ 已缩放至图层范围')
-      return
-    }
-    
-    // 🚀 优化3：无缓存时异步获取（只在首次）
+    // 显示加载提示
     const loadingMsg = ElMessage.info({
       message: '正在定位图层...',
       duration: 0
     })
     
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('timeout')), 2000)  // 缩短超时：3秒 -> 2秒
-    )
-    
-    const viewPromise = source.getView()
-    
-    Promise.race([viewPromise, timeoutPromise])
-      .then((viewConfig) => {
-        loadingMsg.close()
-        if (viewConfig && viewConfig.extent) {
-          // 🚀 优化4：缓存范围数据
-          layerExtentCache.set(cacheKey, viewConfig.extent)
-          console.log('💾 已缓存图层范围:', cacheKey)
-          
-          view.fit(viewConfig.extent, {
+    try {
+      // 🔧 修复：使用await获取view配置，设置5秒超时
+      const viewPromise = source.getView()
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('timeout')), 5000)
+      )
+      
+      const viewConfig = await Promise.race([viewPromise, timeoutPromise])
+      
+      loadingMsg.close()
+      
+      if (viewConfig && viewConfig.extent) {
+        const extent = viewConfig.extent
+        console.log('✅ 获取到图层范围:', extent)
+        
+        // 验证extent有效性
+        if (extent.every(coord => isFinite(coord))) {
+          view.fit(extent, {
             padding: [80, 80, 80, 80],
-            duration: 400,  // 缩短动画时间
+            duration: 500,
             maxZoom: 15
           })
           ElMessage.success('✅ 已缩放至图层范围')
         } else {
+          console.warn('⚠️ 图层范围无效:', extent)
           view.animate({
             center: fromLonLat([87.6, 43.8]),
             zoom: 6,
             duration: 300
           })
-          ElMessage.info('已重置到默认视图')
+          ElMessage.info('图层范围无效，已重置到默认视图')
         }
-      })
-      .catch((error) => {
+      } else {
+        console.warn('⚠️ 未获取到图层范围')
         loadingMsg.close()
-        console.warn('获取图层范围超时:', error)
         view.animate({
           center: fromLonLat([87.6, 43.8]),
           zoom: 6,
           duration: 300
         })
-        ElMessage.warning('图层范围获取超时，已重置到默认视图')
+        ElMessage.info('未获取到图层范围，已重置到默认视图')
+      }
+    } catch (error) {
+      loadingMsg.close()
+      console.error('❌ 获取图层范围失败:', error)
+      
+      // 降级方案：使用新疆区域默认范围
+      view.animate({
+        center: fromLonLat([87.6, 43.8]),
+        zoom: 6,
+        duration: 300
       })
+      ElMessage.warning('图层范围获取失败，已重置到默认视图')
+    }
   } 
-  // 识别结果：缩放到KMZ图层
+  // 识别结果：缩放到KMZ/SHP/GeoJSON图层
   else if (dataSource.value === 'recognition' && kmzLayers.length > 0) {
+    console.log('📍 尝试缩放到识别结果图层范围...')
+    
     const visibleLayers = kmzLayers.filter(layer => layer.getVisible())
     
     if (visibleLayers.length > 0) {
       const firstLayer = visibleLayers[0]
       const extent = firstLayer.getSource().getExtent()
       
+      console.log('✅ 获取到图层范围:', extent)
+      
       if (extent && extent.every(coord => isFinite(coord))) {
-        // 🚀 优化：缩短动画时间
         view.fit(extent, {
           padding: [80, 80, 80, 80],
-          duration: 400,  // 缩短动画时间：800ms -> 400ms
+          duration: 500,
           maxZoom: 15
         })
         ElMessage.success('✅ 已缩放至图层范围')
       } else {
+        console.warn('⚠️ 图层范围无效:', extent)
         view.animate({
           center: fromLonLat([87.6, 43.8]),
           zoom: 6,
           duration: 300
         })
-        ElMessage.info('已重置到默认视图')
+        ElMessage.info('图层范围无效，已重置到默认视图')
       }
     } else {
+      console.log('ℹ️ 没有可见图层，重置到默认视图')
       view.animate({
         center: fromLonLat([87.6, 43.8]),
         zoom: 6,
         duration: 300
       })
-      ElMessage.info('已重置到默认视图')
+      ElMessage.info('没有可见图层，已重置到默认视图')
     }
   } 
   // 无图层：重置到默认视图
   else {
+    console.log('ℹ️ 无图层或图层未显示，重置到默认视图')
     view.animate({
       center: fromLonLat([87.6, 43.8]),
       zoom: 6,
