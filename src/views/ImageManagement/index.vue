@@ -418,6 +418,12 @@
                   {{ getRecognitionTypeLabel(scope.row.recognitionType) }}
                 </template>
               </el-table-column>
+              <el-table-column prop="taskName" label="任务名" min-width="150" align="center" show-overflow-tooltip>
+                <template #default="scope">
+                  <span v-if="scope.row.taskName">{{ scope.row.taskName }}</span>
+                  <span v-else style="color: #909399;">-</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="size" label="大小" width="100" align="center" />
               <el-table-column label="操作" min-width="320" fixed="right" align="center">
                 <template #default="scope">
@@ -729,11 +735,13 @@
         
         <el-form-item label="是否优化" required>
           <el-radio-group v-model="uploadForm.needOptimize">
-            <el-radio :label="true">是（推荐）- 投影转换、压缩、加金字塔</el-radio>
+            <el-radio :label="true">是（推荐）- 投影转换、加金字塔</el-radio>
             <el-radio :label="false">否 - 保留原始文件</el-radio>
           </el-radio-group>
           <div style="color: #999; font-size: 12px; margin-top: 5px">
-            💡 优化后文件更小、加载更快、坐标正确
+            💡 只做坐标转换（EPSG:3857），不改变数据类型和数值<br/>
+            📌 RGB影像：不压缩、保持原始数据类型（8位/16位/浮点）<br/>
+            📌 单波段影像：LZW压缩
           </div>
         </el-form-item>
         
@@ -874,9 +882,12 @@
         <el-form :model="uploadForm" label-width="100px">
           <el-form-item label="是否优化" required>
             <el-radio-group v-model="uploadForm.needOptimize">
-              <el-radio :label="true">是（推荐）- 投影转换、压缩、加金字塔</el-radio>
+              <el-radio :label="true">是（推荐）- 投影转换、加金字塔</el-radio>
               <el-radio :label="false">否 - 保留原始文件</el-radio>
             </el-radio-group>
+            <div style="color: #999; font-size: 12px; margin-top: 5px">
+              📌 只做坐标转换，RGB影像保持原始数据类型（8位/16位/浮点）
+            </div>
           </el-form-item>
           
           <el-form-item v-if="uploadForm.needOptimize" label="覆盖原文件" required>
@@ -1000,7 +1011,9 @@
             <div style="font-size: 14px">
               <strong>当前文件：</strong>{{ currentOptimizeImage.name }}<br/>
               <strong>文件大小：</strong>{{ currentOptimizeImage.size }}<br/>
-              <strong>说明：</strong>优化将进行投影转换(EPSG:3857)、LZW压缩、添加金字塔，文件大小通常可减少80-95%
+              <strong>说明：</strong>只做坐标转换(EPSG:3857)、添加金字塔<br/>
+              <strong>数据类型：</strong>RGB影像保持原始数据类型（8位/16位/浮点），不压缩、不改变数值<br/>
+              <strong>压缩策略：</strong>单波段影像使用LZW压缩
             </div>
           </template>
         </el-alert>
@@ -1281,17 +1294,6 @@
         <el-form-item label="任务名称">
           <el-input v-model="editRecognitionForm.taskName" placeholder="输入任务名称" maxlength="100" />
         </el-form-item>
-        
-        <el-alert
-          title="提示"
-          type="info"
-          :closable="false"
-          style="margin-top: 10px;"
-        >
-          <div style="font-size: 13px;">
-            修改后将自动生成或更新同名的JSON元数据文件，用于保存这些信息。
-          </div>
-        </el-alert>
       </el-form>
       
       <template #footer>
@@ -2893,8 +2895,16 @@ const handleSelectionChange = (selection) => {
   selectedRows.value = selection
 }
 
-// 生成缩略图（使用SVG占位符）
+// 🚀 缩略图缓存（避免重复生成SVG和base64编码）
+const thumbnailCache = new Map()
+
+// 生成缩略图（使用SVG占位符 + 缓存优化）
 const generateThumbnail = (row) => {
+  // 检查缓存
+  if (thumbnailCache.has(row.id)) {
+    return thumbnailCache.get(row.id)
+  }
+  
   // 由于TIF格式浏览器无法直接显示，使用SVG占位图
   const colors = [
     { bg: '#4A90E2', text: '#ffffff' }, // 蓝色
@@ -2924,7 +2934,18 @@ const generateThumbnail = (row) => {
     </svg>
   `
   
-  return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
+  const thumbnail = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)))
+  
+  // 存入缓存
+  thumbnailCache.set(row.id, thumbnail)
+  
+  // 限制缓存大小（最多缓存500个）
+  if (thumbnailCache.size > 500) {
+    const firstKey = thumbnailCache.keys().next().value
+    thumbnailCache.delete(firstKey)
+  }
+  
+  return thumbnail
 }
 
 // 格式化日期
@@ -3126,8 +3147,8 @@ const renderTiffImage = async (filename) => {
     loadingPreview.value = true
     previewError.value = ''
     
-    // 获取TIF文件
-    const response = await fetch(`http://localhost:8080/image/file/${filename}`)
+    // 获取TIF文件（通过Vite代理访问后端API）
+    const response = await fetch(`/api/image/file/${filename}`)
     if (!response.ok) {
       throw new Error('无法加载影像文件')
     }
@@ -3146,43 +3167,163 @@ const renderTiffImage = async (filename) => {
     canvas.width = width
     canvas.height = height
     const ctx = canvas.getContext('2d')
-    const imageData = ctx.createImageData(width, height)
-    
-    // 获取数据范围用于归一化
-    const data = rasters[0]
-    let min = Infinity
-    let max = -Infinity
-    
-    for (let i = 0; i < data.length; i++) {
-      if (data[i] < min) min = data[i]
-      if (data[i] > max) max = data[i]
-    }
-    
-    // 归一化并应用颜色映射
-    const range = max - min
-    for (let i = 0; i < data.length; i++) {
-      const normalized = range > 0 ? (data[i] - min) / range : 0
-      const value = Math.floor(normalized * 255)
+      const imageData = ctx.createImageData(width, height)
       
-      const idx = i * 4
-      // 应用颜色映射 - 使用地形颜色
       if (rasters.length >= 3) {
-        // RGB影像
-        imageData.data[idx] = Math.floor((rasters[0][i] - min) / range * 255)
-        imageData.data[idx + 1] = Math.floor((rasters[1][i] - min) / range * 255)
-        imageData.data[idx + 2] = Math.floor((rasters[2][i] - min) / range * 255)
+        // ✅ RGB影像渲染
+        console.log('🎨 渲染RGB影像:', filename)
+
+        // 读取PhotometricInterpretation以检测YCbCr（JPEG压缩常见）
+        const fileDirectory = image.fileDirectory || (image.getFileDirectory ? image.getFileDirectory() : {})
+        const photometric = fileDirectory ? fileDirectory.PhotometricInterpretation : undefined
+        const isYCbCr = photometric === 6 // 6 -> YCbCr
+
+        // 辅助：钳位到[0,255]
+        const clampToByte = (n) => Math.max(0, Math.min(255, Math.round(n)))
+
+        // 优化后的Byte文件（通常为0-255范围，不需要拉伸）
+        const isByteArray = rasters[0] && rasters[0].BYTES_PER_ELEMENT === 1
+        const isOptimizedName = filename.toLowerCase().includes('optimized')
+
+        if (isYCbCr) {
+          console.log('  ✅ 检测到YCbCr编码（JPEG/COG），进行YCbCr→RGB转换')
+          const Y = rasters[0]
+          const Cb = rasters[1]
+          const Cr = rasters[2]
+
+          for (let i = 0; i < Y.length; i++) {
+            const idx = i * 4
+
+            // 0通常表示NoData/背景
+            const isNoData = Y[i] === 0 && Cb[i] === 0 && Cr[i] === 0
+            if (isNoData) {
+              imageData.data[idx] = 0
+              imageData.data[idx + 1] = 0
+              imageData.data[idx + 2] = 0
+              imageData.data[idx + 3] = 255
+              continue
+            }
+
+            // ITU-R BT.601 近似转换
+            const y = Y[i]
+            const cb = Cb[i] - 128
+            const cr = Cr[i] - 128
+            const r = y + 1.402 * cr
+            const g = y - 0.344136 * cb - 0.714136 * cr
+            const b = y + 1.772 * cb
+
+            imageData.data[idx] = clampToByte(r)
+            imageData.data[idx + 1] = clampToByte(g)
+            imageData.data[idx + 2] = clampToByte(b)
+            imageData.data[idx + 3] = 255
+          }
+          console.log('✅ RGB影像渲染完成（YCbCr转换）')
+        } else if (isByteArray && isOptimizedName) {
+          // 优化后的Byte RGB，直接映射，无需拉伸
+          console.log('  ✅ 检测到优化后的Byte RGB文件，直接显示（不拉伸）')
+          for (let i = 0; i < rasters[0].length; i++) {
+            const idx = i * 4
+            const isNoData = rasters[0][i] === 0 && rasters[1][i] === 0 && rasters[2][i] === 0
+            if (isNoData) {
+              imageData.data[idx] = 0
+              imageData.data[idx + 1] = 0
+              imageData.data[idx + 2] = 0
+              imageData.data[idx + 3] = 255
+            } else {
+              imageData.data[idx] = rasters[0][i]
+              imageData.data[idx + 1] = rasters[1][i]
+              imageData.data[idx + 2] = rasters[2][i]
+              imageData.data[idx + 3] = 255
+            }
+          }
+          console.log('✅ RGB影像渲染完成（直接映射）')
+        } else {
+          // 原始Float/Uint16文件：使用2%-98%百分位拉伸（逐波段）
+          console.log('  ✅ 原始文件，使用2%-98%百分位拉伸')
+
+          // 计算每个波段的统计信息
+          const bandStats = []
+          for (let band = 0; band < 3; band++) {
+            const data = rasters[band]
+            const validData = []
+            for (let i = 0; i < data.length; i++) {
+              if (data[i] > 0) validData.push(data[i]) // 排除0值
+            }
+
+            if (validData.length === 0) {
+              bandStats.push({ p2: 0, p98: 255 })
+              continue
+            }
+
+            // 采样百分位
+            const sampleSize = Math.min(10000, validData.length)
+            const sampleData = []
+            const step = Math.max(1, Math.floor(validData.length / sampleSize))
+            for (let i = 0; i < validData.length; i += step) {
+              if (sampleData.length < sampleSize) sampleData.push(validData[i])
+            }
+            sampleData.sort((a, b) => a - b)
+            const p2 = sampleData[Math.floor(sampleData.length * 0.02)] || 0
+            const p98 = sampleData[Math.floor(sampleData.length * 0.98)] || 255
+            bandStats.push({ p2, p98 })
+            console.log(`  波段${band + 1}: 2%=${p2.toFixed(2)}, 98%=${p98.toFixed(2)}`)
+          }
+
+          // 渲染（拉伸）
+          for (let i = 0; i < rasters[0].length; i++) {
+            const idx = i * 4
+            const isNoData = rasters[0][i] === 0 && rasters[1][i] === 0 && rasters[2][i] === 0
+            if (isNoData) {
+              imageData.data[idx] = 0
+              imageData.data[idx + 1] = 0
+              imageData.data[idx + 2] = 0
+              imageData.data[idx + 3] = 255
+            } else {
+              for (let band = 0; band < 3; band++) {
+                const value = rasters[band][i]
+                const { p2, p98 } = bandStats[band]
+                const range = p98 - p2
+                const stretched = range > 0 ? ((value - p2) / range) * 255 : 128
+                imageData.data[idx + band] = clampToByte(stretched)
+              }
+              imageData.data[idx + 3] = 255
+            }
+          }
+          console.log('✅ RGB影像渲染完成（拉伸）')
+        }
       } else {
-        // 单波段 - 使用地形色
-        const colors = getTerrainColor(normalized)
-        imageData.data[idx] = colors.r
-        imageData.data[idx + 1] = colors.g
-        imageData.data[idx + 2] = colors.b
+        // 单波段 - 使用地形色映射
+        console.log('🗺️ 渲染单波段影像:', filename)
+        
+        const data = rasters[0]
+        let min = Infinity
+        let max = -Infinity
+        
+        for (let i = 0; i < data.length; i++) {
+          if (data[i] > 0 && data[i] < min) min = data[i]
+          if (data[i] > max) max = data[i]
+        }
+        
+        console.log(`  数据范围: min=${min}, max=${max}`)
+        
+        const range = max - min
+        for (let i = 0; i < data.length; i++) {
+          const normalized = range > 0 ? (data[i] - min) / range : 0
+          const idx = i * 4
+          
+          // 应用地形颜色映射
+          const colors = getTerrainColor(normalized)
+          imageData.data[idx] = colors.r
+          imageData.data[idx + 1] = colors.g
+          imageData.data[idx + 2] = colors.b
+          imageData.data[idx + 3] = 255
+        }
+        
+        console.log('✅ 单波段影像渲染完成')
       }
-      imageData.data[idx + 3] = 255 // Alpha
-    }
-    
-    ctx.putImageData(imageData, 0, 0)
-    previewImageUrl.value = canvas.toDataURL()
+      
+      ctx.putImageData(imageData, 0, 0)
+      previewImageUrl.value = canvas.toDataURL()
     
   } catch (error) {
     console.error('渲染TIF影像失败：', error)
@@ -3238,6 +3379,9 @@ const handleDelete = (row) => {
       
       // ✅ 直接从前端列表中移除（不触发全量同步）
       allData.value = allData.value.filter(img => img.id !== row.id)
+      
+      // 🚀 清除缓存
+      thumbnailCache.delete(row.id)
     } catch (error) {
       console.error('删除失败：', error)
       ElMessage.error('删除失败')
@@ -3266,6 +3410,9 @@ const handleBatchDelete = () => {
       // ✅ 直接从前端列表中移除（不触发全量同步）
       allData.value = allData.value.filter(img => !ids.includes(img.id))
       selectedRows.value = []
+      
+      // 🚀 清除缓存
+      ids.forEach(id => thumbnailCache.delete(id))
     } catch (error) {
       console.error('批量删除失败：', error)
       ElMessage.error('批量删除失败')

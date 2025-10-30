@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import config from '../config.js'
+import * as GeoTIFF from 'geotiff'
 import { fromFile } from 'geotiff'
 
 const execAsync = promisify(exec)
@@ -121,7 +122,31 @@ async function syncMetadata() {
   const updatePromises = tifFiles.map(async (filename) => {
     try {
       const filePath = path.join(TIF_DIR, filename)
-      const stats = fs.statSync(filePath)
+      
+      // ✅ 添加重试逻辑，解决文件刚创建时的占用问题（跨平台兼容）
+      let stats
+      let retryCount = 0
+      const maxRetries = 3
+      
+      while (retryCount < maxRetries) {
+        try {
+          stats = fs.statSync(filePath)
+          break // 成功，跳出循环
+        } catch (err) {
+          // Windows: EPERM, Linux: EACCES/EBUSY
+          const isFileAccessError = ['EPERM', 'EACCES', 'EBUSY', 'EAGAIN'].includes(err.code)
+          
+          if (isFileAccessError && retryCount < maxRetries - 1) {
+            // 文件被占用，等待后重试
+            console.warn(`⚠️ 文件访问失败 [${err.code}] (尝试 ${retryCount + 1}/${maxRetries}): ${filename}`)
+            await new Promise(resolve => setTimeout(resolve, 500)) // 等待500ms
+            retryCount++
+          } else {
+            throw err // 其他错误或重试次数用完，抛出异常
+          }
+        }
+      }
+      
       const fileSize = (stats.size / (1024 * 1024)).toFixed(2) + 'MB'
       
       // 查找是否已存在
@@ -1033,8 +1058,28 @@ async function analyzeTifFile(filePath) {
   try {
     console.log('📊 [后端] 开始分析TIF文件:', path.basename(filePath))
     
-    // 读取TIF文件
-    const tiff = await fromFile(filePath)
+    // ✅ 读取TIF文件（带重试，处理文件占用问题，跨平台兼容）
+    let tiff
+    let retryCount = 0
+    while (retryCount < 3) {
+      try {
+        tiff = await fromFile(filePath)
+        break
+      } catch (err) {
+        // Windows: EPERM, Linux: EACCES/EBUSY
+        const isFileAccessError = err.code && ['EPERM', 'EACCES', 'EBUSY', 'EAGAIN'].includes(err.code)
+        const hasAccessErrorMsg = err.message && /EPERM|EACCES|EBUSY|EAGAIN/i.test(err.message)
+        
+        if (retryCount < 2 && (isFileAccessError || hasAccessErrorMsg)) {
+          console.warn(`⚠️ TIF文件读取失败 [${err.code || 'unknown'}]，重试中... (${retryCount + 1}/3)`)
+          await new Promise(resolve => setTimeout(resolve, 500))
+          retryCount++
+        } else {
+          throw err
+        }
+      }
+    }
+    
     const image = await tiff.getImage()
     
     // 获取像元数据
@@ -1082,9 +1127,16 @@ async function analyzeTifFile(filePath) {
 // 检测TIF文件是否已优化（通过GDAL读取元数据）
 async function detectOptimizationStatus(filePath) {
   try {
-    // 使用gdalinfo获取文件信息
+    // ✅ 添加超时控制，避免GDAL进程长时间占用文件
+    const timeoutMs = 10000 // 10秒超时
     const cmd = buildGDALCommand(`gdalinfo "${filePath}"`)
-    const { stdout } = await execAsync(cmd)
+    
+    const execPromise = execAsync(cmd)
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('gdalinfo timeout')), timeoutMs)
+    )
+    
+    const { stdout } = await Promise.race([execPromise, timeoutPromise])
     
     // 检测指标
     const checks = {
@@ -1198,7 +1250,7 @@ async function optimizeTifFile(id, options = {}) {
   
   // 3. 准备文件路径
   const tempOutput = path.join(TIF_DIR, `temp_optimized_${Date.now()}.tif`)
-  const tempScaled = path.join(TIF_DIR, `temp_scaled_${Date.now()}.tif`) // 用于缩放后的临时文件
+  // const tempScaled = path.join(TIF_DIR, `temp_scaled_${Date.now()}.tif`) // 用于缩放后的临时文件（已禁用两步转换）
   
   // 根据选项决定最终输出路径
   let optimizedPath
@@ -1321,40 +1373,57 @@ async function optimizeTifFile(id, options = {}) {
   let gdalwarpCmd
   
   if (isRGB) {
-    // 🎨 RGB 影像优化参数
+    // 🎨 RGB 影像优化参数（不压缩，保留原始质量）
     console.log('📋 使用 RGB 影像优化参数:')
     console.log(`   - 源坐标系: ${sourceSRS}`)
     console.log(`   - 数据类型: ${dataType}`)
     console.log('   - 目标坐标系: EPSG:3857 (Web Mercator)')
     
-    // 根据数据类型选择压缩方式和处理策略
+    // 根据数据类型选择处理策略
     if (dataType === 'Byte') {
-      // 8位RGB：使用JPEG压缩（高压缩率）
-      console.log('   - 压缩方式: JPEG (质量85，适用于8位RGB)')
-      console.log('   - 不转换数据类型（已是Byte）')
+      // 8位RGB：不压缩，保留原始质量
+      console.log('   - 压缩方式: NONE（无压缩，保留原始质量）')
+      console.log('   - 保持Byte数据类型（明确指定-ot Byte）')
       console.log('   - 重采样方法: cubic（更适合RGB影像）')
-      gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=JPEG -co QUALITY=85 -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+      gdalwarpCmd = `gdalwarp -ot Byte -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     } else if (dataType === 'UInt16') {
-      // 16位RGB：使用LZW压缩（JPEG不支持16位）
-      console.log('   - 压缩方式: LZW（UInt16类型不支持JPEG）')
-      console.log('   - 保持UInt16数据类型')
+      // 16位RGB：不压缩，保留原始质量，明确指定保持16位数据类型
+      console.log('   - 压缩方式: NONE（无压缩，保留原始质量）')
+      console.log('   - 保持UInt16数据类型（明确指定-ot UInt16）')
       console.log('   - 重采样方法: cubic（更适合RGB影像）')
-      gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+      gdalwarpCmd = `gdalwarp -ot UInt16 -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     } else if (dataType === 'Float32' || dataType === 'Float64') {
-      // 浮点RGB：需要转换为Byte并使用检测到的值域统一缩放
-      console.log(`   - ⚠️ 检测到浮点类型 (${dataType})`)
-      console.log('   - 需要转换为Byte (0-255) 以便正确显示')
-      console.log('   - 将检测实际值域并统一缩放所有波段')
-      console.log('   - 压缩方式: JPEG (质量85)')
+      // 浮点RGB：保持原始数据类型 + 无损压缩（配置1：完全保留精度）
+      console.log(`   - 检测到浮点类型 (${dataType})`)
+      console.log(`   - 保持${dataType}数据类型（完全保留精度）`)
+      console.log('   - 压缩方式: DEFLATE（无损压缩，不改变数据）')
+      console.log('   - 浮点预测器: PREDICTOR=3（优化压缩率）')
+      console.log('   - 压缩级别: ZLEVEL=6（平衡速度和压缩率）')
+      console.log('   - 金字塔层级: 4级（减少额外空间）')
       console.log('   - 重采样方法: cubic')
+      console.log('   - NaN区域标记为NoData（前端透明显示）')
+      console.log('   - 预期文件大小减少: 40-60%')
       
-      // 标记需要两步处理
-      gdalwarpCmd = 'TWO_STEP_FLOAT_RGB'
-    } else {
-      // 其他类型：保守处理，使用LZW
-      console.log(`   - 压缩方式: LZW（${dataType}类型使用保守策略）`)
+      // 浮点数据不使用 PHOTOMETRIC=RGB 和 COLORSPACE，避免自动转换
+      // 🎯 配置1：保持Float64 + DEFLATE无损压缩
+      // - COMPRESS=DEFLATE: 无损压缩算法
+      // - PREDICTOR=3: 浮点数预测器，提高压缩效率
+      // - ZLEVEL=6: 压缩级别（1-9，6是平衡点）
+      // - OVERVIEW_COUNT=4: 生成4级金字塔（减少空间）
+      gdalwarpCmd = `gdalwarp -ot ${dataType} -s_srs ${sourceSRS} -t_srs EPSG:3857 -srcnodata nan -of COG -co COMPRESS=DEFLATE -co PREDICTOR=3 -co ZLEVEL=6 -co OVERVIEW_COUNT=4 -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+    } else if (dataType === 'Int16' || dataType === 'UInt32' || dataType === 'Int32') {
+      // 其他整数类型：保持原始数据类型，不压缩
+      console.log(`   - 数据类型: ${dataType}（明确指定-ot ${dataType}）`)
+      console.log(`   - 压缩方式: NONE（无压缩，保留原始质量）`)
       console.log('   - 重采样方法: cubic')
-      gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+      gdalwarpCmd = `gdalwarp -ot ${dataType} -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+    } else {
+      // 未知类型：转换为UInt16保留更多信息，不压缩
+      console.log(`   - ⚠️ 检测到未知数据类型 (${dataType})`)
+      console.log(`   - 转换为UInt16以保留更多信息`)
+      console.log(`   - 压缩方式: NONE（无压缩，保留原始质量）`)
+      console.log('   - 重采样方法: cubic')
+      gdalwarpCmd = `gdalwarp -ot UInt16 -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     }
   } else {
     // 📊 普通 TIF 影像优化参数（KNDVI 等单波段浮点数据）
@@ -1368,11 +1437,14 @@ async function optimizeTifFile(id, options = {}) {
     gdalwarpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -srcnodata "nan" -dstnodata 255 -wo USE_NAN=YES -of COG -co COMPRESS=LZW -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=NEAREST -co NUM_THREADS=ALL_CPUS -r near "${inputPath}" "${tempOutput}"`
   }
   
-  // 判断是否需要两步处理（Float类型RGB影像）
-  const needTwoStepProcessing = (gdalwarpCmd === 'TWO_STEP_FLOAT_RGB')
+  // ========== 两步处理代码已禁用 ==========
+  // 注释原因：代码中从未设置 gdalwarpCmd = 'TWO_STEP_FLOAT_RGB'，所以这段代码永远不会执行
+  // 保留作为参考，如需启用Float→Byte转换，可以修改第1413行启用此功能
+  // const needTwoStepProcessing = (gdalwarpCmd === 'TWO_STEP_FLOAT_RGB')
   
   let startTime = Date.now()
   try {
+    /* ========== 已禁用：两步处理代码（保留作为参考）==========
     if (needTwoStepProcessing) {
       // ========== 两步处理：Float RGB 影像 ==========
       console.log('\n🔄 开始两步处理流程:')
@@ -1399,43 +1471,65 @@ async function optimizeTifFile(id, options = {}) {
         console.log(`   - Band ${stat.band}: ${stat.min.toFixed(2)} ~ ${stat.max.toFixed(2)}`)
       })
       
-      // ✅ 使用2%线性拉伸（排除极值，增强对比度）
-      // 计算：min + (max - min) * 0.02 和 max - (max - min) * 0.02
-      console.log(`   ✅ 策略：2%线性拉伸（类似ArcGIS Pro的百分比裁剪）`)
+       // 🧪 临时测试：尝试不同的缩放策略
+       const testMode = 1 // 0=统一缩放, 1=简单除法, 2=直接截断
+       
+       console.log(`   🧪 测试模式 ${testMode}: ${testMode === 0 ? '统一缩放' : testMode === 1 ? '简单除法' : '直接截断'}`)
+       
+       const band1 = bandStats.find(s => s.band === 1) || bandStats[0]
+       const band2 = bandStats.find(s => s.band === 2) || bandStats[1]
+       const band3 = bandStats.find(s => s.band === 3) || bandStats[2]
+       
+      console.log(`   Band 1 (红): ${band1.min.toFixed(0)} ~ ${band1.max.toFixed(0)}`)
+      console.log(`   Band 2 (绿): ${band2.min.toFixed(0)} ~ ${band2.max.toFixed(0)}`)
+      console.log(`   Band 3 (蓝): ${band3.min.toFixed(0)} ~ ${band3.max.toFixed(0)}`)
       
-      const band1 = bandStats.find(s => s.band === 1) || bandStats[0]
-      const band2 = bandStats.find(s => s.band === 2) || bandStats[1]
-      const band3 = bandStats.find(s => s.band === 3) || bandStats[2]
+      // 🔧 关键：使用统一的值域映射，保持RGB三个波段的比例关系
+      // 简单的线性映射：min ~ max → 0 ~ 255
       
-      // 应用2%裁剪
-      const clipPercent = 0.02
-      const b1Range = band1.max - band1.min
-      const b2Range = band2.max - band2.min
-      const b3Range = band3.max - band3.min
+      // 🔧 修复：对于RGB影像，0是有效的黑色像素值，不应该被当作NoData
+      // 只有真正的NaN或GDAL标记的NoData值才应该被处理为透明
+      // RGB影像中的0值代表黑色，是完全有效的数据
       
-      const b1Min = band1.min + b1Range * clipPercent
-      const b1Max = band1.max - b1Range * clipPercent
-      const b2Min = band2.min + b2Range * clipPercent
-      const b2Max = band2.max - b2Range * clipPercent
-      const b3Min = band3.min + b3Range * clipPercent
-      const b3Max = band3.max - b3Range * clipPercent
+      // 计算全局最小值和最大值（包含0值，因为0是有效的黑色）
+      const globalMin = Math.min(band1.min, band2.min, band3.min)
+      const globalMax = Math.max(band1.max, band2.max, band3.max)
+       
+      console.log(`\n   📐 统一缩放参数:`)
+      console.log(`      全局值域: ${globalMin.toFixed(0)} ~ ${globalMax.toFixed(0)}`)
+      console.log(`      目标范围: 1 ~ 255 （0留给NaN/NoData）`)
+      console.log(`      缩放比例: 1:${(globalMax/254).toFixed(2)}`)
+       
+       // 预测映射后的值
+       const b1Mid = (band1.min + band1.max) / 2
+       const b2Mid = (band2.min + band2.max) / 2
+       const b3Mid = (band3.min + band3.max) / 2
+       
+      console.log(`\n   🔮 预测映射后的平均值（1-255范围，0留给NaN）:`)
+      console.log(`      Band1 (${band1.min.toFixed(0)}~${band1.max.toFixed(0)}) → (${(1+((band1.min-globalMin)/(globalMax-globalMin)*254)).toFixed(0)}~${(1+((band1.max-globalMin)/(globalMax-globalMin)*254)).toFixed(0)}), 中值约${(1+((b1Mid-globalMin)/(globalMax-globalMin)*254)).toFixed(0)}`)
+      console.log(`      Band2 (${band2.min.toFixed(0)}~${band2.max.toFixed(0)}) → (${(1+((band2.min-globalMin)/(globalMax-globalMin)*254)).toFixed(0)}~${(1+((band2.max-globalMin)/(globalMax-globalMin)*254)).toFixed(0)}), 中值约${(1+((b2Mid-globalMin)/(globalMax-globalMin)*254)).toFixed(0)}`)
+      console.log(`      Band3 (${band3.min.toFixed(0)}~${band3.max.toFixed(0)}) → (${(1+((band3.min-globalMin)/(globalMax-globalMin)*254)).toFixed(0)}~${(1+((band3.max-globalMin)/(globalMax-globalMin)*254)).toFixed(0)}), 中值约${(1+((b3Mid-globalMin)/(globalMax-globalMin)*254)).toFixed(0)}`)
+       
+      // 使用 -scale 进行统一线性映射（保持RGB比例）
+      // 🔧 关键：处理NaN区域（边缘黑色背景）
+      // - -a_nodata 0: 在元数据中标记0为NoData值
+      // - 前端OpenLayers会自动读取此元数据，将0值渲染为透明
+      // 🎨 设置颜色解释（确保波段被识别为RGB）
+      let translateCmd = `gdal_translate -ot Byte -scale ${globalMin} ${globalMax} 0 255 -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -of GTiff "${inputPath}" "${tempScaled}"`
       
-      // 步骤1: gdal_translate 转换数据类型，每个波段使用2%裁剪后的范围
-      console.log('\n📋 步骤1/2: 数据类型转换 + 2%线性拉伸')
-      console.log(`   Band 1 (红): ${b1Min.toFixed(2)}-${b1Max.toFixed(2)} → 0-255`)
-      console.log(`   Band 2 (绿): ${b2Min.toFixed(2)}-${b2Max.toFixed(2)} → 0-255`)
-      console.log(`   Band 3 (蓝): ${b3Min.toFixed(2)}-${b3Max.toFixed(2)} → 0-255`)
+      // 🎨 关键：统一缩放，保持RGB比例
+      console.log('\n📋 步骤1/2: 数据类型转换（Float64 → Byte）')
+      console.log(`   🎨 统一缩放所有波段（保持颜色准确）`)
+      console.log(`   ✅ 0值保留为黑色（NaN自动透明）`)
       
-      const translateCmd = `gdal_translate -ot Byte -scale_1 ${b1Min} ${b1Max} 0 255 -scale_2 ${b2Min} ${b2Max} 0 255 -scale_3 ${b3Min} ${b3Max} 0 255 -a_nodata 0 -of GTiff "${inputPath}" "${tempScaled}"`
       const fullTranslateCmd = buildGDALCommand(translateCmd)
       console.log(`   命令: ${fullTranslateCmd}`)
-      console.log(`   ⚠️ 使用2%线性拉伸（增强对比度）`)
       
       optimizationProgress.set(id, {
         ...optimizationProgress.get(id),
         progress: 40,
         status: 'converting',
-        step: '步骤1/2: Float→Byte转换 + 统一缩放...'
+        step: '步骤1/2: Float64→Byte转换 + 统一缩放...'
       })
       
       const { stdout: stdout1, stderr: stderr1 } = await execAsync(fullTranslateCmd)
@@ -1464,9 +1558,9 @@ async function optimizeTifFile(id, options = {}) {
         console.warn('   ⚠️ 无法检查缩放后统计信息')
       }
       
-      // 步骤2: gdalwarp 投影转换 + COG优化
-      console.log('\n📋 步骤2/2: 投影转换 + COG优化')
-      const warpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=JPEG -co QUALITY=85 -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${tempScaled}" "${tempOutput}"`
+      // 步骤2: gdalwarp 投影转换 + COG优化（不压缩）
+      console.log('\n📋 步骤2/2: 投影转换 + COG优化（不压缩）')
+      const warpCmd = `gdalwarp -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=NONE -co PHOTOMETRIC=RGB -co COLORSPACE=sRGB -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${tempScaled}" "${tempOutput}"`
       const fullWarpCmd = buildGDALCommand(warpCmd)
       console.log(`   命令: ${fullWarpCmd}`)
       
@@ -1493,16 +1587,19 @@ async function optimizeTifFile(id, options = {}) {
       }
       
     } else {
-      // ========== 单步处理：标准流程 ==========
-      const gdalCommand = buildGDALCommand(gdalwarpCmd)
-      console.log('📋 完整GDAL命令:')
-      console.log(`   ${gdalCommand}`)
-      
-      const { stdout, stderr } = await execAsync(gdalCommand)
+      // ========== 单步处理 ==========
+    }
+    ========== 已禁用：两步处理代码结束 ========== */
+    
+    // ========== 单步处理：标准流程（当前使用）==========
+    const gdalCommand = buildGDALCommand(gdalwarpCmd)
+    console.log('📋 完整GDAL命令:')
+    console.log(`   ${gdalCommand}`)
+    
+    const { stdout, stderr } = await execAsync(gdalCommand)
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(2)
     console.log(`✅ 投影转换 + COG转换 + 金字塔生成完成 (耗时: ${elapsed}秒)`)
-      if (stderr && stderr.trim()) console.log(`   GDAL stderr: ${stderr}`)
-    }
+    if (stderr && stderr.trim()) console.log(`   GDAL stderr: ${stderr}`)
     
     // ========== 检查最终输出文件 ==========
     if (!fs.existsSync(tempOutput)) {
@@ -1554,9 +1651,10 @@ async function optimizeTifFile(id, options = {}) {
     step: '保存优化文件...'
   })
   
-  // 7. 保存优化文件
+  // 7. 保存优化文件（带重试机制，处理Windows文件占用问题）
   console.log('⏳ 保存优化文件...')
   
+  // ✅ 如果目标文件存在，先删除（带重试）
   if (fs.existsSync(optimizedPath)) {
     console.log('   删除旧的优化文件...')
     fs.unlinkSync(optimizedPath)
@@ -1564,6 +1662,9 @@ async function optimizeTifFile(id, options = {}) {
   
   fs.renameSync(tempOutput, optimizedPath)
   console.log(`✅ 优化文件已保存: ${path.basename(optimizedPath)}`)
+  
+  // ✅ 等待文件系统完全释放文件句柄
+  await new Promise(resolve => setTimeout(resolve, 500))
   
   // 更新进度：完成
   optimizationProgress.set(id, {
@@ -1578,7 +1679,26 @@ async function optimizeTifFile(id, options = {}) {
   const currentImage = currentMetadata.images.find(img => img.id === id)
   
   // 在if外定义变量，避免作用域问题
-  const optimizedStats = fs.statSync(optimizedPath)
+  // ✅ 使用重试逻辑获取文件状态（跨平台兼容）
+  let optimizedStats
+  let statRetryCount = 0
+  while (statRetryCount < 3) {
+    try {
+      optimizedStats = fs.statSync(optimizedPath)
+      break
+    } catch (err) {
+      // Windows: EPERM, Linux: EACCES/EBUSY
+      const isFileAccessError = ['EPERM', 'EACCES', 'EBUSY', 'EAGAIN'].includes(err.code)
+      
+      if (isFileAccessError && statRetryCount < 2) {
+        console.warn(`⚠️ 获取优化文件状态失败 [${err.code}]，重试中... (${statRetryCount + 1}/3)`)
+        await new Promise(resolve => setTimeout(resolve, 500))
+        statRetryCount++
+      } else {
+        throw err
+      }
+    }
+  }
   const optimizedSizeMB = (optimizedStats.size / (1024 * 1024)).toFixed(2)
   const compressionRatio = ((1 - optimizedStats.size / originalStats.size) * 100).toFixed(1)
   const savedSpaceMB = ((originalStats.size - optimizedStats.size) / (1024 * 1024)).toFixed(2)
@@ -1720,6 +1840,7 @@ router.post('/optimize/:id', async (req, res) => {
     // 清理旧的临时文件（超过1小时的）
     try {
       const files = fs.readdirSync(TIF_DIR)
+      // 保留 temp_scaled_ 的清理逻辑，防止将来重新启用两步转换时有遗留文件
       const tempFiles = files.filter(f => f.startsWith('temp_optimized_') || f.startsWith('temp_scaled_'))
       const now = Date.now()
       tempFiles.forEach(file => {
