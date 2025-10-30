@@ -1395,22 +1395,20 @@ async function optimizeTifFile(id, options = {}) {
     } else if (dataType === 'Float32' || dataType === 'Float64') {
       // 浮点RGB：保持原始数据类型 + 无损压缩（配置1：完全保留精度）
       console.log(`   - 检测到浮点类型 (${dataType})`)
-      console.log(`   - 保持${dataType}数据类型（完全保留精度）`)
+      console.log(`   - 保持${dataType}数据类型（完全保留精度，用于后期分类）`)
       console.log('   - 压缩方式: DEFLATE（无损压缩，不改变数据）')
       console.log('   - 浮点预测器: PREDICTOR=3（优化压缩率）')
       console.log('   - 压缩级别: ZLEVEL=6（平衡速度和压缩率）')
       console.log('   - 金字塔层级: 4级（减少额外空间）')
       console.log('   - 重采样方法: cubic')
-      console.log('   - NaN区域标记为NoData（前端透明显示）')
+      console.log('   - ⚠️ 不设置NoData（RGB影像，保留所有数据）')
       console.log('   - 预期文件大小减少: 40-60%')
       
-      // 浮点数据不使用 PHOTOMETRIC=RGB 和 COLORSPACE，避免自动转换
-      // 🎯 配置1：保持Float64 + DEFLATE无损压缩
-      // - COMPRESS=DEFLATE: 无损压缩算法
-      // - PREDICTOR=3: 浮点数预测器，提高压缩效率
-      // - ZLEVEL=6: 压缩级别（1-9，6是平衡点）
-      // - OVERVIEW_COUNT=4: 生成4级金字塔（减少空间）
-      gdalwarpCmd = `gdalwarp -ot ${dataType} -s_srs ${sourceSRS} -t_srs EPSG:3857 -srcnodata nan -of COG -co COMPRESS=DEFLATE -co PREDICTOR=3 -co ZLEVEL=6 -co OVERVIEW_COUNT=4 -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
+      // 🔧 关键修复：Float64 RGB影像不使用 -srcnodata nan
+      // - RGB影像的所有像素值都是有效数据，不应该有NoData
+      // - 去掉 -srcnodata 避免GDAL处理出错
+      // - 浮点数据不使用 PHOTOMETRIC=RGB 和 COLORSPACE，避免自动转换
+      gdalwarpCmd = `gdalwarp -ot ${dataType} -s_srs ${sourceSRS} -t_srs EPSG:3857 -of COG -co COMPRESS=DEFLATE -co PREDICTOR=3 -co ZLEVEL=6 -co OVERVIEW_COUNT=4 -co BLOCKSIZE=512 -co OVERVIEW_RESAMPLING=CUBIC -co NUM_THREADS=ALL_CPUS -r cubic "${inputPath}" "${tempOutput}"`
     } else if (dataType === 'Int16' || dataType === 'UInt32' || dataType === 'Int32') {
       // 其他整数类型：保持原始数据类型，不压缩
       console.log(`   - 数据类型: ${dataType}（明确指定-ot ${dataType}）`)
