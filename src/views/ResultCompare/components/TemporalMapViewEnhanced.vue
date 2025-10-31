@@ -253,6 +253,52 @@
       </template>
     </el-dialog>
 
+    <!-- PDF保存信息对话框 -->
+    <el-dialog
+      v-model="showPdfSaveDialog"
+      title="保存PDF报告"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="pdfSaveForm" label-width="90px">
+        <el-form-item label="文件名称">
+          <el-input 
+            v-model="pdfSaveForm.filename" 
+            placeholder="留空使用默认文件名"
+            maxlength="100"
+            clearable
+          >
+            <template #append>.pdf</template>
+          </el-input>
+          <div style="color: #909399; font-size: 12px; margin-top: 5px;">
+            💡 支持中文文件名，留空将使用默认的英文文件名
+          </div>
+        </el-form-item>
+        <el-alert
+          title="提示"
+          type="info"
+          :closable="false"
+          style="margin-top: 10px;"
+        >
+          <div style="font-size: 12px;">
+            • 任务名将自动设置为"时序分析报告"<br>
+            • PDF将保存到数据管理界面的分析结果列表中<br>
+            • 格式：PDF，分析类型：时序报表
+          </div>
+        </el-alert>
+      </el-form>
+      <template #footer>
+        <el-button @click="showPdfSaveDialog = false">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="confirmSavePdf"
+          :loading="savingPdf"
+        >
+          确认下载
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 时间轴视图 -->
     <div v-show="activeTab === 'timeline'" class="timeline-view">
       <!-- 使用新的地图组件 -->
@@ -322,6 +368,15 @@ const generatingProgress = ref({
   message: ''
 })
 const cancelGeneration = ref(false) // 用于取消PDF生成的标志
+
+// PDF保存对话框相关
+const showPdfSaveDialog = ref(false)
+const savingPdf = ref(false)
+const pdfSaveForm = ref({
+  filename: '',
+  taskName: ''
+})
+const pendingPdfBlob = ref(null) // 待保存的PDF Blob
 
 // 配色方案定义
 const COLOR_SCHEMES = {
@@ -645,30 +700,60 @@ const handleExportFromPreview = async () => {
 
 // 导出PDF报告
 const handleExportReport = async () => {
-  const loadingMsg = ElMessage({ message: '正在准备导出PDF...', type: 'info', duration: 0 })
+  // 💾 如果有缓存的PDF（从预览来的），直接弹出保存对话框
+  if (cachedPdfBlob.value) {
+    console.log('✅ 使用预览生成的PDF（无需重新生成）')
+    
+    // 直接弹出保存对话框
+    const now = new Date()
+    const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`
+    
+    // 使用英文默认文件名
+    pdfSaveForm.value = {
+      filename: `Temporal_Analysis_Report_${timestamp}`,
+      taskName: '时序分析报告' // 固定任务名
+    }
+    
+    pendingPdfBlob.value = cachedPdfBlob.value
+    showPdfSaveDialog.value = true
+    return
+  }
+  
+  // 📝 直接导出：先让用户填写信息
+  const now = new Date()
+  const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`
+  
+  // 使用英文默认文件名
+  pdfSaveForm.value = {
+    filename: `Temporal_Analysis_Report_${timestamp}`,
+    taskName: '时序分析报告' // 固定任务名
+  }
+  
+  // 标记为直接导出模式（需要先填写再生成）
+  pendingPdfBlob.value = null
+  showPdfSaveDialog.value = true
+}
+
+// 确认保存PDF
+const confirmSavePdf = async () => {
+  savingPdf.value = true
   
   try {
-    // 生成ASCII安全的时间戳文件名（避免乱码）
-    const now = new Date()
-    const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
+    // 如果用户没填文件名，使用默认的
+    let filename = pdfSaveForm.value.filename.trim()
+    if (!filename) {
+      const now = new Date()
+      const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`
+      filename = `Temporal_Analysis_Report_${timestamp}`
+    }
+    filename = filename + '.pdf'
     
-    const reportType = 'Full_Report'
-    const reportName = `Temporal_Analysis_${reportType}_${timestamp}.pdf`
+    let pdfBlob = pendingPdfBlob.value
     
-    let pdfBlob
-    
-    // 💾 优先使用缓存的PDF Blob（如果存在）
-    if (cachedPdfBlob.value) {
-      console.log('✅ 使用预览生成的PDF（无需重新生成）')
-      pdfBlob = cachedPdfBlob.value
-      loadingMsg.close()
-      ElMessage.success('使用预览生成的PDF，下载速度超快！')
-    } else {
-      console.log('📄 开始生成PDF报告:', reportName)
-      console.log('📝 使用的字体配置:', fontSizes.value)
-      console.log('🎨 使用的配色方案:', selectedColorScheme.value)
-      loadingMsg.close()
-      const newLoadingMsg = ElMessage({ message: '正在生成PDF报告...', type: 'info', duration: 0 })
+    // 如果没有PDF（直接导出模式），先生成PDF
+    if (!pdfBlob) {
+      console.log('📄 开始生成PDF报告（用户已填写信息）')
+      const loadingMsg = ElMessage({ message: '正在生成PDF报告...', type: 'info', duration: 0 })
       
       try {
         // 使用当前的字体和配色配置生成PDF
@@ -679,40 +764,42 @@ const handleExportReport = async () => {
           colors: customColors
         }
         pdfBlob = await generateTemporalPDF(props.data, 'all', config)
-        newLoadingMsg.close()
+        loadingMsg.close()
+        console.log('✅ PDF生成完成，大小:', (pdfBlob.size / 1024 / 1024).toFixed(2), 'MB')
       } catch (error) {
-        newLoadingMsg.close()
+        loadingMsg.close()
         throw error
       }
     }
     
-    console.log('✅ PDF生成完成，大小:', (pdfBlob.size / 1024 / 1024).toFixed(2), 'MB')
+    // 创建FormData用于上传PDF
+    const formData = new FormData()
+    formData.append('file', pdfBlob, filename)
+    formData.append('type', 'temporal_report') // 时序分析报告
+    formData.append('taskName', '时序分析报告') // 固定任务名
     
-    // 下载PDF
-    downloadPDFBlob(pdfBlob, reportName)
+    // 上传到后端
+    const response = await fetch('/api/analysis/upload-pdf-report', {
+      method: 'POST',
+      body: formData
+    })
     
-    // 同时保存到服务器
-    try {
-      const { uploadReportToServer } = await import('@/api/analysis')
+    const result = await response.json()
+    
+    if (result.code === 200) {
+      // 同时在浏览器中下载
+      downloadPDFBlob(pdfBlob, filename)
       
-      // 将Blob转换为File对象
-      const pdfFile = new File([pdfBlob], reportName, { type: 'application/pdf' })
-      
-      const saveResponse = await uploadReportToServer(pdfFile, 'temporal')
-      if (saveResponse.code === 200) {
-        console.log('✅ PDF报告已保存到服务器:', saveResponse.data)
-      }
-    } catch (saveError) {
-      console.error('保存到服务器失败:', saveError)
-      // 不影响下载，只记录错误
+      ElMessage.success('PDF已保存到分析结果列表并开始下载')
+      showPdfSaveDialog.value = false
+    } else {
+      ElMessage.error('保存失败: ' + (result.message || '未知错误'))
     }
-    
-    loadingMsg.close()
-    ElMessage.success('PDF报告导出成功！已保存到下载文件夹和数据管理中')
   } catch (error) {
-    console.error('报告导出失败:', error)
-    loadingMsg.close()
-    ElMessage.error('PDF报告导出失败: ' + error.message)
+    console.error('保存PDF失败:', error)
+    ElMessage.error('保存失败: ' + (error.message || '网络错误'))
+  } finally {
+    savingPdf.value = false
   }
 }
 

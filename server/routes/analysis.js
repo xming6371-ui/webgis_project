@@ -2747,7 +2747,15 @@ const pdfUpload = multer({
       cb(null, REPORTS_DIR)
     },
     filename: function (req, file, cb) {
-      cb(null, file.originalname)
+      // 正确处理中文文件名：multer 默认使用 latin1 编码，需要转换为 utf8
+      try {
+        const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8')
+        cb(null, originalName)
+      } catch (error) {
+        // 如果转换失败，使用原始文件名
+        console.warn('文件名编码转换失败，使用原始文件名:', file.originalname)
+        cb(null, file.originalname)
+      }
     }
   }),
   limits: {
@@ -2785,6 +2793,70 @@ router.post('/upload-report', pdfUpload.single('file'), (req, res) => {
         format: 'PDF',
         size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
         path: `/data/data_analysis_results/reports/${uploadedFile.originalname}`
+      }
+    })
+  } catch (error) {
+    console.error('PDF报告上传失败:', error)
+    res.status(500).json({
+      code: 500,
+      message: 'PDF报告上传失败',
+      error: error.message
+    })
+  }
+})
+
+// 上传PDF报告（带元数据，用于图表报表和时序报表）
+router.post('/upload-pdf-report', pdfUpload.single('file'), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        code: 400,
+        message: '没有上传文件'
+      })
+    }
+    
+    const uploadedFile = req.file
+    const stats = fs.statSync(uploadedFile.path)
+    const { type, taskName } = req.body
+    
+    // 正确处理中文文件名
+    let originalname = uploadedFile.originalname
+    try {
+      originalname = Buffer.from(uploadedFile.originalname, 'latin1').toString('utf8')
+    } catch (error) {
+      console.warn('文件名编码转换失败，使用原始文件名')
+    }
+    
+    console.log(`✅ PDF报告上传成功: ${originalname}`)
+    console.log(`   类型: ${type || 'chart_report'}`)
+    console.log(`   任务名: ${taskName || '未命名'}`)
+    console.log(`   大小: ${(stats.size / (1024 * 1024)).toFixed(2)} MB`)
+    
+    // 创建元数据JSON文件（与PDF同名，扩展名为.json）
+    const basename = path.basename(originalname, '.pdf')
+    const metadataPath = path.join(REPORTS_DIR, `${basename}.json`)
+    
+    const metadata = {
+      filename: originalname,
+      type: type || 'chart_report', // 图表报表或时序报表
+      taskName: taskName || '未命名报表',
+      createdAt: new Date().toISOString(),
+      size: stats.size
+    }
+    
+    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8')
+    console.log(`   📋 元数据已保存: ${basename}.json`)
+    
+    res.json({
+      code: 200,
+      message: 'PDF报告上传成功',
+      data: {
+        filename: originalname,
+        format: 'PDF',
+        type: metadata.type,
+        taskName: metadata.taskName,
+        size: `${(stats.size / (1024 * 1024)).toFixed(2)} MB`,
+        path: `/data/data_analysis_results/reports/${originalname}`
       }
     })
   } catch (error) {
@@ -2908,7 +2980,7 @@ router.get('/saved-analysis-results', (req, res) => {
     
     // 扫描reports目录
     if (fs.existsSync(REPORTS_DIR)) {
-      const reportFiles = fs.readdirSync(REPORTS_DIR)
+      const reportFiles = fs.readdirSync(REPORTS_DIR).filter(f => !f.endsWith('.json')) // 排除元数据JSON文件
       reportFiles.forEach((filename) => {
         const filePath = path.join(REPORTS_DIR, filename)
         const stats = fs.statSync(filePath)
@@ -2923,20 +2995,50 @@ router.get('/saved-analysis-results', (req, res) => {
           fileType = 'PDF'
         }
         
-        // 从文件名推断分析类型
-        let analysisType = 'unknown'
-        if (filename.includes('时序') || filename.includes('temporal')) {
-          analysisType = 'temporal'
-        } else if (filename.includes('差异') || filename.includes('difference')) {
-          analysisType = 'difference'
+        // 尝试读取元数据JSON文件
+        let taskName = filename
+        let analysisType = 'report'
+        let reportType = 'unknown'
+        
+        const basename = path.basename(filename, ext)
+        const metadataPath = path.join(REPORTS_DIR, `${basename}.json`)
+        
+        if (fs.existsSync(metadataPath)) {
+          try {
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'))
+            taskName = metadata.taskName || filename
+            reportType = metadata.type || 'unknown'
+            
+            // 根据元数据中的type字段确定报告类型
+            if (reportType === 'chart_report') {
+              analysisType = 'chart_report'
+            } else if (reportType === 'temporal_report') {
+              analysisType = 'temporal_report'
+            }
+            
+            console.log(`   📋 读取报告元数据: ${filename}, 任务名: ${taskName}, 类型: ${reportType}`)
+          } catch (err) {
+            console.warn(`   ⚠️ 读取报告元数据失败: ${metadataPath}`, err.message)
+          }
+        } else {
+          // 如果没有元数据文件，从文件名推断分析类型
+          if (filename.includes('时序') || filename.includes('temporal')) {
+            reportType = 'temporal'
+          } else if (filename.includes('差异') || filename.includes('difference')) {
+            reportType = 'difference'
+          } else if (filename.includes('农作物') || filename.includes('分析报告')) {
+            reportType = 'chart_report'
+            analysisType = 'chart_report'
+          }
         }
         
         results.push({
           id: `report_${filename}`,
           filename,
-          type: 'report',
+          type: analysisType, // 使用分析类型（如果是图表报表则为chart_report，否则为report）
           format: fileType,
-          analysisType,
+          reportType, // 报告的具体类型
+          taskName, // 任务名
           canLoadToMap: false,  // 报告文件不能加载到地图
           size: `${(stats.size / 1024).toFixed(2)} KB`,
           createTime: stats.mtime.toLocaleString('zh-CN'),

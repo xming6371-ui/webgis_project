@@ -122,21 +122,21 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="uploadTime" label="上传时间" width="160">
+        <el-table-column prop="uploadTime" label="上传时间" width="160" sortable>
           <template #default="scope">
             {{ formatDate(scope.row.uploadTime) }}
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="影像名称" min-width="200" />
-        <el-table-column prop="year" label="年份" width="80" />
-        <el-table-column prop="period" label="期次" width="80">
+        <el-table-column prop="name" label="影像名称" min-width="200" sortable />
+        <el-table-column prop="year" label="年份" width="80" sortable />
+        <el-table-column prop="period" label="期次" width="80" sortable>
           <template #default="scope">
             第{{ scope.row.period }}期
           </template>
         </el-table-column>
-        <el-table-column prop="sensor" label="传感器" width="100" />
-        <el-table-column prop="date" label="采集日期" width="110" />
-        <el-table-column prop="region" label="区域" width="80" />
+        <el-table-column prop="sensor" label="传感器" width="100" sortable />
+        <el-table-column prop="date" label="采集日期" width="110" sortable />
+        <el-table-column prop="region" label="区域" width="80" sortable />
         <el-table-column prop="size" label="文件大小" width="100" />
       <el-table-column label="优化状态" width="120" align="center">
         <template #default="scope">
@@ -381,9 +381,9 @@
                   {{ (recognitionCurrentPage - 1) * recognitionPageSize + scope.$index + 1 }}
                 </template>
               </el-table-column>
-              <el-table-column prop="createTime" label="创建时间" width="180" align="center" />
-              <el-table-column prop="name" label="文件名称" min-width="220" show-overflow-tooltip />
-              <el-table-column prop="type" label="格式" width="80" align="center">
+              <el-table-column prop="createTime" label="创建时间" width="180" align="center" sortable />
+              <el-table-column prop="name" label="文件名称" min-width="220" show-overflow-tooltip sortable />
+              <el-table-column prop="type" label="格式" width="80" align="center" sortable>
                 <template #default="scope">
                   <el-tag 
                     :type="scope.row.type === 'SHP' ? 'warning' : scope.row.type === 'KMZ' ? 'info' : 'success'" 
@@ -393,19 +393,19 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="year" label="年份" width="80" align="center">
+              <el-table-column prop="year" label="年份" width="80" align="center" sortable>
                 <template #default="scope">
                   <span v-if="scope.row.year">{{ scope.row.year }}</span>
                   <span v-else style="color: #909399;">-</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="period" label="期次" width="85" align="center">
+              <el-table-column prop="period" label="期次" width="85" align="center" sortable>
                 <template #default="scope">
                   <span v-if="scope.row.period">第{{ scope.row.period }}期</span>
                   <span v-else style="color: #909399;">-</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="regionName" label="区域" width="110" align="center">
+              <el-table-column prop="regionName" label="区域" width="110" align="center" sortable>
                 <template #default="scope">
                   <el-tag v-if="scope.row.regionName" type="primary" size="small">
                     {{ scope.row.regionName }}
@@ -413,18 +413,18 @@
                   <span v-else style="color: #909399;">-</span>
                 </template>
               </el-table-column>
-              <el-table-column label="来源任务" width="130" align="center">
+              <el-table-column prop="recognitionType" label="来源任务" width="130" align="center" sortable>
                 <template #default="scope">
                   {{ getRecognitionTypeLabel(scope.row.recognitionType) }}
                 </template>
               </el-table-column>
-              <el-table-column prop="taskName" label="任务名" min-width="150" align="center" show-overflow-tooltip>
+              <el-table-column prop="taskName" label="任务名" min-width="150" align="center" show-overflow-tooltip sortable>
                 <template #default="scope">
                   <span v-if="scope.row.taskName">{{ scope.row.taskName }}</span>
                   <span v-else style="color: #909399;">-</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="size" label="大小" width="100" align="center" />
+              <el-table-column prop="size" label="大小" width="100" align="center" sortable />
               <el-table-column label="操作" min-width="320" fixed="right" align="center">
                 <template #default="scope">
                   <div style="display: flex; gap: 5px; flex-wrap: wrap; justify-content: center;">
@@ -498,6 +498,21 @@
           <el-empty v-if="analysisResults.length === 0" description="暂无分析结果文件">
             <el-text type="info">从任务管理中执行分析后，结果会自动保存在这里</el-text>
           </el-empty>
+          
+          <el-alert
+            v-if="analysisResults.length > 0 && filteredAnalysisResults.length === 0"
+            title="未找到符合筛选条件的结果"
+            type="info"
+            :closable="false"
+            style="margin-bottom: 16px;"
+          >
+            <div style="font-size: 13px;">
+              💡 当前筛选条件未匹配到结果，您可以：<br>
+              1. 清空筛选条件查看所有结果<br>
+              2. 尝试其他筛选组合（如"时序报表"+"PDF"）<br>
+              3. 检查是否选择了正确的分析类型
+            </div>
+          </el-alert>
 
           <div v-else>
             <!-- 筛选条件 -->
@@ -526,6 +541,7 @@
                     <el-option label="时序分析" value="temporal" />
                     <el-option label="差异检测" value="difference" />
                     <el-option label="时序报表" value="report" />
+                    <el-option label="图表报表" value="chart_report" />
                   </el-select>
                 </el-form-item>
                 <el-form-item label="用途">
@@ -565,8 +581,8 @@
               @selection-change="handleResultSelectionChange"
             >
               <el-table-column type="selection" width="55" />
-              <el-table-column prop="filename" label="文件名称" min-width="240" show-overflow-tooltip />
-              <el-table-column prop="format" label="格式" width="100" align="center">
+              <el-table-column prop="filename" label="文件名称" min-width="240" show-overflow-tooltip sortable />
+              <el-table-column prop="format" label="格式" width="100" align="center" sortable>
                 <template #default="scope">
                   <el-tag 
                     :type="scope.row.canLoadToMap ? 'success' : 'info'" 
@@ -576,20 +592,20 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="type" label="分析类型" width="130" align="center">
+              <el-table-column prop="type" label="分析类型" width="130" align="center" sortable>
                 <template #default="scope">
                   <el-tag size="small" :type="getAnalysisTypeTagType(scope.row.type)">
                     {{ getAnalysisTypeText(scope.row.type) }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="taskName" label="任务名" min-width="200" align="center" show-overflow-tooltip>
+              <el-table-column prop="taskName" label="任务名" min-width="200" align="center" show-overflow-tooltip sortable>
                 <template #default="scope">
                   <span v-if="scope.row.taskName">{{ scope.row.taskName }}</span>
                   <span v-else style="color: #909399;">-</span>
                 </template>
               </el-table-column>
-              <el-table-column label="用途" width="110" align="center">
+              <el-table-column label="用途" width="110" align="center" sortable>
                 <template #default="scope">
                   <el-tag 
                     size="small" 
@@ -599,9 +615,9 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="size" label="文件大小" width="130" align="center" />
-              <el-table-column prop="createTime" label="创建时间" width="190" align="center" />
-              <el-table-column label="操作" min-width="300" fixed="right" align="center">
+              <el-table-column prop="size" label="文件大小" width="130" align="center" sortable />
+              <el-table-column prop="createTime" label="创建时间" width="190" align="center" sortable />
+              <el-table-column label="操作" min-width="380" fixed="right" align="center">
                 <template #default="scope">
                   <div style="display: flex; gap: 6px; justify-content: center; flex-wrap: nowrap;">
                     <el-button 
@@ -613,6 +629,16 @@
                     >
                       <Eye :size="14" style="margin-right: 4px" />
                       可视化
+                    </el-button>
+                    <el-button 
+                      v-if="scope.row.format === 'PDF'" 
+                      size="small" 
+                      type="warning" 
+                      @click="handleViewPDF(scope.row)"
+                      style="padding: 5px 10px;"
+                    >
+                      <Eye :size="14" style="margin-right: 4px" />
+                      查看
                     </el-button>
                     <el-button 
                       size="small" 
@@ -1880,6 +1906,24 @@ const loadAllResults = async () => {
       if (response.code === 200) {
         analysisResults.value = response.data || []
         console.log('✅ 从后端加载分析结果:', analysisResults.value.length, '个')
+        
+        // 统计各类型数量
+        const typeCount = {}
+        analysisResults.value.forEach(item => {
+          const type = item.type || 'unknown'
+          typeCount[type] = (typeCount[type] || 0) + 1
+        })
+        console.log('   类型统计:', typeCount)
+        
+        // 列出PDF报告
+        const pdfReports = analysisResults.value.filter(item => item.format === 'PDF')
+        if (pdfReports.length > 0) {
+          console.log(`   📄 PDF报告 (${pdfReports.length}个):`, pdfReports.map(r => ({
+            filename: r.filename,
+            type: r.type,
+            taskName: r.taskName
+          })))
+        }
       }
     } catch (error) {
       console.error('从后端加载分析结果失败:', error)
@@ -3907,7 +3951,9 @@ const getAnalysisTypeText = (type) => {
   const map = {
     'temporal': '时序分析',
     'difference': '差异检测',
-    'report': '时序报表'
+    'report': '时序报表',
+    'chart_report': '图表报表',
+    'temporal_report': '时序报表'
   }
   return map[type] || type
 }
@@ -3999,6 +4045,33 @@ const handleDownloadAnalysisResult = async (row) => {
   } catch (error) {
     console.error('下载失败:', error)
     ElMessage.error('下载失败: ' + (error.message || '网络错误'))
+  }
+}
+
+// 查看PDF文件
+const handleViewPDF = async (row) => {
+  try {
+    ElMessage.info('正在加载PDF文件...')
+    
+    // 下载PDF文件
+    const response = await downloadReport(row.filename)
+    
+    // 创建Blob URL
+    const blob = new Blob([response], { type: 'application/pdf' })
+    const url = URL.createObjectURL(blob)
+    
+    // 在新窗口中打开PDF
+    window.open(url, '_blank')
+    
+    // 延迟释放URL（给浏览器足够时间加载）
+    setTimeout(() => {
+      URL.revokeObjectURL(url)
+    }, 60000) // 60秒后释放
+    
+    ElMessage.success('PDF已在新窗口中打开')
+  } catch (error) {
+    console.error('查看PDF失败:', error)
+    ElMessage.error('查看PDF失败: ' + (error.message || '网络错误'))
   }
 }
 

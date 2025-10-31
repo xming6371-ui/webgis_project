@@ -602,6 +602,52 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- PDF保存信息对话框 -->
+    <el-dialog
+      v-model="showPdfSaveDialog"
+      title="保存PDF报告"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="pdfSaveForm" label-width="90px">
+        <el-form-item label="文件名称">
+          <el-input 
+            v-model="pdfSaveForm.filename" 
+            placeholder="留空使用默认文件名"
+            maxlength="100"
+            clearable
+          >
+            <template #append>.pdf</template>
+          </el-input>
+          <div style="color: #909399; font-size: 12px; margin-top: 5px;">
+            💡 支持中文文件名，留空将使用默认的英文文件名
+          </div>
+        </el-form-item>
+        <el-alert
+          title="提示"
+          type="info"
+          :closable="false"
+          style="margin-top: 10px;"
+        >
+          <div style="font-size: 12px;">
+            • 任务名将自动设置为"图表报表"<br>
+            • PDF将保存到数据管理界面的分析结果列表中<br>
+            • 格式：PDF，分析类型：图表报表
+          </div>
+        </el-alert>
+      </el-form>
+      <template #footer>
+        <el-button @click="showPdfSaveDialog = false">取消</el-button>
+        <el-button 
+          type="primary" 
+          @click="confirmSavePdf"
+          :loading="savingPdf"
+        >
+          确认下载
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -647,6 +693,14 @@ const showPdfPreview = ref(false)
 const pdfPreviewUrl = ref('')
 const pdfBlob = ref(null)
 const activeConfigTab = ref('font')
+
+// ==================== PDF保存相关 ====================
+const showPdfSaveDialog = ref(false)
+const savingPdf = ref(false)
+const pdfSaveForm = ref({
+  filename: '',
+  taskName: ''
+})
 
 // ==================== 字体配置 ====================
 const defaultFontConfig = {
@@ -2364,23 +2418,90 @@ const closePdfPreview = () => {
   // 不清理PDF数据，允许重新打开预览
 }
 
-// 下载当前PDF
+// 下载当前PDF - 弹出对话框让用户输入文件名和任务名
 const downloadCurrentPdf = () => {
   if (!pdfBlob.value) {
     ElMessage.error('没有可下载的PDF')
     return
   }
   
-  const url = URL.createObjectURL(pdfBlob.value)
-  const link = document.createElement('a')
-  link.href = url
+  // 生成英文默认文件名
   const date = new Date()
   const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
   const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
-  link.download = `农作物分析报告_${dateStr}_${timeStr}.pdf`
-  link.click()
-  URL.revokeObjectURL(url)
-  ElMessage.success('开始下载PDF')
+  
+  pdfSaveForm.value = {
+    filename: `Chart_Report_${dateStr}_${timeStr}`,
+    taskName: '图表报表' // 固定任务名
+  }
+  
+  showPdfSaveDialog.value = true
+}
+
+// 确认保存PDF
+const confirmSavePdf = async () => {
+  savingPdf.value = true
+  
+  try {
+    // 如果用户没填文件名，使用默认的
+    let filename = pdfSaveForm.value.filename.trim()
+    if (!filename) {
+      const date = new Date()
+      const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+      const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
+      filename = `Chart_Report_${dateStr}_${timeStr}`
+    }
+    filename = filename + '.pdf'
+    
+    // 创建FormData用于上传PDF
+    const formData = new FormData()
+    formData.append('file', pdfBlob.value, filename)
+    formData.append('type', 'chart_report') // 图表报表类型
+    formData.append('taskName', '图表报表') // 固定任务名
+    
+    // 上传到后端
+    const response = await fetch('/api/analysis/upload-pdf-report', {
+      method: 'POST',
+      body: formData
+    })
+    
+    const result = await response.json()
+    
+    if (result.code === 200) {
+      console.log('✅ 图表报表PDF已成功保存:', {
+        filename,
+        taskName: '图表报表',
+        type: 'chart_report',
+        size: `${(pdfBlob.value.size / 1024 / 1024).toFixed(2)} MB`
+      })
+      
+      // 同时在浏览器中下载
+      const url = URL.createObjectURL(pdfBlob.value)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      link.click()
+      URL.revokeObjectURL(url)
+      
+      ElMessage.success({
+        message: `✅ PDF已保存到分析结果列表并开始下载\n文件名: ${filename}\n任务名: 图表报表`,
+        duration: 4000,
+        showClose: true
+      })
+      
+      console.log('💡 提示：前往数据管理界面 → 结果队列 → 分析结果，筛选"图表报表"即可查看')
+      
+      showPdfSaveDialog.value = false
+    } else {
+      console.error('❌ 保存失败:', result)
+      ElMessage.error('保存失败: ' + (result.message || '未知错误'))
+    }
+  } catch (error) {
+    console.error('保存PDF失败:', error)
+    ElMessage.error('保存失败: ' + (error.message || '网络错误'))
+  } finally {
+    savingPdf.value = false
+  }
 }
 
 // ==================== 生命周期 ====================
