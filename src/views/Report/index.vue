@@ -2,8 +2,22 @@
   <div class="report-container">
     <!-- 页面标题 -->
     <div class="page-header">
-      <h2>📊 智能分析报表</h2>
-      <p>选择作物识别结果，进行智能分析并生成专业报告</p>
+      <div class="header-content">
+        <div class="header-text">
+          <h2>📊 智能分析报表</h2>
+          <p>选择作物识别结果，进行智能分析并生成专业报告</p>
+        </div>
+        <div class="header-actions" v-if="currentStep > 0 || phase1Data.length > 0">
+          <el-button 
+            type="warning" 
+            :icon="RotateCcw" 
+            @click="handleClearData"
+            plain
+          >
+            清除并重新分析
+          </el-button>
+        </div>
+      </div>
     </div>
 
     <!-- 步骤指示器 -->
@@ -443,27 +457,28 @@
       </div>
     </el-card>
 
-    <!-- PDF预览对话框 - 带字体和配色配置 -->
+    <!-- PDF预览对话框 - 带完整配置面板 -->
     <el-dialog
       v-model="showPdfPreview"
       title="📄 PDF预览与导出"
       width="95%"
+      top="5vh"
       :close-on-click-modal="false"
       destroy-on-close
       class="pdf-preview-dialog"
     >
       <div class="preview-container">
         <!-- 左侧：配置面板 -->
-        <div class="font-config-sidebar">
+        <div class="config-sidebar">
           <div class="sidebar-header">
             <div class="title">🎨 样式配置</div>
             <div class="button-group">
-              <el-button size="small" @click="resetConfig" plain>
+              <el-button size="small" @click="resetConfig">
                 <RotateCcw :size="14" />
                 重置
               </el-button>
-              <el-button size="small" type="primary" @click="applyConfig">
-                应用
+              <el-button size="small" @click="applyConfig" type="primary">
+                应用配置
               </el-button>
             </div>
           </div>
@@ -474,110 +489,107 @@
               <div class="font-items">
                 <div class="font-item">
                   <label>封面标题</label>
-                  <el-input-number v-model="fontConfig.coverTitle" :min="20" :max="60" :step="2" size="small" />
+                  <el-input-number v-model="fontConfig.coverTitle" :min="20" :max="60" :step="2" size="small" controls-position="right" />
                 </div>
                 <div class="font-item">
                   <label>主标题</label>
-                  <el-input-number v-model="fontConfig.title" :min="16" :max="40" :step="2" size="small" />
+                  <el-input-number v-model="fontConfig.title" :min="16" :max="40" :step="2" size="small" controls-position="right" />
                 </div>
                 <div class="font-item">
                   <label>小标题</label>
-                  <el-input-number v-model="fontConfig.subtitle" :min="14" :max="32" :step="2" size="small" />
+                  <el-input-number v-model="fontConfig.subtitle" :min="14" :max="32" :step="2" size="small" controls-position="right" />
                 </div>
                 <div class="font-item">
                   <label>表格表头</label>
-                  <el-input-number v-model="fontConfig.tableHeader" :min="12" :max="28" :step="1" size="small" />
+                  <el-input-number v-model="fontConfig.tableHeader" :min="12" :max="28" :step="1" size="small" controls-position="right" />
                 </div>
                 <div class="font-item">
                   <label>表格内容</label>
-                  <el-input-number v-model="fontConfig.tableCell" :min="10" :max="24" :step="1" size="small" />
+                  <el-input-number v-model="fontConfig.tableCell" :min="10" :max="24" :step="1" size="small" controls-position="right" />
                 </div>
                 <div class="font-item">
                   <label>说明文字</label>
-                  <el-input-number v-model="fontConfig.description" :min="10" :max="20" :step="1" size="small" />
+                  <el-input-number v-model="fontConfig.description" :min="10" :max="20" :step="1" size="small" controls-position="right" />
                 </div>
                 <div class="font-item">
                   <label>卡片数值</label>
-                  <el-input-number v-model="fontConfig.cardValue" :min="20" :max="48" :step="2" size="small" />
+                  <el-input-number v-model="fontConfig.cardValue" :min="20" :max="48" :step="2" size="small" controls-position="right" />
                 </div>
               </div>
               
-              <el-alert type="info" :closable="false" style="margin-top: 15px; font-size: 12px;">
-                💡 调整字体后点击"应用"查看效果
+              <el-alert type="info" :closable="false" style="margin-top: 15px;">
+                <template #title>
+                  <div style="font-size: 12px; line-height: 1.6;">
+                    💡 调整字体后点击"应用配置"查看效果。
+                  </div>
+                </template>
               </el-alert>
             </el-tab-pane>
             
             <el-tab-pane label="🎨 配色方案" name="color">
               <div class="color-schemes">
                 <el-radio-group v-model="selectedColorScheme" class="scheme-list">
-                  <el-radio label="classic" class="scheme-radio">
+                  <el-radio 
+                    v-for="(scheme, key) in COLOR_SCHEMES" 
+                    :key="key" 
+                    :label="key" 
+                    class="scheme-radio"
+                  >
                     <div class="scheme-option">
-                      <div class="scheme-name">经典蓝紫（默认）</div>
+                      <span class="scheme-name">{{ scheme.name }}</span>
                       <div class="scheme-colors">
-                        <span class="color-dot" style="background: #4f46e5"></span>
-                        <span class="color-dot" style="background: #8b5cf6"></span>
-                        <span class="color-dot" style="background: #10b981"></span>
+                        <div 
+                          v-for="(color, index) in scheme.colors" 
+                          :key="index" 
+                          class="color-dot" 
+                          :style="{ background: color }"
+                        ></div>
                       </div>
                     </div>
                   </el-radio>
-                  
-                  <el-radio label="business" class="scheme-radio">
-                    <div class="scheme-option">
-                      <div class="scheme-name">商务深蓝</div>
-                      <div class="scheme-colors">
-                        <span class="color-dot" style="background: #1e40af"></span>
-                        <span class="color-dot" style="background: #3b82f6"></span>
-                        <span class="color-dot" style="background: #059669"></span>
-                      </div>
-                    </div>
-                  </el-radio>
-                  
-                  <el-radio label="fresh" class="scheme-radio">
-                    <div class="scheme-option">
-                      <div class="scheme-name">清新绿色</div>
-                      <div class="scheme-colors">
-                        <span class="color-dot" style="background: #059669"></span>
-                        <span class="color-dot" style="background: #10b981"></span>
-                        <span class="color-dot" style="background: #22c55e"></span>
-                      </div>
-                    </div>
-                  </el-radio>
-                  
-                  <el-radio label="sunset" class="scheme-radio">
-                    <div class="scheme-option">
-                      <div class="scheme-name">日落橙</div>
-                      <div class="scheme-colors">
-                        <span class="color-dot" style="background: #ea580c"></span>
-                        <span class="color-dot" style="background: #f97316"></span>
-                        <span class="color-dot" style="background: #fbbf24"></span>
-                      </div>
-                    </div>
-                  </el-radio>
-          </el-radio-group>
+                </el-radio-group>
               </div>
               
               <el-alert type="success" :closable="false" style="margin-top: 15px; font-size: 12px;">
-                ✨ 选择配色后点击"应用"查看效果
+                <template #title>
+                  <div style="line-height: 1.8;">
+                    🎨 选择配色方案后点击"应用配置"查看效果。
+                  </div>
+                </template>
+                <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #d0f0e4;">
+                  <div style="font-weight: 600; margin-bottom: 8px;">📊 五个色块含义说明：</div>
+                  <div style="line-height: 1.8; font-size: 12px;">
+                    <div style="color: #059669;">① <strong>主色</strong>：表格表头、标题左侧竖线、提示框边框等主要元素</div>
+                    <div style="color: #0891b2;">② <strong>次色</strong>：渐变色卡片、图表装饰等次要元素</div>
+                    <div style="color: #10b981;">③ <strong>成功色</strong>：增长趋势、正向数据、未变化地块等积极信息</div>
+                    <div style="color: #f59e0b;">④ <strong>警告色</strong>：变化地块、需要关注的数据</div>
+                    <div style="color: #ef4444;">⑤ <strong>危险色</strong>：减少趋势、负向数据、重要警告</div>
+                  </div>
+                </div>
               </el-alert>
             </el-tab-pane>
           </el-tabs>
         </div>
         
         <!-- 右侧：PDF预览 -->
-        <div class="pdf-preview-area">
-          <div v-if="pdfPreviewUrl" class="pdf-viewer">
+        <div class="preview-area">
+          <div v-if="pdfPreviewUrl && !generating" class="pdf-viewer">
             <iframe 
+              :key="pdfPreviewUrl"
               :src="pdfPreviewUrl" 
-              frameborder="0" 
-              style="width: 100%; height: 100%; border: none;"
+              frameborder="0"
             />
           </div>
           <div v-else-if="generating" class="preview-loading">
-            <el-progress :percentage="generatingProgress" :stroke-width="12" />
-            <p style="margin-top: 15px; color: #909399;">{{ generatingMessage }}</p>
+            <el-progress :percentage="generatingProgress" :stroke-width="12" striped striped-flow />
+            <p style="margin-top: 15px; color: #909399; font-size: 14px;">{{ generatingMessage }}</p>
           </div>
           <div v-else class="preview-placeholder">
-            <el-empty description="点击上方按钮生成PDF预览" />
+            <el-empty description="点击应用配置按钮生成PDF预览">
+              <template #image>
+                <div style="font-size: 48px;">📄</div>
+              </template>
+            </el-empty>
           </div>
         </div>
       </div>
@@ -595,7 +607,12 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+// 定义组件名称，用于keep-alive缓存
+defineOptions({
+  name: 'Report'
+})
 import { UploadFilled } from '@element-plus/icons-vue'
 import {
   Download, RotateCcw, PieChart, BarChart,
@@ -647,36 +664,67 @@ const fontConfig = ref({ ...defaultFontConfig })
 const selectedColorScheme = ref('classic')
 const COLOR_SCHEMES = {
   classic: {
-    name: '经典蓝紫',
+    name: '经典蓝紫（默认）',
     primary: '#4f46e5',
     secondary: '#8b5cf6',
     success: '#10b981',
     warning: '#f59e0b',
-    danger: '#ef4444'
+    danger: '#ef4444',
+    colors: ['#4f46e5', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444']
+  },
+  dream: {
+    name: '梦幻紫',
+    primary: '#9333ea',
+    secondary: '#a855f7',
+    success: '#10b981',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+    colors: ['#9333ea', '#a855f7', '#10b981', '#f59e0b', '#ef4444']
   },
   business: {
     name: '商务深蓝',
     primary: '#1e40af',
     secondary: '#3b82f6',
-    success: '#059669',
-    warning: '#d97706',
-    danger: '#dc2626'
+    success: '#10b981',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+    colors: ['#1e40af', '#3b82f6', '#10b981', '#f59e0b', '#ef4444']
+  },
+  ocean: {
+    name: '海洋蓝',
+    primary: '#0891b2',
+    secondary: '#06b6d4',
+    success: '#14b8a6',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+    colors: ['#0891b2', '#06b6d4', '#14b8a6', '#f59e0b', '#ef4444']
   },
   fresh: {
     name: '清新绿色',
     primary: '#059669',
     secondary: '#10b981',
-    success: '#22c55e',
-    warning: '#eab308',
-    danger: '#f43f5e'
+    success: '#14b8a6',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+    colors: ['#059669', '#10b981', '#14b8a6', '#f59e0b', '#ef4444']
   },
   sunset: {
     name: '日落橙',
     primary: '#ea580c',
     secondary: '#f97316',
     success: '#10b981',
-    warning: '#fbbf24',
-    danger: '#dc2626'
+    warning: '#f59e0b',
+    danger: '#ef4444',
+    colors: ['#ea580c', '#f97316', '#10b981', '#f59e0b', '#ef4444']
+  },
+  elegant: {
+    name: '典雅灰色',
+    primary: '#374151',
+    secondary: '#6b7280',
+    success: '#10b981',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+    colors: ['#374151', '#6b7280', '#10b981', '#f59e0b', '#ef4444']
   }
 }
 
@@ -1612,13 +1660,80 @@ const resetConfig = () => {
 
 // 应用配置
 const applyConfig = async () => {
-  await generateReportPdf()
+  console.log('🔄 应用新配置并重新生成PDF预览...')
+  console.log('📝 字体配置:', fontConfig.value)
+  console.log('🎨 配色方案:', selectedColorScheme.value)
+  
+  const loadingMsg = ElMessage({ 
+    message: '正在应用新配置，重新生成PDF...', 
+    type: 'info', 
+    duration: 0 
+  })
+  
+  try {
+    await generateReportPdf()
+    loadingMsg.close()
+    ElMessage.success('配置已应用，PDF预览已更新！')
+  } catch (error) {
+    console.error('应用配置失败:', error)
+    loadingMsg.close()
+    ElMessage.error('应用配置失败：' + error.message)
+  }
+}
+
+// 清除数据并重新分析
+const handleClearData = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '确定要清除所有分析数据并重新开始吗？此操作不可恢复。',
+      '⚠️ 确认清除',
+      {
+        confirmButtonText: '确定清除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+    
+    // 清除所有数据
+    currentStep.value = 0
+    selectedExistingFiles.value = []
+    phase1Data.value = []
+    phase2Data.value = []
+    analyzing.value = false
+    
+    // 清除PDF数据
+    if (pdfPreviewUrl.value) {
+      URL.revokeObjectURL(pdfPreviewUrl.value)
+    }
+    pdfPreviewUrl.value = ''
+    pdfBlob.value = null
+    showPdfPreview.value = false
+    
+    // 销毁所有图表
+    disposeCharts()
+    
+    ElMessage.success('✅ 已清除所有数据，请重新选择数据进行分析')
+    
+    console.log('🔄 数据已清除，回到初始状态')
+  } catch (error) {
+    // 用户取消操作
+    if (error !== 'cancel') {
+      console.error('清除数据失败:', error)
+    }
+  }
 }
 
 // 处理预览报告
 const handlePreviewReport = async () => {
+  console.log('🔍 打开PDF预览对话框...')
   showPdfPreview.value = true
-  await generateReportPdf()
+  
+  // 如果还没有生成过PDF，立即生成
+  if (!pdfPreviewUrl.value) {
+    console.log('首次打开，自动生成PDF预览...')
+    await generateReportPdf()
+  }
 }
 
 // 生成报告PDF
@@ -1815,7 +1930,7 @@ const addPhase1Content = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   }
 }
 
-// 添加第一阶段图表
+// 添加第一阶段图表（智能排版）
 const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   const charts = [
     { instance: plantingRateChart, title: '各区域种植率对比' },
@@ -1823,6 +1938,11 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
     { instance: overallPieChart, title: '总体种植情况分布' },
     { instance: fallowAreaChart, title: '各区域撂荒面积对比' }
   ]
+  
+  // 第一阶段图表从新页面开始
+  pdf.addPage()
+  let currentY = 40 // 当前Y位置
+  let isFirstChart = true
   
   for (const chart of charts) {
     try {
@@ -1833,10 +1953,9 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
         continue
       }
       
-      pdf.addPage()
       await new Promise(resolve => setTimeout(resolve, 100))
       
-      // 直接从ECharts实例获取图片（不依赖DOM可见性）
+      // 直接从ECharts实例获取图片
       const imgData = chart.instance.getDataURL({
         type: 'jpeg',
         pixelRatio: 2,
@@ -1847,48 +1966,58 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       const chartWidth = chart.instance.getWidth()
       const chartHeight = chart.instance.getHeight()
       
-      // 计算适配PDF的尺寸
-      const maxWidth = Math.max(pageWidth - 80, 100)
-      const imgWidth = maxWidth
+      // 计算PDF中的尺寸
+      const imgWidth = pageWidth - 80
       const imgHeight = (chartHeight * imgWidth) / chartWidth
       
-      // 创建标题容器
+      // 创建标题（用html2canvas渲染中文）
       const titleContainer = document.createElement('div')
-      const subtitleSize = Math.max(fonts.subtitle, 14)
       titleContainer.style.cssText = `
         position: fixed;
         left: -9999px;
         width: ${imgWidth}px;
-        padding: 20px;
+        padding: 15px 0;
         background: white;
         font-family: "Microsoft YaHei", Arial, sans-serif;
         text-align: center;
       `
       titleContainer.innerHTML = `
-        <h3 style="font-size: ${subtitleSize}px; color: ${colors.primary}; margin: 0; padding-bottom: 10px; border-bottom: 2px solid ${colors.primary};">
+        <h3 style="font-size: ${fonts.subtitle}px; color: ${colors.primary}; margin: 0; padding-bottom: 8px; border-bottom: 2px solid ${colors.primary};">
           ${chart.title}
         </h3>
       `
       document.body.appendChild(titleContainer)
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await new Promise(resolve => setTimeout(resolve, 50))
       
       const titleCanvas = await html2canvas(titleContainer, { scale: 2, backgroundColor: '#ffffff', logging: false })
       const titleImgData = titleCanvas.toDataURL('image/jpeg', 0.95)
-      const titleImgWidth = imgWidth
-      const titleImgHeight = (titleCanvas.height * titleImgWidth) / titleCanvas.width
+      const titleImgHeight = (titleCanvas.height * imgWidth) / titleCanvas.width
+      
+      const totalHeight = titleImgHeight + imgHeight + 20
+      
+      // 检查是否需要新页
+      if (currentY + totalHeight > pageHeight - 50) {
+        pdf.addPage()
+        currentY = 40
+      } else if (!isFirstChart) {
+        currentY += 20
+      }
       
       // 添加标题
-      pdf.addImage(titleImgData, 'JPEG', 40, 30, titleImgWidth, titleImgHeight)
+      pdf.addImage(titleImgData, 'JPEG', 40, currentY, imgWidth, titleImgHeight)
+      currentY += titleImgHeight + 10
       
       // 添加图表
-      pdf.addImage(imgData, 'JPEG', 40, 30 + titleImgHeight + 10, imgWidth, imgHeight)
+      pdf.addImage(imgData, 'JPEG', 40, currentY, imgWidth, imgHeight)
+      
+      currentY += imgHeight
+      isFirstChart = false
       
       // 清理
       document.body.removeChild(titleContainer)
-      console.log(`图表导出成功: ${chart.title}`)
+      console.log(`图表导出成功: ${chart.title}，当前Y: ${currentY}`)
     } catch (error) {
       console.error(`导出图表失败 (${chart.title}):`, error)
-      // 继续处理下一个图表，不中断整个流程
     }
   }
 }
@@ -1947,7 +2076,7 @@ const addPhase2Content = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   }
 }
 
-// 添加第二阶段图表
+// 添加第二阶段图表（智能排版）
 const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   const charts = [
     { instance: cropTypePieChart, title: '作物类型分布' },
@@ -1955,6 +2084,11 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
     { instance: cropAreaRankingChart, title: '作物面积排名' },
     { instance: regionCropCompareChart, title: '各区域作物分布对比' }
   ]
+  
+  // 获取当前PDF的页数，确定Y位置
+  const pageCount = pdf.internal.getNumberOfPages()
+  let currentY = 40
+  let isFirstChart = true
   
   for (const chart of charts) {
     try {
@@ -1965,10 +2099,9 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
         continue
       }
       
-      pdf.addPage()
       await new Promise(resolve => setTimeout(resolve, 100))
       
-      // 直接从ECharts实例获取图片（不依赖DOM可见性）
+      // 直接从ECharts实例获取图片
       const imgData = chart.instance.getDataURL({
         type: 'jpeg',
         pixelRatio: 2,
@@ -1979,48 +2112,58 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       const chartWidth = chart.instance.getWidth()
       const chartHeight = chart.instance.getHeight()
       
-      // 计算适配PDF的尺寸
-      const maxWidth = Math.max(pageWidth - 80, 100)
-      const imgWidth = maxWidth
+      // 计算PDF中的尺寸
+      const imgWidth = pageWidth - 80
       const imgHeight = (chartHeight * imgWidth) / chartWidth
       
-      // 创建标题容器
+      // 创建标题（用html2canvas渲染中文）
       const titleContainer = document.createElement('div')
-      const subtitleSize = Math.max(fonts.subtitle, 14)
       titleContainer.style.cssText = `
         position: fixed;
         left: -9999px;
         width: ${imgWidth}px;
-        padding: 20px;
+        padding: 15px 0;
         background: white;
         font-family: "Microsoft YaHei", Arial, sans-serif;
         text-align: center;
       `
       titleContainer.innerHTML = `
-        <h3 style="font-size: ${subtitleSize}px; color: ${colors.primary}; margin: 0; padding-bottom: 10px; border-bottom: 2px solid ${colors.primary};">
+        <h3 style="font-size: ${fonts.subtitle}px; color: ${colors.success}; margin: 0; padding-bottom: 8px; border-bottom: 2px solid ${colors.success};">
           ${chart.title}
         </h3>
       `
       document.body.appendChild(titleContainer)
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await new Promise(resolve => setTimeout(resolve, 50))
       
       const titleCanvas = await html2canvas(titleContainer, { scale: 2, backgroundColor: '#ffffff', logging: false })
       const titleImgData = titleCanvas.toDataURL('image/jpeg', 0.95)
-      const titleImgWidth = imgWidth
-      const titleImgHeight = (titleCanvas.height * titleImgWidth) / titleCanvas.width
+      const titleImgHeight = (titleCanvas.height * imgWidth) / titleCanvas.width
+      
+      const totalHeight = titleImgHeight + imgHeight + 20
+      
+      // 检查是否需要新页
+      if (currentY + totalHeight > pageHeight - 50) {
+        pdf.addPage()
+        currentY = 40
+      } else if (!isFirstChart) {
+        currentY += 20
+      }
       
       // 添加标题
-      pdf.addImage(titleImgData, 'JPEG', 40, 30, titleImgWidth, titleImgHeight)
+      pdf.addImage(titleImgData, 'JPEG', 40, currentY, imgWidth, titleImgHeight)
+      currentY += titleImgHeight + 10
       
       // 添加图表
-      pdf.addImage(imgData, 'JPEG', 40, 30 + titleImgHeight + 10, imgWidth, imgHeight)
+      pdf.addImage(imgData, 'JPEG', 40, currentY, imgWidth, imgHeight)
+      
+      currentY += imgHeight
+      isFirstChart = false
       
       // 清理
       document.body.removeChild(titleContainer)
-      console.log(`第二阶段图表导出成功: ${chart.title}`)
+      console.log(`第二阶段图表导出成功: ${chart.title}，当前Y: ${currentY}`)
     } catch (error) {
       console.error(`导出第二阶段图表失败 (${chart.title}):`, error)
-      // 继续处理下一个图表，不中断整个流程
     }
   }
 }
@@ -2216,12 +2359,9 @@ const addPhase2DataTable = async (pdf, pageWidth, pageHeight, fonts, colors) => 
 
 // 关闭预览
 const closePdfPreview = () => {
-  if (pdfPreviewUrl.value) {
-    URL.revokeObjectURL(pdfPreviewUrl.value)
-  }
-  pdfPreviewUrl.value = ''
-  pdfBlob.value = null
+  console.log('关闭PDF预览对话框')
   showPdfPreview.value = false
+  // 不清理PDF数据，允许重新打开预览
 }
 
 // 下载当前PDF
@@ -2292,22 +2432,96 @@ onBeforeUnmount(() => {
   min-height: calc(100vh - 60px);
 }
 
-// 页面标题
-.page-header {
-  text-align: center;
-      margin-bottom: 30px;
+// PDF预览对话框样式
+.preview-container {
+  display: flex;
+  gap: 20px;
+  height: 70vh;
+}
+
+.config-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: 15px;
+  overflow-y: auto;
   
-  h2 {
-    font-size: 32px;
-          font-weight: 600;
-          color: #303133;
-    margin: 0 0 10px 0;
+  .sidebar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #e5e7eb;
   }
   
-  p {
-    font-size: 16px;
-    color: #909399;
-    margin: 0;
+  .config-content {
+    .config-section {
+      margin-bottom: 20px;
+      
+      .section-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #606266;
+        margin-bottom: 10px;
+      }
+      
+      .config-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        
+        span {
+          font-size: 13px;
+          color: #606266;
+        }
+      }
+    }
+  }
+}
+    
+// 页面标题
+.page-header {
+  margin-bottom: 30px;
+  
+  .header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+  }
+  
+  .header-text {
+    text-align: center;
+    flex: 1;
+    
+    h2 {
+      font-size: 32px;
+      font-weight: 600;
+      color: #303133;
+      margin: 0 0 10px 0;
+    }
+    
+    p {
+      font-size: 16px;
+      color: #909399;
+      margin: 0;
+    }
+  }
+  
+  .header-actions {
+    .el-button {
+      font-size: 14px;
+      font-weight: 500;
+      padding: 12px 24px;
+      
+      &:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+      }
+    }
   }
 }
 
@@ -2600,8 +2814,8 @@ onBeforeUnmount(() => {
 // PDF预览对话框
 .pdf-preview-dialog {
   :deep(.el-dialog__body) {
-          padding: 0;
-    height: 75vh;
+    padding: 0;
+    height: 80vh;
   }
   
   .preview-container {
@@ -2611,129 +2825,231 @@ onBeforeUnmount(() => {
   }
   
   // 左侧配置面板
-  .font-config-sidebar {
-    width: 280px;
-    background: #f5f7fa;
-    border-right: 1px solid #e4e7ed;
-        display: flex;
-        flex-direction: column;
+  .config-sidebar {
+    width: 360px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-right: none;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.15);
 
     .sidebar-header {
-      padding: 16px;
-      background: white;
-      border-bottom: 1px solid #e4e7ed;
-          display: flex;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+      display: flex;
       justify-content: space-between;
-          align-items: center;
+      align-items: center;
       
       .title {
-        font-size: 16px;
-        font-weight: 600;
-        color: #303133;
+        font-size: 18px;
+        font-weight: 700;
+        color: white;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.2);
       }
       
       .button-group {
-          display: flex;
+        display: flex;
         gap: 8px;
+        
+        .el-button {
+          background: rgba(255, 255, 255, 0.9);
+          border: none;
+          font-weight: 500;
+          
+          &:hover {
+            background: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          }
+          
+          &.el-button--primary {
+            background: white;
+            color: #667eea;
+            font-weight: 600;
+          }
+        }
       }
     }
     
     .config-tabs {
-            flex: 1;
+      flex: 1;
       overflow: hidden;
       
       :deep(.el-tabs__header) {
         margin: 0;
-        padding: 12px 16px 0;
+        padding: 16px 20px 0;
         background: white;
+      }
+      
+      :deep(.el-tabs__item) {
+        font-size: 14px;
+        font-weight: 600;
+        color: #606266;
+        
+        &.is-active {
+          color: #667eea;
+        }
+      }
+      
+      :deep(.el-tabs__active-bar) {
+        background-color: #667eea;
       }
       
       :deep(.el-tabs__content) {
         height: calc(100% - 56px);
         overflow-y: auto;
-        padding: 16px;
+        padding: 20px;
+        background: #f8f9fa;
       }
     }
     
     .font-items {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 14px;
       
       .font-item {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 8px 12px;
+        padding: 14px 16px;
         background: white;
-        border-radius: 6px;
-        border: 1px solid #e4e7ed;
+        border-radius: 10px;
+        border: 2px solid #e9ecef;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        transition: all 0.3s ease;
+        
+        &:hover {
+          border-color: #667eea;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
         
         label {
-          font-size: 13px;
-          color: #606266;
-          font-weight: 500;
+          font-size: 15px;
+          color: #2d3748;
+          font-weight: 600;
         }
         
         :deep(.el-input-number) {
-          width: 100px;
+          width: 110px;
+          
+          .el-input__inner {
+            font-weight: 600;
+            text-align: center;
+          }
         }
       }
     }
     
     .color-schemes {
       .scheme-list {
-    display: flex;
+        display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 8px;
         
-        .scheme-radio {
-          margin: 0;
-          padding: 10px 12px;
+        // 强制所有 radio 选项的样式
+        :deep(.el-radio) {
+          margin: 0 !important;
+          padding: 0 !important;
           background: white;
-          border-radius: 6px;
-          border: 2px solid #e4e7ed;
-          transition: all 0.3s;
+          border-radius: 8px;
+          border: 2px solid #e9ecef;
+          transition: all 0.3s ease;
+          overflow: hidden;
+          height: 44px !important;
+          min-height: 44px !important;
+          max-height: 44px !important;
+          display: flex !important;
+          align-items: center !important;
+          width: 100%;
           
           &:hover {
-            border-color: #409EFF;
-            background: #f0f9ff;
+            border-color: #667eea;
+            transform: translateX(3px);
+            box-shadow: 0 3px 12px rgba(102, 126, 234, 0.2);
           }
           
-          :deep(.el-radio__input.is-checked + .el-radio__label) {
-            color: #409EFF;
+          &.is-checked {
+            border-color: #667eea;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+          }
+        }
+        
+        :deep(.el-radio__input) {
+          display: flex !important;
+          align-items: center !important;
+          padding-left: 12px;
+          height: 44px;
+          
+          .el-radio__inner {
+            width: 16px;
+            height: 16px;
+            border-width: 2px;
           }
           
-          :deep(.el-radio__input.is-checked) {
+          &.is-checked {
             .el-radio__inner {
-              background: #409EFF;
-              border-color: #409EFF;
+              background: #667eea;
+              border-color: #667eea;
+              
+              &::after {
+                width: 6px;
+                height: 6px;
+              }
+            }
+            
+            & + .el-radio__label {
+              color: #667eea;
             }
           }
+        }
+        
+        :deep(.el-radio__label) {
+          flex: 1 !important;
+          padding: 0 12px !important;
+          display: flex !important;
+          align-items: center !important;
+          height: 44px !important;
         }
       }
       
       .scheme-option {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-        margin-left: 30px;
+        display: flex;
+        align-items: center;
+        width: 100%;
+        height: 100%;
+        padding-right: 12px;
         
         .scheme-name {
           font-size: 14px;
-          font-weight: 500;
-          color: #303133;
+          font-weight: 600;
+          color: #2d3748;
+          flex-shrink: 0;
+          line-height: 1;
+          margin-right: auto;
         }
         
         .scheme-colors {
-        display: flex;
-          gap: 4px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-shrink: 0;
           
           .color-dot {
-            width: 16px;
-            height: 16px;
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
-            border: 1px solid rgba(0, 0, 0, 0.1);
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            
+            &:hover {
+              transform: scale(1.15);
+            }
           }
         }
       }
@@ -2741,7 +3057,7 @@ onBeforeUnmount(() => {
   }
   
   // 右侧PDF预览区域
-  .pdf-preview-area {
+  .preview-area {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -2754,16 +3070,20 @@ onBeforeUnmount(() => {
       overflow: auto;
       
       iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+        background: white;
+        border-radius: 8px;
         box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-        border-radius: 4px;
       }
     }
     
     .preview-loading {
       flex: 1;
-    display: flex;
+      display: flex;
       flex-direction: column;
-    justify-content: center;
+      justify-content: center;
       align-items: center;
       padding: 60px 20px;
     }
@@ -2774,6 +3094,11 @@ onBeforeUnmount(() => {
       justify-content: center;
       align-items: center;
     }
+  }
+  
+  :deep(.el-dialog__footer) {
+    border-top: 1px solid #ebeef5;
+    padding: 15px 20px;
   }
 }
 
