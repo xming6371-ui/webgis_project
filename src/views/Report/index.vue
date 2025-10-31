@@ -16,9 +16,9 @@
           >
             清除并重新分析
           </el-button>
-        </div>
-      </div>
-    </div>
+                </div>
+                </div>
+              </div>
 
     <!-- 步骤指示器 -->
     <el-card class="steps-card" shadow="never">
@@ -27,7 +27,7 @@
         <el-step title="种植情况分析" description="分析所有区域的种植状态" />
         <el-step title="作物详细分析" description="深入分析作物类型分布" />
       </el-steps>
-    </el-card>
+          </el-card>
 
     <!-- 步骤1: 选择数据源 -->
     <el-card v-show="currentStep === 0" class="step-card" shadow="never">
@@ -212,8 +212,16 @@
               <el-progress :percentage="row.plantingRate" :color="getProgressColor(row.plantingRate)" />
             </template>
           </el-table-column>
-          <el-table-column prop="plantedArea" label="已种植面积(亩)" width="150" align="center" />
-          <el-table-column prop="fallowArea" label="撂荒面积(亩)" width="150" align="center" />
+          <el-table-column prop="plantedArea" label="已种植面积(亩)" width="150" align="center">
+            <template #default="{ row }">
+              {{ typeof row.plantedArea === 'number' ? row.plantedArea.toFixed(2) : row.plantedArea }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="fallowArea" label="撂荒面积(亩)" width="150" align="center">
+            <template #default="{ row }">
+              {{ typeof row.fallowArea === 'number' ? row.fallowArea.toFixed(2) : row.fallowArea }}
+            </template>
+          </el-table-column>
         </el-table>
         </el-card>
 
@@ -297,13 +305,13 @@
         title="分析说明"
         type="success"
         :closable="false"
-        style="margin-bottom: 20px"
+        style="margin-bottom: 50px"
       >
         <p>仅对<strong>作物识别来源</strong>的文件进行详细作物类型分析（值2-10对应不同作物类型）</p>
       </el-alert>
 
       <!-- 作物统计卡片 -->
-      <div class="stats-cards">
+      <div class="stats-cards" style="margin-top: 20px; margin-bottom: 30px;">
         <el-card class="stat-card">
           <div class="stat-content">
             <div class="stat-icon" style="background: #e8f5e9;">
@@ -351,7 +359,7 @@
     </div>
 
       <!-- 详细数据表格 -->
-      <el-card shadow="never" style="margin-top: 20px;">
+      <el-card shadow="never" style="margin-bottom: 30px;">
       <template #header>
         <div class="card-header">
             <Ticket :size="16" />
@@ -547,7 +555,7 @@
                       </div>
                     </div>
                   </el-radio>
-                </el-radio-group>
+          </el-radio-group>
               </div>
               
               <el-alert type="success" :closable="false" style="margin-top: 15px; font-size: 12px;">
@@ -596,9 +604,13 @@
       
       <template #footer>
         <el-button @click="closePdfPreview">关闭</el-button>
-        <el-button type="primary" @click="downloadCurrentPdf" :disabled="!pdfBlob || generating">
+        <el-button @click="downloadToLocal" :disabled="!pdfBlob || generating">
           <Download :size="16" />
-          下载PDF
+          下载到本地
+        </el-button>
+        <el-button type="primary" @click="saveToDataManagement" :disabled="!pdfBlob || generating">
+          <Save :size="16" />
+          保存到数据管理
         </el-button>
       </template>
     </el-dialog>
@@ -617,10 +629,10 @@ import { UploadFilled } from '@element-plus/icons-vue'
 import {
   Download, RotateCcw, PieChart, BarChart,
   FolderOpen, MapPin,
-  Sprout, Ticket
+  Sprout, Ticket, Save
 } from 'lucide-vue-next'
 import * as echarts from 'echarts'
-import { getRecognitionResults, readGeojsonContent } from '@/api/analysis'
+import { getRecognitionResults, readGeojsonContent, uploadReportToServer } from '@/api/analysis'
 import { getCropName, getCropColor } from '@/config/cropMapping'
 import { extractRegionName } from '@/config/regionMapping'
 import jsPDF from 'jspdf'
@@ -650,13 +662,13 @@ const activeConfigTab = ref('font')
 
 // ==================== 字体配置 ====================
 const defaultFontConfig = {
-  coverTitle: 40,
-  title: 28,
-  subtitle: 22,
-  tableHeader: 20,
-  tableCell: 15,
-  description: 14,
-  cardValue: 32
+  coverTitle: 28,
+  title: 20,
+  subtitle: 16,
+  tableHeader: 14,
+  tableCell: 12,
+  description: 11,
+  cardValue: 24
 }
 const fontConfig = ref({ ...defaultFontConfig })
 
@@ -977,8 +989,8 @@ const startAnalysis = async () => {
         plantedCount: plantedCount,
         fallowCount: fallowCount,
         plantingRate: parseFloat(plantingRate),
-        plantedArea: plantedArea.toFixed(2),
-        fallowArea: fallowArea.toFixed(2),
+        plantedArea: plantedArea,  // 保留为数字类型
+        fallowArea: fallowArea,    // 保留为数字类型
         rawData: file.data
       }
     }).filter(item => item !== null)
@@ -1304,7 +1316,8 @@ const initFallowAreaChart = () => {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
       formatter: params => {
-        return `${params[0].name}<br/>撂荒面积: ${params[0].value} 亩`
+        const value = parseFloat(params[0].value).toFixed(2)
+        return `${params[0].name}<br/>撂荒面积: ${value} 亩`
       }
     },
     grid: {
@@ -1335,7 +1348,9 @@ const initFallowAreaChart = () => {
         label: {
           show: true,
           position: 'right',
-        formatter: '{c} 亩'
+        formatter: params => {
+          return parseFloat(params.value).toFixed(2) + ' 亩'
+        }
       }
     }]
   }
@@ -1798,7 +1813,7 @@ const generateReportPdf = async () => {
       generatingProgress.value = 85
       
       generatingMessage.value = '正在导出详细数据表格...'
-      await addPhase2DataTable(pdf, pageWidth, pageHeight, fonts, colors)
+      // 详细数据表格已经在 addPhase2Content 中生成
       generatingProgress.value = 90
     }
     
@@ -1882,35 +1897,77 @@ const addPhase1Content = async (pdf, pageWidth, pageHeight, fonts, colors) => {
     console.log('开始生成第一阶段内容...')
     pdf.addPage()
     const container = document.createElement('div')
-    const containerWidth = Math.max(pageWidth - 80, 100)
+    const containerWidth = Math.max(pageWidth - 60, 100)
     container.style.cssText = `
       position: fixed; left: -9999px; top: 0;
       width: ${containerWidth}px; background: white;
-      padding: 40px; font-family: "Microsoft YaHei", Arial, sans-serif;
+      padding: 30px; font-family: "Microsoft YaHei", Arial, sans-serif;
     `
     
     const regions = phase1Data.value.map(item => item.regionName).join('、')
-    const titleSize = Math.max(fonts.title, 16)
-    const subtitleSize = Math.max(fonts.subtitle, 14)
-    const descSize = Math.max(fonts.description, 12)
+    const titleSize = Math.max(fonts.title * 0.85, 14)  // 缩小标题
+    const subtitleSize = Math.max(fonts.subtitle * 0.85, 12)  // 缩小副标题
+    const descSize = Math.max(fonts.description * 0.85, 10)  // 缩小描述文字
+    const tableHeaderSize = Math.max(fonts.tableHeader * 0.75, 9)  // 表格标题字体
+    const tableCellSize = Math.max(fonts.tableCell * 0.75, 8)  // 表格单元格字体
+    
+    // 构建详细数据表格HTML
+    const tableRows = phase1Data.value.map(item => `
+      <tr>
+        <td style="padding: 6px 4px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${item.regionName}</td>
+        <td style="padding: 6px 4px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">
+          <span style="color: ${item.recognitionType === 'crop_recognition' ? colors.success : colors.warning}; font-weight: bold;">
+            ${getRecognitionTypeLabel(item.recognitionType)}
+          </span>
+        </td>
+        <td style="padding: 6px 4px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${item.totalCount}</td>
+        <td style="padding: 6px 4px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; color: ${colors.success}; font-weight: bold;">${item.plantedCount}</td>
+        <td style="padding: 6px 4px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; color: ${colors.warning}; font-weight: bold;">${item.fallowCount}</td>
+        <td style="padding: 6px 4px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; font-weight: bold;">${item.plantingRate}%</td>
+        <td style="padding: 6px 4px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${item.plantedArea.toFixed(2)}</td>
+        <td style="padding: 6px 4px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${item.fallowArea.toFixed(2)}</td>
+      </tr>
+    `).join('')
     
     container.innerHTML = `
       <div>
-        <h2 style="font-size: ${titleSize}px; color: ${colors.primary}; margin-bottom: 20px; border-bottom: 3px solid ${colors.primary}; padding-bottom: 10px;">
+        <h2 style="font-size: ${titleSize}px; color: ${colors.primary}; margin-bottom: 15px; border-bottom: 3px solid ${colors.primary}; padding-bottom: 8px;">
           第一阶段：种植情况分析
         </h2>
-        <div style="background: #f5f7fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px;">分析区域:</h3>
-          <p style="font-size: ${descSize}px; line-height: 1.8;">${regions}</p>
+        <div style="background: #f5f7fa; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 8px;">分析区域:</h3>
+          <p style="font-size: ${descSize}px; line-height: 1.6;">${regions}</p>
         </div>
-        <div style="background: #f0f9ff; padding: 15px; border-radius: 8px;">
-          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px;">分析结果:</h3>
-          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: ${descSize}px;">
+        <div style="background: #f0f9ff; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 8px;">分析结果:</h3>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: ${descSize}px;">
             <div>• 总地块数: <strong>${totalPlantedCount.value + totalFallowCount.value}</strong> 个</div>
             <div>• 已种植地块: <strong style="color: ${colors.success};">${totalPlantedCount.value}</strong> 个</div>
             <div>• 未种植地块: <strong style="color: ${colors.danger};">${totalFallowCount.value}</strong> 个</div>
             <div>• 平均种植率: <strong style="color: ${colors.primary};">${averagePlantingRate.value}%</strong></div>
           </div>
+        </div>
+        <div style="margin-top: 15px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px; color: ${colors.primary};">
+            📊 各区域种植情况详细数据
+          </h3>
+          <table style="width: 100%; border-collapse: collapse; background: white; font-size: ${tableCellSize}px;">
+            <thead>
+              <tr style="background: linear-gradient(135deg, ${colors.primary}, ${colors.secondary});">
+                <th style="padding: 8px 4px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">区域</th>
+                <th style="padding: 8px 4px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">任务来源</th>
+                <th style="padding: 8px 4px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">总地块数</th>
+                <th style="padding: 8px 4px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">已种植</th>
+                <th style="padding: 8px 4px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">未种植</th>
+                <th style="padding: 8px 4px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">种植率</th>
+                <th style="padding: 8px 4px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">已种植面积(亩)</th>
+                <th style="padding: 8px 4px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">撂荒面积(亩)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
         </div>
       </div>
     `
@@ -1919,9 +1976,9 @@ const addPhase1Content = async (pdf, pageWidth, pageHeight, fonts, colors) => {
     
     const canvas = await html2canvas(container, { scale: 2, backgroundColor: '#ffffff', logging: false })
     const imgData = canvas.toDataURL('image/jpeg', 0.95)
-    const imgWidth = containerWidth
+    const imgWidth = pageWidth - 60
     const imgHeight = (canvas.height * imgWidth) / canvas.width
-    pdf.addImage(imgData, 'JPEG', 40, 40, imgWidth, imgHeight)
+    pdf.addImage(imgData, 'JPEG', 30, 30, imgWidth, imgHeight)
     document.body.removeChild(container)
     console.log('第一阶段内容生成成功')
   } catch (error) {
@@ -1942,11 +1999,11 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   // 第一阶段图表从新页面开始
   pdf.addPage()
   let currentY = 40 // 当前Y位置
-  let isFirstChart = true
   
-  for (const chart of charts) {
+  for (let i = 0; i < charts.length; i++) {
+    const chart = charts[i]
     try {
-      console.log(`正在导出图表: ${chart.title}`)
+      console.log(`正在导出图表 [${i}]: ${chart.title}`)
       
       if (!chart.instance) {
         console.warn(`图表实例未找到: ${chart.title}`)
@@ -1995,13 +2052,23 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       
       const totalHeight = titleImgHeight + imgHeight + 20
       
-      // 检查是否需要新页
-      if (currentY + totalHeight > pageHeight - 50) {
+      // 布局规则：
+      // 索引0（各区域种植率对比）：第一页上半部，currentY = 40
+      // 索引1（种植/撂荒地块统计）：和索引0同一页下半部，间距+30
+      // 索引2（总体种植情况分布）：新页面上半部，currentY = 40
+      // 索引3（各区域撂荒面积对比）：和索引2同一页下半部，间距+30
+      if (i === 1) {
+        // 第二个图表：和第一个在同一页
+        currentY += 30
+      } else if (i === 2) {
+        // 第三个图表：新页面
         pdf.addPage()
         currentY = 40
-      } else if (!isFirstChart) {
-        currentY += 20
+      } else if (i === 3) {
+        // 第四个图表：和第三个在同一页
+        currentY += 30
       }
+      // i === 0（第一个图表）使用初始值 currentY = 40
       
       // 添加标题
       pdf.addImage(titleImgData, 'JPEG', 40, currentY, imgWidth, titleImgHeight)
@@ -2011,7 +2078,6 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       pdf.addImage(imgData, 'JPEG', 40, currentY, imgWidth, imgHeight)
       
       currentY += imgHeight
-      isFirstChart = false
       
       // 清理
       document.body.removeChild(titleContainer)
@@ -2028,35 +2094,71 @@ const addPhase2Content = async (pdf, pageWidth, pageHeight, fonts, colors) => {
     console.log('开始生成第二阶段内容...')
     pdf.addPage()
     const container = document.createElement('div')
-    const containerWidth = Math.max(pageWidth - 80, 100)
+    const containerWidth = Math.max(pageWidth - 60, 100)
     container.style.cssText = `
       position: fixed; left: -9999px; top: 0;
       width: ${containerWidth}px; background: white;
-      padding: 40px; font-family: "Microsoft YaHei", Arial, sans-serif;
+      padding: 30px; font-family: "Microsoft YaHei", Arial, sans-serif;
     `
     
     const regions = phase2Data.value.map(item => item.regionName).join('、')
-    const titleSize = Math.max(fonts.title, 16)
-    const subtitleSize = Math.max(fonts.subtitle, 14)
-    const descSize = Math.max(fonts.description, 12)
+    const titleSize = Math.max(fonts.title * 0.85, 14)  // 与第一阶段一致
+    const subtitleSize = Math.max(fonts.subtitle * 0.85, 12)  // 与第一阶段一致
+    const descSize = Math.max(fonts.description * 0.85, 10)  // 与第一阶段一致
+    const tableHeaderSize = Math.max(fonts.tableHeader * 0.7, 8)  // 表格标题字体
+    const tableCellSize = Math.max(fonts.tableCell * 0.7, 7)  // 表格单元格字体更小
+    
+    // 构建详细数据表格HTML
+    const tableRows = phase2Data.value.map(item => {
+      // 获取作物分布信息，排除裸地
+      const cropsInfo = item.cropDistribution
+        .filter(crop => crop.name !== '裸地')
+        .map(crop => `${crop.name}(${crop.area}亩)`)
+        .join('、')
+      
+      return `
+        <tr>
+          <td style="padding: 5px 3px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${item.regionName}</td>
+          <td style="padding: 5px 3px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; font-weight: bold;">${item.cropTypes}</td>
+          <td style="padding: 5px 3px; border: 1px solid #ddd; text-align: left; font-size: ${tableCellSize}px; line-height: 1.4;">${cropsInfo || '无'}</td>
+        </tr>
+      `
+    }).join('')
     
     container.innerHTML = `
       <div>
-        <h2 style="font-size: ${titleSize}px; color: ${colors.success}; margin-bottom: 20px; border-bottom: 3px solid ${colors.success}; padding-bottom: 10px;">
+        <h2 style="font-size: ${titleSize}px; color: ${colors.success}; margin-bottom: 15px; border-bottom: 3px solid ${colors.success}; padding-bottom: 8px;">
           第二阶段：作物详细分析
         </h2>
-        <div style="background: #f5f7fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px;">分析区域:</h3>
-          <p style="font-size: ${descSize}px; line-height: 1.8;">${regions}</p>
+        <div style="background: #f5f7fa; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 8px;">分析区域:</h3>
+          <p style="font-size: ${descSize}px; line-height: 1.6;">${regions}</p>
         </div>
-        <div style="background: #f0f9ff; padding: 15px; border-radius: 8px;">
-          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px;">分析结果:</h3>
-          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: ${descSize}px;">
+        <div style="background: #f0f9ff; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 8px;">分析结果:</h3>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: ${descSize}px;">
             <div>• 作物种类: <strong>${totalCropTypes.value}</strong> 种</div>
             <div>• 总种植面积: <strong style="color: ${colors.success};">${totalCropArea.value}</strong> 亩</div>
             <div>• 主要作物: <strong style="color: ${colors.primary};">${dominantCrop.value}</strong></div>
             <div>• 分析区域: <strong>${phase2Data.value.length}</strong> 个</div>
           </div>
+        </div>
+        <div style="margin-top: 15px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px; color: ${colors.success};">
+            📊 各区域作物分布详细数据
+          </h3>
+          <table style="width: 100%; border-collapse: collapse; background: white; font-size: ${tableCellSize}px;">
+            <thead>
+              <tr style="background: linear-gradient(135deg, ${colors.success}, ${colors.secondary});">
+                <th style="padding: 6px 3px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold; width: 15%;">区域</th>
+                <th style="padding: 6px 3px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold; width: 12%;">作物种类数</th>
+                <th style="padding: 6px 3px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold; width: 73%;">作物分布</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
         </div>
       </div>
     `
@@ -2065,9 +2167,9 @@ const addPhase2Content = async (pdf, pageWidth, pageHeight, fonts, colors) => {
     
     const canvas = await html2canvas(container, { scale: 2, backgroundColor: '#ffffff', logging: false })
     const imgData = canvas.toDataURL('image/jpeg', 0.95)
-    const imgWidth = containerWidth
+    const imgWidth = pageWidth - 60
     const imgHeight = (canvas.height * imgWidth) / canvas.width
-    pdf.addImage(imgData, 'JPEG', 40, 40, imgWidth, imgHeight)
+    pdf.addImage(imgData, 'JPEG', 30, 30, imgWidth, imgHeight)
     document.body.removeChild(container)
     console.log('第二阶段内容生成成功')
   } catch (error) {
@@ -2085,12 +2187,12 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
     { instance: regionCropCompareChart, title: '各区域作物分布对比' }
   ]
   
-  // 获取当前PDF的页数，确定Y位置
-  const pageCount = pdf.internal.getNumberOfPages()
+  // 第一个图表从新页面开始
+  pdf.addPage()
   let currentY = 40
-  let isFirstChart = true
   
-  for (const chart of charts) {
+  for (let i = 0; i < charts.length; i++) {
+    const chart = charts[i]
     try {
       console.log(`正在导出第二阶段图表: ${chart.title}`)
       
@@ -2141,13 +2243,20 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       
       const totalHeight = titleImgHeight + imgHeight + 20
       
-      // 检查是否需要新页
-      if (currentY + totalHeight > pageHeight - 50) {
-        pdf.addPage()
-        currentY = 40
-      } else if (!isFirstChart) {
-        currentY += 20
+      // 特殊处理：第二个图表（索引1）必须和第一个在同一页
+      if (i === 1) {
+        // 第二个图表：直接在当前页添加，加一些间距
+        currentY += 30
+      } else if (i > 1) {
+        // 第三个图表及之后：检查是否需要新页
+        if (currentY + totalHeight > pageHeight - 50) {
+          pdf.addPage()
+          currentY = 40
+        } else {
+          currentY += 20
+        }
       }
+      // i === 0（第一个图表）不做特殊处理，使用初始的currentY = 40
       
       // 添加标题
       pdf.addImage(titleImgData, 'JPEG', 40, currentY, imgWidth, titleImgHeight)
@@ -2157,7 +2266,6 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       pdf.addImage(imgData, 'JPEG', 40, currentY, imgWidth, imgHeight)
       
       currentY += imgHeight
-      isFirstChart = false
       
       // 清理
       document.body.removeChild(titleContainer)
@@ -2168,195 +2276,6 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   }
 }
 
-// 添加第二阶段详细数据表格
-const addPhase2DataTable = async (pdf, pageWidth, pageHeight, fonts, colors) => {
-  try {
-    console.log('开始生成详细数据表格...')
-    
-    const titleSize = Math.max(fonts.title, 14)
-    const descSize = Math.max(fonts.description, 9)
-    
-    // 每页2个区域，计算总页数
-    const itemsPerPage = 2
-    const totalPages = Math.ceil(phase2Data.value.length / itemsPerPage)
-    
-    for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
-      pdf.addPage()
-      
-      const startIndex = pageIndex * itemsPerPage
-      const endIndex = Math.min(startIndex + itemsPerPage, phase2Data.value.length)
-      const pageData = phase2Data.value.slice(startIndex, endIndex)
-      
-      const container = document.createElement('div')
-      const containerWidth = pageWidth - 25
-      container.style.cssText = `
-        position: fixed; left: -9999px; top: 0;
-        width: ${containerWidth}px; background: white;
-        padding: 12px; font-family: "Microsoft YaHei", Arial, sans-serif;
-      `
-      
-      // 构建页面HTML
-      let pageHTML = ''
-      
-      // 第一页添加标题
-      if (pageIndex === 0) {
-        pageHTML += `
-          <h2 style="font-size: ${titleSize}px; color: ${colors.primary}; margin-bottom: 10px; border-bottom: 2px solid ${colors.primary}; padding-bottom: 5px; text-align: center;">
-            各区域作物分布详细数据
-          </h2>
-        `
-      } else {
-        pageHTML += `<div style="height: 6px;"></div>`
-      }
-      
-      // 使用CSS Grid横向布局，每行2列
-      pageHTML += `
-        <div style="
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 10px;
-          margin-top: 6px;
-        ">
-      `
-      
-      // 为每个区域创建卡片
-      pageData.forEach((row, index) => {
-        const actualIndex = startIndex + index
-        const bgColor = actualIndex % 2 === 0 ? '#f9fafb' : '#ffffff'
-        
-        // 构建作物分布列表
-        const cropItems = row.cropDistribution
-          ?.filter(c => c.name !== '裸地')
-          .map(crop => {
-            const textColor = crop.name === '棉花' ? '#333' : '#fff'
-            return `
-              <div style="
-                background: ${crop.color};
-                color: ${textColor};
-                padding: 3px 6px;
-                margin: 1px;
-                border-radius: 3px;
-                font-size: ${descSize - 2}px;
-                font-weight: 500;
-                white-space: nowrap;
-                text-align: center;
-                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-              ">
-                ${crop.name}: ${crop.count}个 (${crop.area}亩)
-              </div>
-            `
-          }).join('') || '<div style="color: #909399; text-align: center; padding: 8px;">无数据</div>'
-        
-        pageHTML += `
-          <div style="
-            background: ${bgColor};
-            border: 1px solid #e5e7eb;
-            border-radius: 5px;
-            padding: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-          ">
-            <!-- 区域名称 -->
-            <div style="
-              text-align: center;
-              padding: 5px;
-              background: linear-gradient(135deg, ${colors.primary} 0%, ${colors.secondary} 100%);
-              color: white;
-              border-radius: 3px;
-              margin-bottom: 6px;
-            ">
-              <div style="font-size: ${descSize + 3}px; font-weight: 700;">${row.regionName}</div>
-            </div>
-            
-            <!-- 统计信息 -->
-            <div style="
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 5px;
-              margin-bottom: 5px;
-              font-size: ${descSize}px;
-            ">
-              <div style="text-align: center; padding: 4px; background: #fff; border-radius: 3px; border: 1px solid #e5e7eb;">
-                <div style="color: #6b7280; font-size: ${descSize - 2}px;">作物种类</div>
-                <div style="font-weight: 700; color: ${colors.secondary}; font-size: ${descSize + 1}px;">${row.cropTypes}</div>
-              </div>
-              <div style="text-align: center; padding: 4px; background: #fff; border-radius: 3px; border: 1px solid #e5e7eb;">
-                <div style="color: #6b7280; font-size: ${descSize - 2}px;">主要作物</div>
-                <div style="font-weight: 700; color: ${colors.success}; font-size: ${descSize + 1}px;">${row.dominantCrop}</div>
-              </div>
-            </div>
-            
-            <div style="text-align: center; padding: 4px; background: #fff; border-radius: 3px; margin-bottom: 6px; border: 1px solid #e5e7eb;">
-              <div style="color: #6b7280; font-size: ${descSize - 2}px;">总种植面积</div>
-              <div style="font-weight: 700; color: ${colors.warning}; font-size: ${descSize + 1}px;">${row.totalArea} 亩</div>
-            </div>
-            
-            <!-- 作物分布 -->
-            <div style="
-              background: white;
-              border-radius: 3px;
-              padding: 5px;
-              border: 1px solid #e5e7eb;
-            ">
-              <div style="font-size: ${descSize - 1}px; color: #374151; margin-bottom: 3px; font-weight: 600; text-align: center;">作物分布</div>
-              <div style="
-                display: flex;
-                flex-wrap: wrap;
-                justify-content: center;
-                gap: 1px;
-              ">
-                ${cropItems}
-              </div>
-            </div>
-          </div>
-        `
-      })
-      
-      pageHTML += `</div>` // 结束grid
-      
-      container.innerHTML = pageHTML
-      document.body.appendChild(container)
-      await new Promise(resolve => setTimeout(resolve, 500))
-      
-      // 将页面渲染为图片
-      const canvas = await html2canvas(container, { 
-        scale: 1.9, 
-        backgroundColor: '#ffffff', 
-        logging: false,
-        useCORS: true,
-        width: containerWidth,
-        windowWidth: containerWidth + 70
-      })
-      
-      const imgData = canvas.toDataURL('image/jpeg', 0.92)
-      
-      // 计算图片尺寸
-      const imgWidth = pageWidth - 25
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-      
-      // 添加到PDF
-      const maxHeight = pageHeight - 25
-      if (imgHeight <= maxHeight) {
-        pdf.addImage(imgData, 'JPEG', 12, 12, imgWidth, imgHeight)
-      } else {
-        // 如果超高，按比例缩小
-        const scale = maxHeight / imgHeight
-        const scaledWidth = imgWidth * scale
-        const scaledHeight = maxHeight
-        const offsetX = (pageWidth - scaledWidth) / 2
-        pdf.addImage(imgData, 'JPEG', offsetX, 12, scaledWidth, scaledHeight)
-      }
-      
-      document.body.removeChild(container)
-      console.log(`详细数据表格第 ${pageIndex + 1}/${totalPages} 页生成成功`)
-    }
-    
-    console.log('详细数据表格全部生成成功')
-  } catch (error) {
-    console.error('生成详细数据表格失败:', error)
-    throw new Error('生成详细数据表格失败: ' + error.message)
-  }
-}
-
 // 关闭预览
 const closePdfPreview = () => {
   console.log('关闭PDF预览对话框')
@@ -2364,23 +2283,72 @@ const closePdfPreview = () => {
   // 不清理PDF数据，允许重新打开预览
 }
 
-// 下载当前PDF
-const downloadCurrentPdf = () => {
+// 生成PDF文件名（本地下载用中文名）
+const generatePdfFilename = () => {
+  const date = new Date()
+  const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+  const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
+  return `农作物分析报告_${dateStr}_${timeStr}.pdf`
+}
+
+// 生成PDF文件名（服务器存储用ASCII名）
+const generatePdfFilenameASCII = () => {
+  const date = new Date()
+  const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+  const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}${String(date.getSeconds()).padStart(2, '0')}`
+  return `Crop_Analysis_Report_${dateStr}_${timeStr}.pdf`
+}
+
+// 下载PDF到本地
+const downloadToLocal = () => {
   if (!pdfBlob.value) {
     ElMessage.error('没有可下载的PDF')
     return
   }
   
+  const filename = generatePdfFilename()
+  
+  // 下载PDF
   const url = URL.createObjectURL(pdfBlob.value)
   const link = document.createElement('a')
   link.href = url
-  const date = new Date()
-  const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-  const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
-  link.download = `农作物分析报告_${dateStr}_${timeStr}.pdf`
+  link.download = filename
   link.click()
   URL.revokeObjectURL(url)
-  ElMessage.success('开始下载PDF')
+  
+  ElMessage.success('✅ PDF已下载到本地！')
+}
+
+// 保存PDF到数据管理
+const saveToDataManagement = async () => {
+  if (!pdfBlob.value) {
+    ElMessage.error('没有可保存的PDF')
+    return
+  }
+  
+  const loadingMsg = ElMessage({ message: '正在保存到数据管理...', type: 'info', duration: 0 })
+  try {
+    // 使用ASCII文件名避免乱码
+    const filename = generatePdfFilenameASCII()
+    
+    // 将Blob转换为File对象
+    const pdfFile = new File([pdfBlob.value], filename, { 
+      type: 'application/pdf',
+      lastModified: Date.now()
+    })
+    
+    console.log('上传PDF文件:', filename, '大小:', (pdfFile.size / 1024 / 1024).toFixed(2), 'MB')
+    
+    // 上传到服务器，分析类型为"多区域分析"
+    await uploadReportToServer(pdfFile, 'multi_region_analysis')
+    
+    loadingMsg.close()
+    ElMessage.success('✅ PDF已保存到数据管理分析结果列表（多区域分析）！')
+  } catch (error) {
+    console.error('保存PDF到服务器失败:', error)
+    loadingMsg.close()
+    ElMessage.error('❌ 保存到数据管理失败：' + error.message)
+  }
 }
 
 // ==================== 生命周期 ====================
@@ -2443,7 +2411,7 @@ onBeforeUnmount(() => {
   width: 280px;
   flex-shrink: 0;
   background: #f9fafb;
-  border-radius: 8px;
+    border-radius: 8px;
   padding: 15px;
   overflow-y: auto;
   
@@ -2458,7 +2426,7 @@ onBeforeUnmount(() => {
   
   .config-content {
     .config-section {
-      margin-bottom: 20px;
+    margin-bottom: 20px;
       
       .section-title {
         font-size: 13px;
@@ -2487,9 +2455,9 @@ onBeforeUnmount(() => {
   margin-bottom: 30px;
   
   .header-content {
-    display: flex;
+          display: flex;
     justify-content: space-between;
-    align-items: center;
+          align-items: center;
     gap: 20px;
   }
   
@@ -2499,8 +2467,8 @@ onBeforeUnmount(() => {
     
     h2 {
       font-size: 32px;
-      font-weight: 600;
-      color: #303133;
+          font-weight: 600;
+          color: #303133;
       margin: 0 0 10px 0;
     }
     
@@ -2554,14 +2522,14 @@ onBeforeUnmount(() => {
 
 // 文件选择区域
     .existing-files-section {
-      margin-top: 20px;
-}
+    margin-top: 20px;
+  }
 
 // 统计卡片
 .stats-cards {
-  display: grid;
+    display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 20px;
+    gap: 20px;
   margin-bottom: 30px;
 }
 
@@ -2596,10 +2564,10 @@ onBeforeUnmount(() => {
           justify-content: center;
           flex-shrink: 0;
   transition: transform 0.3s;
-  
+
   .stat-card:hover & {
     transform: scale(1.1) rotate(5deg);
-  }
+          }
         }
 
 .stat-info {
@@ -2675,7 +2643,7 @@ onBeforeUnmount(() => {
 }
 
 .chart-container {
-            width: 100%;
+    width: 100%;
   height: 350px;
   border-radius: 8px;
   overflow: hidden;
@@ -2699,7 +2667,7 @@ onBeforeUnmount(() => {
     height: 44px;
     font-size: 15px;
     border-radius: 8px;
-    transition: all 0.3s;
+      transition: all 0.3s;
     
     &:hover {
       transform: translateY(-2px);
@@ -2721,8 +2689,8 @@ onBeforeUnmount(() => {
   
   .el-table__row {
     transition: all 0.3s;
-    
-    &:hover {
+
+      &:hover {
       background: #f0f9ff;
     }
   }
@@ -2819,8 +2787,8 @@ onBeforeUnmount(() => {
   }
   
   .preview-container {
-    display: flex;
-    height: 100%;
+        display: flex;
+        height: 100%;
     gap: 0;
   }
   
@@ -2829,7 +2797,7 @@ onBeforeUnmount(() => {
     width: 360px;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     border-right: none;
-    display: flex;
+          display: flex;
     flex-direction: column;
     box-shadow: 2px 0 12px rgba(0,0,0,0.15);
 
@@ -2840,17 +2808,17 @@ onBeforeUnmount(() => {
       border-bottom: 1px solid rgba(255, 255, 255, 0.2);
       display: flex;
       justify-content: space-between;
-      align-items: center;
+          align-items: center;
       
       .title {
         font-size: 18px;
         font-weight: 700;
-        color: white;
+          color: white;
         text-shadow: 0 2px 4px rgba(0,0,0,0.2);
-      }
-      
+        }
+
       .button-group {
-        display: flex;
+          display: flex;
         gap: 8px;
         
         .el-button {
@@ -2874,7 +2842,7 @@ onBeforeUnmount(() => {
     }
     
     .config-tabs {
-      flex: 1;
+            flex: 1;
       overflow: hidden;
       
       :deep(.el-tabs__header) {
@@ -2906,7 +2874,7 @@ onBeforeUnmount(() => {
     }
     
     .font-items {
-      display: flex;
+    display: flex;
       flex-direction: column;
       gap: 14px;
       
@@ -2955,7 +2923,7 @@ onBeforeUnmount(() => {
           margin: 0 !important;
           padding: 0 !important;
           background: white;
-          border-radius: 8px;
+    border-radius: 8px;
           border: 2px solid #e9ecef;
           transition: all 0.3s ease;
           overflow: hidden;
@@ -3017,8 +2985,8 @@ onBeforeUnmount(() => {
       }
       
       .scheme-option {
-        display: flex;
-        align-items: center;
+      display: flex;
+      align-items: center;
         width: 100%;
         height: 100%;
         padding-right: 12px;
@@ -3033,8 +3001,8 @@ onBeforeUnmount(() => {
         }
         
         .scheme-colors {
-          display: flex;
-          align-items: center;
+        display: flex;
+        align-items: center;
           gap: 6px;
           flex-shrink: 0;
           
@@ -3081,9 +3049,9 @@ onBeforeUnmount(() => {
     
     .preview-loading {
       flex: 1;
-      display: flex;
+    display: flex;
       flex-direction: column;
-      justify-content: center;
+    justify-content: center;
       align-items: center;
       padding: 60px 20px;
     }
