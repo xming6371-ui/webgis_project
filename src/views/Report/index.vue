@@ -351,7 +351,7 @@
     </div>
 
       <!-- 详细数据表格 -->
-      <el-card shadow="never" style="margin-top: 20px;">
+      <el-card ref="phase2DetailTableCard" shadow="never" style="margin-top: 20px;">
       <template #header>
         <div class="card-header">
             <Ticket :size="16" />
@@ -595,59 +595,41 @@
       </div>
       
       <template #footer>
-        <el-button @click="closePdfPreview">关闭</el-button>
-        <el-button type="primary" @click="downloadCurrentPdf" :disabled="!pdfBlob || generating">
-          <Download :size="16" />
-          下载PDF
-        </el-button>
+        <div style="display: flex; align-items: center; gap: 15px; width: 100%;">
+          <div style="flex: 1; display: flex; align-items: center; gap: 10px;">
+            <span style="white-space: nowrap; font-weight: 500;">文件名称：</span>
+            <el-input 
+              v-model="pdfFilename" 
+              placeholder="请输入文件名（留空使用默认名称）"
+              style="flex: 1;"
+              clearable
+            />
+            <span style="white-space: nowrap; color: #909399;">.pdf</span>
+          </div>
+          <div style="display: flex; gap: 10px;">
+            <el-button @click="closePdfPreview">取消</el-button>
+            <el-button 
+              type="primary" 
+              @click="downloadToLocal" 
+              :disabled="!pdfBlob || generating"
+              plain
+            >
+              <template #icon><Download :size="16" /></template>
+              下载到本地
+            </el-button>
+            <el-button 
+              type="success" 
+              @click="saveToDataManagement" 
+              :disabled="!pdfBlob || generating"
+            >
+              <template #icon><FolderOpen :size="16" /></template>
+              保存到数据管理
+            </el-button>
+          </div>
+        </div>
       </template>
     </el-dialog>
 
-    <!-- PDF保存信息对话框 -->
-    <el-dialog
-      v-model="showPdfSaveDialog"
-      title="保存PDF报告"
-      width="500px"
-      :close-on-click-modal="false"
-    >
-      <el-form :model="pdfSaveForm" label-width="90px">
-        <el-form-item label="文件名称">
-          <el-input 
-            v-model="pdfSaveForm.filename" 
-            placeholder="留空使用默认文件名"
-            maxlength="100"
-            clearable
-          >
-            <template #append>.pdf</template>
-          </el-input>
-          <div style="color: #909399; font-size: 12px; margin-top: 5px;">
-            💡 支持中文文件名，留空将使用默认的英文文件名
-          </div>
-        </el-form-item>
-        <el-alert
-          title="提示"
-          type="info"
-          :closable="false"
-          style="margin-top: 10px;"
-        >
-          <div style="font-size: 12px;">
-            • 任务名将自动设置为"图表报表"<br>
-            • PDF将保存到数据管理界面的分析结果列表中<br>
-            • 格式：PDF，分析类型：图表报表
-          </div>
-        </el-alert>
-      </el-form>
-      <template #footer>
-        <el-button @click="showPdfSaveDialog = false">取消</el-button>
-        <el-button 
-          type="primary" 
-          @click="confirmSavePdf"
-          :loading="savingPdf"
-        >
-          确认下载
-        </el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -692,25 +674,19 @@ const phase2Data = ref([]) // 第二阶段：作物详细分析
 const showPdfPreview = ref(false)
 const pdfPreviewUrl = ref('')
 const pdfBlob = ref(null)
+const pdfFilename = ref('')
 const activeConfigTab = ref('font')
 
-// ==================== PDF保存相关 ====================
-const showPdfSaveDialog = ref(false)
-const savingPdf = ref(false)
-const pdfSaveForm = ref({
-  filename: '',
-  taskName: ''
-})
 
 // ==================== 字体配置 ====================
 const defaultFontConfig = {
-  coverTitle: 40,
-  title: 28,
-  subtitle: 22,
-  tableHeader: 20,
-  tableCell: 15,
-  description: 14,
-  cardValue: 32
+  coverTitle: 28,
+  title: 20,
+  subtitle: 16,
+  tableHeader: 14,
+  tableCell: 12,
+  description: 11,
+  cardValue: 24
 }
 const fontConfig = ref({ ...defaultFontConfig })
 
@@ -791,6 +767,9 @@ let cropTypePieChart = null
 let cropVarietyChart = null
 let cropAreaRankingChart = null
 let regionCropCompareChart = null
+
+// 第二阶段详细数据表格ref
+const phase2DetailTableCard = ref(null)
 
 // ==================== 计算属性 ====================
 
@@ -1347,18 +1326,25 @@ const initFallowAreaChart = () => {
   const chartDom = document.getElementById('fallow-area-chart')
   if (!chartDom) return
   
-  if (fallowAreaChart) fallowAreaChart.dispose()
-  fallowAreaChart = echarts.init(chartDom)
-
   const regions = phase1Data.value.map(item => item.regionName)
   const fallowAreas = phase1Data.value.map(item => parseFloat(item.fallowArea))
+  
+  // 根据区域数量动态调整图表高度
+  // 每个柱子分配45px高度，最小300px，最大600px
+  const barHeight = 45
+  const calculatedHeight = Math.max(300, Math.min(600, regions.length * barHeight + 80))
+  chartDom.style.height = `${calculatedHeight}px`
+  
+  if (fallowAreaChart) fallowAreaChart.dispose()
+  fallowAreaChart = echarts.init(chartDom)
 
   const option = {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
       formatter: params => {
-        return `${params[0].name}<br/>撂荒面积: ${params[0].value} 亩`
+        const value = parseFloat(params[0].value).toFixed(2)
+        return `${params[0].name}<br/>撂荒面积: ${value} 亩`
       }
     },
     grid: {
@@ -1379,6 +1365,7 @@ const initFallowAreaChart = () => {
       name: '撂荒面积',
         type: 'bar',
       data: fallowAreas,
+      barMaxWidth: 40,  // 限制柱子最大宽度
           itemStyle: {
         color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
           { offset: 0, color: '#fa709a' },
@@ -1389,7 +1376,9 @@ const initFallowAreaChart = () => {
         label: {
           show: true,
           position: 'right',
-        formatter: '{c} 亩'
+        formatter: params => {
+          return parseFloat(params.value).toFixed(2) + ' 亩'
+        }
       }
     }]
   }
@@ -1547,9 +1536,6 @@ const initCropAreaRankingChart = () => {
   const chartDom = document.getElementById('crop-area-ranking-chart')
   if (!chartDom) return
   
-  if (cropAreaRankingChart) cropAreaRankingChart.dispose()
-  cropAreaRankingChart = echarts.init(chartDom)
-
   const cropStats = {}
   phase2Data.value.forEach(region => {
     if (region.cropDistribution) {
@@ -1576,6 +1562,15 @@ const initCropAreaRankingChart = () => {
   const cropNames = sortedCrops.map(item => item.name)
   const cropAreas = sortedCrops.map(item => parseFloat(item.area))
   const cropColors = sortedCrops.map(item => item.color)
+  
+  // 根据作物种类数量动态调整图表高度
+  // 每个柱子分配50px高度，最小300px，最大500px
+  const barHeight = 50
+  const calculatedHeight = Math.max(300, Math.min(500, cropNames.length * barHeight + 80))
+  chartDom.style.height = `${calculatedHeight}px`
+  
+  if (cropAreaRankingChart) cropAreaRankingChart.dispose()
+  cropAreaRankingChart = echarts.init(chartDom)
   
   const option = {
     tooltip: {
@@ -1604,6 +1599,7 @@ const initCropAreaRankingChart = () => {
         value: area,
         itemStyle: { color: cropColors[index] }
       })),
+      barMaxWidth: 40,  // 限制柱子最大宽度
         label: {
           show: true,
           position: 'right',
@@ -1641,6 +1637,7 @@ const initRegionCropCompareChart = () => {
   const cropList = Array.from(allCrops)
   const regions = phase2Data.value.map(item => item.regionName)
 
+  // 改为分组柱状图（grouped bar chart）
   const series = cropList.map(cropName => {
     const data = phase2Data.value.map(region => {
       if (region.cropDistribution) {
@@ -1657,45 +1654,166 @@ const initRegionCropCompareChart = () => {
     return {
       name: cropName,
       type: 'bar',
-      stack: 'total',
+      // 不使用stack，改为分组显示
+      barGap: '10%',
+      barMaxWidth: 40,
       data: data,
-      itemStyle: { color: color },
+      itemStyle: { 
+        color: color,
+        borderRadius: [4, 4, 0, 0],
+        shadowBlur: 4,
+        shadowColor: 'rgba(0, 0, 0, 0.15)',
+        shadowOffsetY: 2
+      },
+      emphasis: {
+        itemStyle: {
+          shadowBlur: 12,
+          shadowOffsetX: 0,
+          shadowOffsetY: 6,
+          shadowColor: 'rgba(0, 0, 0, 0.3)',
+          borderWidth: 2,
+          borderColor: 'rgba(255, 255, 255, 0.8)'
+        }
+      },
       label: {
         show: true,
-        position: 'inside',
-        formatter: params => params.value > 0 ? params.value : ''
+        position: 'top',
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#333',
+        formatter: params => params.value > 0 ? params.value : '',
+        distance: 5
       }
     }
   })
   
   const option = {
+    backgroundColor: '#ffffff',
+    title: {
+      show: false
+    },
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'shadow' }
+      axisPointer: { 
+        type: 'shadow',
+        shadowStyle: {
+          color: 'rgba(33, 150, 243, 0.08)'
+        }
+      },
+      backgroundColor: 'rgba(255, 255, 255, 0.96)',
+      borderColor: '#2196f3',
+      borderWidth: 2,
+      textStyle: {
+        color: '#333',
+        fontSize: 13
+      },
+      padding: [12, 16],
+      formatter: params => {
+        let result = `<div style="font-weight: 700; font-size: 14px; margin-bottom: 10px; color: #2196f3; border-bottom: 1px solid #e3f2fd; padding-bottom: 6px;">${params[0].axisValue}</div>`
+        let total = 0
+        params.forEach(item => {
+          if (item.value > 0) {
+            total += item.value
+            result += `
+              <div style="display: flex; align-items: center; margin: 6px 0;">
+                <span style="display: inline-block; width: 14px; height: 14px; background: ${item.color}; border-radius: 3px; margin-right: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"></span>
+                <span style="flex: 1; font-size: 13px;">${item.seriesName}</span>
+                <span style="font-weight: 700; margin-left: 20px; color: #2196f3;">${item.value}</span>
+              </div>
+            `
+          }
+        })
+        result += `<div style="margin-top: 10px; padding-top: 8px; border-top: 2px solid #e3f2fd; font-weight: 700; font-size: 14px; color: #2196f3;">总计: ${total}</div>`
+        return result
+      }
     },
     legend: {
       data: cropList,
       type: 'scroll',
-      bottom: 0
+      bottom: 15,
+      itemWidth: 20,
+      itemHeight: 14,
+      itemGap: 18,
+      textStyle: {
+        fontSize: 13,
+        color: '#666'
+      },
+      pageIconColor: '#2196f3',
+      pageIconInactiveColor: '#ccc',
+      pageIconSize: 14,
+      pageTextStyle: {
+        color: '#666',
+        fontSize: 12
+      },
+      itemStyle: {
+        borderWidth: 0,
+        shadowBlur: 3,
+        shadowColor: 'rgba(0, 0, 0, 0.1)',
+        shadowOffsetY: 1
+      }
     },
     grid: {
       left: '3%',
       right: '4%',
-      bottom: '15%',
-      top: '3%',
+      bottom: '20%',
+      top: '8%',
       containLabel: true
     },
     xAxis: {
       type: 'category',
       data: regions,
+      axisLine: {
+        lineStyle: {
+          color: '#ddd',
+          width: 2
+        }
+      },
+      axisTick: {
+        show: false
+      },
       axisLabel: {
         rotate: 0,
-        interval: 0
+        interval: 0,
+        fontSize: 14,
+        color: '#333',
+        fontWeight: '600',
+        margin: 15
+      },
+      splitLine: {
+        show: false
       }
     },
     yAxis: {
       type: 'value',
-      name: '地块数'
+      name: '地块数',
+      nameTextStyle: {
+        fontSize: 14,
+        color: '#666',
+        fontWeight: '600',
+        padding: [0, 0, 12, 0]
+      },
+      axisLine: {
+        show: true,
+        lineStyle: {
+          color: '#ddd',
+          width: 2
+        }
+      },
+      axisTick: {
+        show: false
+      },
+      axisLabel: {
+        fontSize: 13,
+        color: '#666',
+        fontWeight: '500'
+      },
+      splitLine: {
+        lineStyle: {
+          color: '#f5f5f5',
+          type: 'solid',
+          width: 1
+        }
+      }
     },
     series: series
   }
@@ -1781,6 +1899,13 @@ const handleClearData = async () => {
 // 处理预览报告
 const handlePreviewReport = async () => {
   console.log('🔍 打开PDF预览对话框...')
+  
+  // 设置默认文件名
+  const date = new Date()
+  const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+  const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
+  pdfFilename.value = `Region_Comparison_${dateStr}_${timeStr}`
+  
   showPdfPreview.value = true
   
   // 如果还没有生成过PDF，立即生成
@@ -1843,16 +1968,12 @@ const generateReportPdf = async () => {
     
     // 4. 第二阶段内容和图表（如果存在）
     if (currentStep.value === 2 && phase2Data.value.length > 0) {
-      generatingMessage.value = '正在生成第二阶段分析内容...'
+      generatingMessage.value = '正在生成第二阶段分析内容和表格...'
       await addPhase2Content(pdf, pageWidth, pageHeight, fonts, colors)
-      generatingProgress.value = 70
+      generatingProgress.value = 75
       
       generatingMessage.value = '正在导出第二阶段图表...'
       await addPhase2Charts(pdf, pageWidth, pageHeight, fonts, colors)
-      generatingProgress.value = 85
-      
-      generatingMessage.value = '正在导出详细数据表格...'
-      await addPhase2DataTable(pdf, pageWidth, pageHeight, fonts, colors)
       generatingProgress.value = 90
     }
     
@@ -1944,27 +2065,70 @@ const addPhase1Content = async (pdf, pageWidth, pageHeight, fonts, colors) => {
     `
     
     const regions = phase1Data.value.map(item => item.regionName).join('、')
-    const titleSize = Math.max(fonts.title, 16)
-    const subtitleSize = Math.max(fonts.subtitle, 14)
-    const descSize = Math.max(fonts.description, 12)
+    // 缩小字体以容纳表格
+    const titleSize = Math.max(fonts.title * 0.75, 13)
+    const subtitleSize = Math.max(fonts.subtitle * 0.7, 11)
+    const descSize = Math.max(fonts.description * 0.75, 9)
+    const tableHeaderSize = Math.max(fonts.tableHeader * 0.65, 8)
+    const tableCellSize = Math.max(fonts.tableCell * 0.65, 7)
+    
+    // 构建详细数据表格HTML
+    const tableRows = phase1Data.value.map(item => `
+      <tr>
+        <td style="padding: 4px 2px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${item.regionName}</td>
+        <td style="padding: 4px 2px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">
+          <span style="color: ${item.recognitionType === 'crop_recognition' ? colors.success : colors.warning}; font-weight: bold;">
+            ${getRecognitionTypeLabel(item.recognitionType)}
+          </span>
+        </td>
+        <td style="padding: 4px 2px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${item.totalCount}</td>
+        <td style="padding: 4px 2px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; color: ${colors.success};">${item.plantedCount}</td>
+        <td style="padding: 4px 2px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; color: ${colors.warning};">${item.fallowCount}</td>
+        <td style="padding: 4px 2px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; font-weight: bold;">${item.plantingRate}%</td>
+        <td style="padding: 4px 2px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${typeof item.plantedArea === 'number' ? item.plantedArea.toFixed(2) : item.plantedArea}</td>
+        <td style="padding: 4px 2px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${typeof item.fallowArea === 'number' ? item.fallowArea.toFixed(2) : item.fallowArea}</td>
+      </tr>
+    `).join('')
     
     container.innerHTML = `
       <div>
-        <h2 style="font-size: ${titleSize}px; color: ${colors.primary}; margin-bottom: 20px; border-bottom: 3px solid ${colors.primary}; padding-bottom: 10px;">
+        <h2 style="font-size: ${titleSize}px; color: ${colors.primary}; margin-bottom: 12px; border-bottom: 2px solid ${colors.primary}; padding-bottom: 6px;">
           第一阶段：种植情况分析
         </h2>
-        <div style="background: #f5f7fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px;">分析区域:</h3>
-          <p style="font-size: ${descSize}px; line-height: 1.8;">${regions}</p>
+        <div style="background: #f5f7fa; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 6px;">分析区域:</h3>
+          <p style="font-size: ${descSize}px; line-height: 1.5; margin: 0;">${regions}</p>
         </div>
-        <div style="background: #f0f9ff; padding: 15px; border-radius: 8px;">
-          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px;">分析结果:</h3>
-          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: ${descSize}px;">
+        <div style="background: #f0f9ff; padding: 10px; border-radius: 6px; margin-bottom: 12px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 6px;">分析结果:</h3>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; font-size: ${descSize}px;">
             <div>• 总地块数: <strong>${totalPlantedCount.value + totalFallowCount.value}</strong> 个</div>
             <div>• 已种植地块: <strong style="color: ${colors.success};">${totalPlantedCount.value}</strong> 个</div>
             <div>• 未种植地块: <strong style="color: ${colors.danger};">${totalFallowCount.value}</strong> 个</div>
             <div>• 平均种植率: <strong style="color: ${colors.primary};">${averagePlantingRate.value}%</strong></div>
           </div>
+        </div>
+        <div style="margin-top: 12px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 8px; color: ${colors.primary};">
+            📊 各区域种植情况详细数据
+          </h3>
+          <table style="width: 100%; border-collapse: collapse; background: white; font-size: ${tableCellSize}px;">
+            <thead>
+              <tr style="background: linear-gradient(135deg, ${colors.primary}, ${colors.secondary});">
+                <th style="padding: 5px 2px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">区域</th>
+                <th style="padding: 5px 2px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">任务来源</th>
+                <th style="padding: 5px 2px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">总地块数</th>
+                <th style="padding: 5px 2px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">已种植</th>
+                <th style="padding: 5px 2px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">未种植</th>
+                <th style="padding: 5px 2px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">种植率</th>
+                <th style="padding: 5px 2px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">已种植面积(亩)</th>
+                <th style="padding: 5px 2px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">撂荒面积(亩)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
         </div>
       </div>
     `
@@ -1996,11 +2160,11 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   // 第一阶段图表从新页面开始
   pdf.addPage()
   let currentY = 40 // 当前Y位置
-  let isFirstChart = true
   
-  for (const chart of charts) {
+  for (let i = 0; i < charts.length; i++) {
+    const chart = charts[i]
     try {
-      console.log(`正在导出图表: ${chart.title}`)
+      console.log(`正在导出图表 [${i}]: ${chart.title}`)
       
       if (!chart.instance) {
         console.warn(`图表实例未找到: ${chart.title}`)
@@ -2049,13 +2213,23 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       
       const totalHeight = titleImgHeight + imgHeight + 20
       
-      // 检查是否需要新页
-      if (currentY + totalHeight > pageHeight - 50) {
+      // 布局规则：
+      // 索引0（各区域种植率对比）：第一页上半部，currentY = 40
+      // 索引1（种植/撂荒地块统计）：和索引0同一页下半部，间距+30
+      // 索引2（总体种植情况分布）：新页面上半部，currentY = 40
+      // 索引3（各区域撂荒面积对比）：和索引2同一页下半部，间距+30
+      if (i === 1) {
+        // 第二个图表：和第一个在同一页
+        currentY += 30
+      } else if (i === 2) {
+        // 第三个图表：新页面
         pdf.addPage()
         currentY = 40
-      } else if (!isFirstChart) {
-        currentY += 20
+      } else if (i === 3) {
+        // 第四个图表：和第三个在同一页
+        currentY += 30
       }
+      // i === 0（第一个图表）使用初始值 currentY = 40
       
       // 添加标题
       pdf.addImage(titleImgData, 'JPEG', 40, currentY, imgWidth, titleImgHeight)
@@ -2065,7 +2239,6 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       pdf.addImage(imgData, 'JPEG', 40, currentY, imgWidth, imgHeight)
       
       currentY += imgHeight
-      isFirstChart = false
       
       // 清理
       document.body.removeChild(titleContainer)
@@ -2079,54 +2252,193 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
 // 添加第二阶段内容
 const addPhase2Content = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   try {
-    console.log('开始生成第二阶段内容...')
+    console.log('开始生成第二阶段内容和表格...')
     pdf.addPage()
-    const container = document.createElement('div')
-    const containerWidth = Math.max(pageWidth - 80, 100)
-    container.style.cssText = `
+    
+    // 1. 先生成文字说明部分
+    const textContainer = document.createElement('div')
+    const containerWidth = Math.max(pageWidth - 60, 100)
+    textContainer.style.cssText = `
       position: fixed; left: -9999px; top: 0;
       width: ${containerWidth}px; background: white;
-      padding: 40px; font-family: "Microsoft YaHei", Arial, sans-serif;
+      padding: 20px; font-family: "Microsoft YaHei", Arial, sans-serif;
     `
     
     const regions = phase2Data.value.map(item => item.regionName).join('、')
-    const titleSize = Math.max(fonts.title, 16)
-    const subtitleSize = Math.max(fonts.subtitle, 14)
-    const descSize = Math.max(fonts.description, 12)
+    const regionCount = phase2Data.value.length
     
-    container.innerHTML = `
+    // 根据区域数量动态调整字体和间距
+    // 区域越多，字体和padding越小
+    let scaleFactor = 1.0
+    if (regionCount >= 6) {
+      scaleFactor = 0.65  // 6个或更多区域：最小化
+    } else if (regionCount >= 5) {
+      scaleFactor = 0.75  // 5个区域：较小
+    } else if (regionCount >= 4) {
+      scaleFactor = 0.85  // 4个区域：中等偏小
+    } else {
+      scaleFactor = 1.0   // 3个或更少：正常大小
+    }
+    
+    console.log(`📊 区域数量: ${regionCount}, 缩放因子: ${scaleFactor}`)
+    
+    // 应用缩放因子到所有尺寸
+    const titleSize = Math.max(fonts.title * 0.8 * scaleFactor, 12)
+    const subtitleSize = Math.max(fonts.subtitle * 0.75 * scaleFactor, 10)
+    const descSize = Math.max(fonts.description * 0.8 * scaleFactor, 8)
+    const tableTitleSize = Math.max(fonts.subtitle * 0.75 * scaleFactor, 10)
+    const tableHeaderSize = Math.max(fonts.tableHeader * 0.8 * scaleFactor, 8)
+    const tableCellSize = Math.max(fonts.tableCell * 0.8 * scaleFactor, 7)
+    
+    // 动态调整padding和间距
+    const headerPadding = Math.max(10 * scaleFactor, 5)
+    const cellPadding = Math.max(8 * scaleFactor, 4)
+    const marginBottom = Math.max(14 * scaleFactor, 8)
+    const lineHeight = Math.max(1.6, 1.3)
+    
+    // 构建表格HTML（每个区域一行，作物分布用简洁的文本展示）
+    const tableRows = phase2Data.value.map(item => {
+      // 构建作物分布文本（只显示作物名称和面积，过滤裸地）
+      const cropText = item.cropDistribution
+        ?.filter(c => c.name !== '裸地')
+        .map(crop => `${crop.name}(${crop.area}亩)`)
+        .join('、') || '无数据'
+      
+      return `
+        <tr>
+          <td style="padding: ${cellPadding}px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; font-weight: 500;">${item.regionName}</td>
+          <td style="padding: ${cellPadding}px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px;">${item.cropTypes}</td>
+          <td style="padding: ${cellPadding}px; border: 1px solid #ddd; text-align: left; font-size: ${tableCellSize}px; line-height: ${lineHeight};">${cropText}</td>
+          <td style="padding: ${cellPadding}px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; font-weight: 500;">${item.totalArea}</td>
+          <td style="padding: ${cellPadding}px; border: 1px solid #ddd; text-align: center; font-size: ${tableCellSize}px; color: ${colors.success}; font-weight: 600;">${item.dominantCrop}</td>
+        </tr>
+      `
+    }).join('')
+    
+    textContainer.innerHTML = `
       <div>
-        <h2 style="font-size: ${titleSize}px; color: ${colors.success}; margin-bottom: 20px; border-bottom: 3px solid ${colors.success}; padding-bottom: 10px;">
+        <h2 style="font-size: ${titleSize}px; color: ${colors.success}; margin-bottom: ${marginBottom}px; border-bottom: 2px solid ${colors.success}; padding-bottom: ${Math.max(8 * scaleFactor, 4)}px;">
           第二阶段：作物详细分析
         </h2>
-        <div style="background: #f5f7fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px;">分析区域:</h3>
-          <p style="font-size: ${descSize}px; line-height: 1.8;">${regions}</p>
+        <div style="background: #f5f7fa; padding: ${Math.max(12 * scaleFactor, 6)}px; border-radius: 6px; margin-bottom: ${Math.max(12 * scaleFactor, 6)}px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: ${Math.max(8 * scaleFactor, 4)}px;">分析区域:</h3>
+          <p style="font-size: ${descSize}px; line-height: ${lineHeight}; margin: 0;">${regions}</p>
         </div>
-        <div style="background: #f0f9ff; padding: 15px; border-radius: 8px;">
-          <h3 style="font-size: ${subtitleSize}px; margin-bottom: 10px;">分析结果:</h3>
-          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: ${descSize}px;">
+        <div style="background: #f0f9ff; padding: ${Math.max(12 * scaleFactor, 6)}px; border-radius: 6px; margin-bottom: ${marginBottom}px;">
+          <h3 style="font-size: ${subtitleSize}px; margin-bottom: ${Math.max(8 * scaleFactor, 4)}px;">分析结果:</h3>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: ${Math.max(8 * scaleFactor, 4)}px; font-size: ${descSize}px;">
             <div>• 作物种类: <strong>${totalCropTypes.value}</strong> 种</div>
             <div>• 总种植面积: <strong style="color: ${colors.success};">${totalCropArea.value}</strong> 亩</div>
             <div>• 主要作物: <strong style="color: ${colors.primary};">${dominantCrop.value}</strong></div>
             <div>• 分析区域: <strong>${phase2Data.value.length}</strong> 个</div>
           </div>
         </div>
+        <div style="margin-top: ${marginBottom}px;">
+          <h3 style="font-size: ${tableTitleSize}px; margin-bottom: ${Math.max(10 * scaleFactor, 6)}px; color: ${colors.success}; font-weight: 600;">
+            📊 各区域作物分布详细数据
+          </h3>
+          <table style="width: 100%; border-collapse: collapse; background: white;">
+            <thead>
+              <tr style="background: linear-gradient(135deg, ${colors.success}, ${colors.secondary});">
+                <th style="padding: ${headerPadding}px ${Math.max(8 * scaleFactor, 4)}px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">区域</th>
+                <th style="padding: ${headerPadding}px ${Math.max(8 * scaleFactor, 4)}px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">作物<br/>种类数</th>
+                <th style="padding: ${headerPadding}px ${Math.max(8 * scaleFactor, 4)}px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">作物分布</th>
+                <th style="padding: ${headerPadding}px ${Math.max(8 * scaleFactor, 4)}px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">总种植<br/>面积(亩)</th>
+                <th style="padding: ${headerPadding}px ${Math.max(8 * scaleFactor, 4)}px; border: 1px solid #ddd; text-align: center; color: white; font-size: ${tableHeaderSize}px; font-weight: bold;">主要<br/>作物</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </div>
       </div>
     `
-    document.body.appendChild(container)
-    await new Promise(resolve => setTimeout(resolve, 300))
+    document.body.appendChild(textContainer)
+    await new Promise(resolve => setTimeout(resolve, 400))
     
-    const canvas = await html2canvas(container, { scale: 2, backgroundColor: '#ffffff', logging: false })
+    const canvas = await html2canvas(textContainer, { 
+      scale: 2, 
+      backgroundColor: '#ffffff', 
+      logging: false,
+      useCORS: true
+    })
     const imgData = canvas.toDataURL('image/jpeg', 0.95)
     const imgWidth = containerWidth
     const imgHeight = (canvas.height * imgWidth) / canvas.width
-    pdf.addImage(imgData, 'JPEG', 40, 40, imgWidth, imgHeight)
-    document.body.removeChild(container)
-    console.log('第二阶段内容生成成功')
+    
+    document.body.removeChild(textContainer)
+    
+    // 将整个内容（包括表格）放在同一页
+    let currentY = 30
+    
+    // 检查是否需要缩放以适应页面
+    const maxHeight = pageHeight - 60
+    if (imgHeight <= maxHeight) {
+      pdf.addImage(imgData, 'JPEG', 30, currentY, imgWidth, imgHeight)
+    } else {
+      // 如果内容太高，缩放以适应
+      const scale = maxHeight / imgHeight
+      const scaledWidth = imgWidth * scale
+      const scaledHeight = maxHeight
+      const offsetX = (pageWidth - scaledWidth) / 2
+      pdf.addImage(imgData, 'JPEG', offsetX, currentY, scaledWidth, scaledHeight)
+    }
+    
+    console.log('第二阶段内容和表格生成成功')
   } catch (error) {
     console.error('生成第二阶段内容失败:', error)
     throw new Error('生成第二阶段内容失败: ' + error.message)
+  }
+}
+
+// 添加第二阶段详细数据表格（截取UI）
+const addPhase2DetailTable = async (pdf, pageWidth, pageHeight, fonts, colors) => {
+  try {
+    console.log('开始截取第二阶段详细数据表格...')
+    
+    if (!phase2DetailTableCard.value) {
+      console.warn('表格元素未找到')
+      return
+    }
+    
+    pdf.addPage()
+    
+    // 等待DOM渲染
+    await new Promise(resolve => setTimeout(resolve, 300))
+    
+    // 截取表格元素
+    const tableElement = phase2DetailTableCard.value.$el
+    const canvas = await html2canvas(tableElement, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      logging: false,
+      useCORS: true
+    })
+    
+    const imgData = canvas.toDataURL('image/jpeg', 0.95)
+    
+    // 计算图片尺寸
+    const imgWidth = pageWidth - 60
+    const imgHeight = (canvas.height * imgWidth) / canvas.width
+    
+    // 检查是否需要缩放以适应页面
+    const maxHeight = pageHeight - 60
+    if (imgHeight <= maxHeight) {
+      pdf.addImage(imgData, 'JPEG', 30, 30, imgWidth, imgHeight)
+    } else {
+      // 如果超高，按比例缩小
+      const scale = maxHeight / imgHeight
+      const scaledWidth = imgWidth * scale
+      const scaledHeight = maxHeight
+      const offsetX = (pageWidth - scaledWidth) / 2
+      pdf.addImage(imgData, 'JPEG', offsetX, 30, scaledWidth, scaledHeight)
+    }
+    
+    console.log('第二阶段详细数据表格截取成功')
+  } catch (error) {
+    console.error('截取表格失败:', error)
+    throw new Error('截取表格失败: ' + error.message)
   }
 }
 
@@ -2139,14 +2451,14 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
     { instance: regionCropCompareChart, title: '各区域作物分布对比' }
   ]
   
-  // 获取当前PDF的页数，确定Y位置
-  const pageCount = pdf.internal.getNumberOfPages()
-  let currentY = 40
-  let isFirstChart = true
+  // 第一个图表从新页面开始
+  pdf.addPage()
+  let currentY = 20
   
-  for (const chart of charts) {
+  for (let i = 0; i < charts.length; i++) {
+    const chart = charts[i]
     try {
-      console.log(`正在导出第二阶段图表: ${chart.title}`)
+      console.log(`正在导出第二阶段图表 [${i}]: ${chart.title}`)
       
       if (!chart.instance) {
         console.warn(`图表实例未找到: ${chart.title}`)
@@ -2195,13 +2507,23 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       
       const totalHeight = titleImgHeight + imgHeight + 20
       
-      // 检查是否需要新页
-      if (currentY + totalHeight > pageHeight - 50) {
+      // 布局规则：
+      // 索引0（作物类型分布）：第一页上半部，currentY = 20
+      // 索引1（各区域作物种类数量）：和索引0同一页下半部，间距+30
+      // 索引2（作物面积排名）：新页面上半部，currentY = 20
+      // 索引3（各区域作物分布对比）：和索引2同一页下半部，间距+30
+      if (i === 1) {
+        // 第二个图表：和第一个在同一页
+        currentY += 30
+      } else if (i === 2) {
+        // 第三个图表：新页面
         pdf.addPage()
-        currentY = 40
-      } else if (!isFirstChart) {
-        currentY += 20
+        currentY = 20
+      } else if (i === 3) {
+        // 第四个图表：和第三个在同一页
+        currentY += 30
       }
+      // i === 0（第一个图表）使用初始值 currentY = 20
       
       // 添加标题
       pdf.addImage(titleImgData, 'JPEG', 40, currentY, imgWidth, titleImgHeight)
@@ -2211,7 +2533,6 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       pdf.addImage(imgData, 'JPEG', 40, currentY, imgWidth, imgHeight)
       
       currentY += imgHeight
-      isFirstChart = false
       
       // 清理
       document.body.removeChild(titleContainer)
@@ -2418,46 +2739,106 @@ const closePdfPreview = () => {
   // 不清理PDF数据，允许重新打开预览
 }
 
-// 下载当前PDF - 弹出对话框让用户输入文件名和任务名
-const downloadCurrentPdf = () => {
+// 下载到本地
+const downloadToLocal = () => {
+  console.log('📥 点击了下载到本地按钮')
+  console.log('pdfBlob状态:', pdfBlob.value ? '存在' : '不存在')
+  console.log('generating状态:', generating.value)
+  
   if (!pdfBlob.value) {
     ElMessage.error('没有可下载的PDF')
     return
   }
   
-  // 生成英文默认文件名
-  const date = new Date()
-  const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-  const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
-  
-  pdfSaveForm.value = {
-    filename: `Chart_Report_${dateStr}_${timeStr}`,
-    taskName: '图表报表' // 固定任务名
-  }
-  
-  showPdfSaveDialog.value = true
-}
-
-// 确认保存PDF
-const confirmSavePdf = async () => {
-  savingPdf.value = true
-  
   try {
-    // 如果用户没填文件名，使用默认的
-    let filename = pdfSaveForm.value.filename.trim()
+    // 获取文件名
+    let filename = pdfFilename.value.trim()
+    console.log('用户输入的文件名:', filename)
+    
     if (!filename) {
+      // 使用默认文件名
       const date = new Date()
       const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
       const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
-      filename = `Chart_Report_${dateStr}_${timeStr}`
+      filename = `Region_Comparison_${dateStr}_${timeStr}`
+      console.log('使用默认文件名:', filename)
     }
-    filename = filename + '.pdf'
+    
+    // 确保文件名以.pdf结尾
+    if (!filename.toLowerCase().endsWith('.pdf')) {
+      filename = filename + '.pdf'
+    }
+    
+    console.log('最终文件名:', filename)
+    
+    // 创建下载链接
+    const url = URL.createObjectURL(pdfBlob.value)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    ElMessage.success({
+      message: `✅ PDF已开始下载\n文件名: ${filename}`,
+      duration: 3000,
+      showClose: true
+    })
+    
+    console.log('✅ PDF下载成功:', filename)
+  } catch (error) {
+    console.error('下载PDF失败:', error)
+    ElMessage.error('下载失败: ' + (error.message || '未知错误'))
+  }
+}
+
+// 保存到数据管理
+const saveToDataManagement = async () => {
+  console.log('💾 点击了保存到数据管理按钮')
+  console.log('pdfBlob状态:', pdfBlob.value ? '存在' : '不存在')
+  console.log('generating状态:', generating.value)
+  
+  if (!pdfBlob.value) {
+    ElMessage.error('没有可保存的PDF')
+    return
+  }
+  
+  const loading = ElMessage({
+    message: '正在保存PDF到数据管理...',
+    duration: 0,
+    type: 'info'
+  })
+  
+  try {
+    // 获取文件名
+    let filename = pdfFilename.value.trim()
+    console.log('用户输入的文件名:', filename)
+    
+    if (!filename) {
+      // 使用默认文件名
+      const date = new Date()
+      const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+      const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
+      filename = `Region_Comparison_${dateStr}_${timeStr}`
+      console.log('使用默认文件名:', filename)
+    }
+    
+    // 确保文件名以.pdf结尾
+    if (!filename.toLowerCase().endsWith('.pdf')) {
+      filename = filename + '.pdf'
+    }
+    
+    console.log('最终文件名:', filename)
     
     // 创建FormData用于上传PDF
     const formData = new FormData()
     formData.append('file', pdfBlob.value, filename)
-    formData.append('type', 'chart_report') // 图表报表类型
-    formData.append('taskName', '图表报表') // 固定任务名
+    formData.append('type', 'region_comparison') // 区域对比类型
+    formData.append('taskName', '区域对比') // 任务名
+    
+    console.log('准备上传到后端...')
     
     // 上传到后端
     const response = await fetch('/api/analysis/upload-pdf-report', {
@@ -2465,42 +2846,36 @@ const confirmSavePdf = async () => {
       body: formData
     })
     
+    console.log('后端响应状态:', response.status)
+    
     const result = await response.json()
+    console.log('后端响应结果:', result)
+    
+    loading.close()
     
     if (result.code === 200) {
-      console.log('✅ 图表报表PDF已成功保存:', {
+      console.log('✅ PDF已成功保存到数据管理:', {
         filename,
-        taskName: '图表报表',
-        type: 'chart_report',
+        taskName: '区域对比',
+        type: 'region_comparison',
         size: `${(pdfBlob.value.size / 1024 / 1024).toFixed(2)} MB`
       })
       
-      // 同时在浏览器中下载
-      const url = URL.createObjectURL(pdfBlob.value)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = filename
-      link.click()
-      URL.revokeObjectURL(url)
-      
       ElMessage.success({
-        message: `✅ PDF已保存到分析结果列表并开始下载\n文件名: ${filename}\n任务名: 图表报表`,
+        message: `✅ PDF已保存到分析结果列表\n文件名: ${filename}\n分析类型: 区域对比`,
         duration: 4000,
         showClose: true
       })
       
-      console.log('💡 提示：前往数据管理界面 → 结果队列 → 分析结果，筛选"图表报表"即可查看')
-      
-      showPdfSaveDialog.value = false
+      console.log('💡 提示：前往数据管理界面 → 结果队列 → 分析结果，筛选"区域对比"即可查看')
     } else {
       console.error('❌ 保存失败:', result)
       ElMessage.error('保存失败: ' + (result.message || '未知错误'))
     }
   } catch (error) {
+    loading.close()
     console.error('保存PDF失败:', error)
     ElMessage.error('保存失败: ' + (error.message || '网络错误'))
-  } finally {
-    savingPdf.value = false
   }
 }
 
