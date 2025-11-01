@@ -41,7 +41,7 @@ export function getAllCropTypes() {
  */
 export const CROP_COLOR_MAP = {
   '裸地': '#D2B48C',      // 棕褐色
-  '棉花': '#FFFFFF',      // 白色
+  '棉花': '#FFF8DC',      // 玉米丝色（类似白色但可见）
   '小麦': '#FFD700',      // 金黄色
   '玉米': '#FFA500',      // 橙色
   '番茄': '#FF6347',      // 番茄红
