@@ -3014,6 +3014,8 @@ router.get('/saved-analysis-results', (req, res) => {
               analysisType = 'chart_report'
             } else if (reportType === 'temporal_report') {
               analysisType = 'temporal_report'
+            } else if (reportType === 'region_comparison') {
+              analysisType = 'region_comparison'
             }
             
             console.log(`   📋 读取报告元数据: ${filename}, 任务名: ${taskName}, 类型: ${reportType}`)
@@ -3140,12 +3142,25 @@ router.delete('/delete-analysis-result/:type/:filename', (req, res) => {
     console.log(`   文件名: ${filename}`)
     
     let filePath
+    const filesToDelete = []
+    
     if (type === 'temporal') {
       filePath = path.join(TEMPORAL_DIR, filename)
+      filesToDelete.push(filePath)
     } else if (type === 'difference') {
       filePath = path.join(DIFFERENCE_DIR, filename)
+      filesToDelete.push(filePath)
     } else if (type === 'report') {
       filePath = path.join(REPORTS_DIR, filename)
+      filesToDelete.push(filePath)
+      
+      // 如果是PDF报告，同时删除对应的JSON文件
+      if (filename.toLowerCase().endsWith('.pdf')) {
+        const jsonFilename = filename.replace(/\.pdf$/i, '.json')
+        const jsonFilePath = path.join(REPORTS_DIR, jsonFilename)
+        filesToDelete.push(jsonFilePath)
+        console.log(`   📝 同时删除JSON文件: ${jsonFilename}`)
+      }
     } else {
       console.log(`   ❌ 不支持的文件类型: ${type}`)
       return res.status(400).json({
@@ -3172,18 +3187,25 @@ router.delete('/delete-analysis-result/:type/:filename', (req, res) => {
       })
     }
     
-    // 删除文件
-    fs.unlinkSync(filePath)
-    console.log(`   ✅ 文件已删除: ${type}/${filename}`)
+    // 删除所有文件
+    let deletedCount = 0
+    for (const fileToDelete of filesToDelete) {
+      if (fs.existsSync(fileToDelete)) {
+        fs.unlinkSync(fileToDelete)
+        console.log(`   ✅ 文件已删除: ${path.basename(fileToDelete)}`)
+        deletedCount++
+      }
+    }
     
     // 验证删除成功
     const stillExists = fs.existsSync(filePath)
-    console.log(`   验证: 文件是否仍存在 = ${stillExists}`)
+    console.log(`   验证: 主文件是否仍存在 = ${stillExists}`)
+    console.log(`   共删除 ${deletedCount} 个文件`)
     
     res.json({
       code: 200,
-      message: '删除成功',
-      data: { type, filename, deleted: !stillExists }
+      message: `删除成功（共 ${deletedCount} 个文件）`,
+      data: { type, filename, deleted: !stillExists, totalDeleted: deletedCount }
     })
   } catch (error) {
     console.error('❌ 删除分析结果失败:', error)

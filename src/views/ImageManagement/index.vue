@@ -542,6 +542,7 @@
                     <el-option label="差异检测" value="difference" />
                     <el-option label="时序报表" value="report" />
                     <el-option label="图表报表" value="chart_report" />
+                    <el-option label="区域对比" value="region_comparison" />
                   </el-select>
                 </el-form-item>
                 <el-form-item label="用途">
@@ -3953,7 +3954,8 @@ const getAnalysisTypeText = (type) => {
     'difference': '差异检测',
     'report': '时序报表',
     'chart_report': '图表报表',
-    'temporal_report': '时序报表'
+    'temporal_report': '时序报表',
+    'region_comparison': '区域对比'
   }
   return map[type] || type
 }
@@ -3962,7 +3964,8 @@ const getAnalysisTypeText = (type) => {
 const getAnalysisTypeTagType = (type) => {
   const map = {
     'temporal': 'warning',
-    'difference': 'success'
+    'difference': 'success',
+    'region_comparison': 'primary'
   }
   return map[type] || 'info'
 }

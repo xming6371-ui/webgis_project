@@ -418,7 +418,7 @@
         </el-card>
 
         <!-- 作物面积排名 -->
-        <el-card shadow="never" class="chart-card">
+        <el-card shadow="never" class="chart-card-wide">
           <template #header>
             <div class="card-header">
               <BarChart :size="16" />
@@ -515,12 +515,41 @@
                   <label>卡片数值</label>
                   <el-input-number v-model="fontConfig.cardValue" :min="20" :max="48" :step="2" size="small" controls-position="right" />
                 </div>
+                
+                <!-- 图表字体配置 -->
+                <el-divider content-position="left" style="margin: 15px 0 10px 0;">
+                  <span style="font-size: 12px; color: #909399;">📊 图表字体</span>
+                </el-divider>
+                
+                <div class="font-item">
+                  <label>图例大小</label>
+                  <el-input-number v-model="fontConfig.chartLegend" :min="8" :max="24" :step="1" size="small" controls-position="right" />
+                </div>
+                <div class="font-item">
+                  <label>柱状图数值</label>
+                  <el-input-number v-model="fontConfig.chartBarLabel" :min="8" :max="28" :step="1" size="small" controls-position="right" />
+                </div>
+                <div class="font-item">
+                  <label>饼图数值</label>
+                  <el-input-number v-model="fontConfig.chartPieLabel" :min="8" :max="28" :step="1" size="small" controls-position="right" />
+                </div>
+                <div class="font-item">
+                  <label>坐标轴文字</label>
+                  <el-input-number v-model="fontConfig.chartAxisLabel" :min="8" :max="28" :step="1" size="small" controls-position="right" />
+                </div>
               </div>
               
               <el-alert type="info" :closable="false" style="margin-top: 15px;">
                 <template #title>
-                  <div style="font-size: 12px; line-height: 1.6;">
-                    💡 调整字体后点击"应用配置"查看效果。
+                  <div style="font-size: 11px; line-height: 1.8; color: #606266;">
+                    <div style="margin-bottom: 8px; font-weight: 600; color: #409EFF;">💡 图表字体说明：</div>
+                    <div>• <strong>图例大小</strong>：所有图表右侧或底部的颜色块+文字说明</div>
+                    <div>• <strong>柱状图数值</strong>：柱子上方或内部显示的数字</div>
+                    <div>• <strong>饼图数值</strong>：饼图扇区上显示的百分比或数值</div>
+                    <div>• <strong>坐标轴文字</strong>：柱状图X轴Y轴的所有文字（包括刻度和名称，如"作物种类数"、"面积(亩)"等）</div>
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #E4E7ED; color: #909399;">
+                      调整后点击"应用配置"查看效果
+                    </div>
                   </div>
                 </template>
               </el-alert>
@@ -581,8 +610,22 @@
             />
           </div>
           <div v-else-if="generating" class="preview-loading">
-            <el-progress :percentage="generatingProgress" :stroke-width="12" striped striped-flow />
-            <p style="margin-top: 15px; color: #909399; font-size: 14px;">{{ generatingMessage }}</p>
+            <div class="loading-animation">
+              <el-icon :size="60" class="rotating-icon"><Loading /></el-icon>
+            </div>
+            <el-progress 
+              :percentage="generatingProgress" 
+              :stroke-width="16" 
+              striped 
+              striped-flow 
+              :color="'#667eea'"
+              style="width: 80%; margin-top: 30px;"
+            >
+              <template #default="{ percentage }">
+                <span style="font-size: 18px; font-weight: 600; color: #667eea;">{{ percentage }}%</span>
+              </template>
+            </el-progress>
+            <p style="margin-top: 20px; color: #667eea; font-size: 16px; font-weight: 500;">{{ generatingMessage }}</p>
           </div>
           <div v-else class="preview-placeholder">
             <el-empty description="点击应用配置按钮生成PDF预览">
@@ -610,20 +653,12 @@
             <el-button @click="closePdfPreview">取消</el-button>
             <el-button 
               type="primary" 
-              @click="downloadToLocal" 
+              @click="handleExportPdf" 
               :disabled="!pdfBlob || generating"
-              plain
+              :loading="exporting"
             >
               <template #icon><Download :size="16" /></template>
-              下载到本地
-            </el-button>
-            <el-button 
-              type="success" 
-              @click="saveToDataManagement" 
-              :disabled="!pdfBlob || generating"
-            >
-              <template #icon><FolderOpen :size="16" /></template>
-              保存到数据管理
+              {{ exporting ? '导出中...' : '导出PDF' }}
             </el-button>
           </div>
         </div>
@@ -641,7 +676,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 defineOptions({
   name: 'Report'
 })
-import { UploadFilled } from '@element-plus/icons-vue'
+import { UploadFilled, Loading } from '@element-plus/icons-vue'
 import {
   Download, RotateCcw, PieChart, BarChart,
   FolderOpen, MapPin,
@@ -660,6 +695,7 @@ const analyzing = ref(false)
 const generating = ref(false)
 const generatingProgress = ref(0)
 const generatingMessage = ref('')
+const exporting = ref(false)
 
 // ==================== 从识别结果选择 ====================
 const existingFiles = ref([])
@@ -686,7 +722,12 @@ const defaultFontConfig = {
   tableHeader: 14,
   tableCell: 12,
   description: 11,
-  cardValue: 24
+  cardValue: 24,
+  // 图表字体
+  chartBarLabel: 12,
+  chartPieLabel: 12,
+  chartLegend: 12,
+  chartAxisLabel: 12
 }
 const fontConfig = ref({ ...defaultFontConfig })
 
@@ -1184,6 +1225,9 @@ const initPlantingRateChart = () => {
     yAxis: {
       type: 'value',
       name: '种植率(%)',
+      nameTextStyle: {
+        fontSize: 14
+      },
       max: 100
     },
     series: [{
@@ -1244,7 +1288,10 @@ const initPlantingStatusChart = () => {
     },
     yAxis: {
       type: 'value',
-      name: '地块数'
+      name: '地块数',
+      nameTextStyle: {
+        fontSize: 14
+      }
     },
     series: [
       {
@@ -1348,14 +1395,18 @@ const initFallowAreaChart = () => {
       }
     },
     grid: {
-      left: '3%',
+      left: '5%',
       right: '4%',
-      bottom: '3%',
+      bottom: '12%',
       containLabel: true
     },
     xAxis: {
       type: 'value',
-      name: '面积(亩)'
+      name: '面积(亩)',
+      nameTextStyle: {
+        fontSize: 14
+      },
+      nameGap: 25
     },
     yAxis: {
       type: 'category',
@@ -1508,7 +1559,10 @@ const initCropVarietyChart = () => {
     },
     yAxis: {
       type: 'value',
-      name: '作物种类数'
+      name: '作物种类数',
+      nameTextStyle: {
+        fontSize: 14
+      }
     },
     series: [{
       name: '作物种类',
@@ -1563,11 +1617,8 @@ const initCropAreaRankingChart = () => {
   const cropAreas = sortedCrops.map(item => parseFloat(item.area))
   const cropColors = sortedCrops.map(item => item.color)
   
-  // 根据作物种类数量动态调整图表高度
-  // 每个柱子分配50px高度，最小300px，最大500px
-  const barHeight = 50
-  const calculatedHeight = Math.max(300, Math.min(500, cropNames.length * barHeight + 80))
-  chartDom.style.height = `${calculatedHeight}px`
+  // 改为纵向柱状图，固定高度
+  chartDom.style.height = '350px'
   
   if (cropAreaRankingChart) cropAreaRankingChart.dispose()
   cropAreaRankingChart = echarts.init(chartDom)
@@ -1580,34 +1631,65 @@ const initCropAreaRankingChart = () => {
     },
     grid: {
       left: '3%',
-      right: '4%',
-      bottom: '3%',
+      right: '3%',
+      bottom: '15%',  // 增加底部空间，容纳横向标签
+      top: '8%',
       containLabel: true
     },
     xAxis: {
-      type: 'value',
-      name: '面积(亩)'
+      type: 'category',
+      data: cropNames,
+      axisLabel: {
+        interval: 0,  // 显示所有标签
+        rotate: 0,    // 横向显示，不旋转
+        fontSize: 12
+      }
     },
     yAxis: {
-      type: 'category',
-      data: cropNames
+      type: 'value',
+      name: '面积(亩)',
+      nameTextStyle: {
+        fontSize: 14
+      },
+      // 智能计算最大值：按照合理的间隔向上取整
+      max: function(value) {
+        const maxValue = value.max
+        // 根据数量级确定合理的间隔
+        let interval
+        if (maxValue <= 1000) {
+          interval = 100
+        } else if (maxValue <= 10000) {
+          interval = 1000
+        } else if (maxValue <= 50000) {
+          interval = 5000
+        } else if (maxValue <= 100000) {
+          interval = 10000
+        } else if (maxValue <= 500000) {
+          interval = 50000
+        } else {
+          interval = 100000
+        }
+        // 向上取整到最近的间隔倍数
+        return Math.ceil(maxValue / interval) * interval
+      }
     },
     series: [{
       name: '种植面积',
-        type: 'bar',
+      type: 'bar',
       data: cropAreas.map((area, index) => ({
         value: area,
         itemStyle: { color: cropColors[index] }
       })),
-      barMaxWidth: 40,  // 限制柱子最大宽度
-        label: {
-          show: true,
-          position: 'right',
-          formatter: '{c} 亩'
+      barMaxWidth: 50,  // 限制柱子最大宽度
+      label: {
+        show: true,
+        position: 'top',
+        formatter: '{c} 亩',
+        fontSize: 11
       },
       itemStyle: {
-        borderRadius: [0, 8, 8, 0]
-        }
+        borderRadius: [8, 8, 0, 0]  // 顶部圆角
+      }
     }]
   }
   
@@ -1637,7 +1719,26 @@ const initRegionCropCompareChart = () => {
   const cropList = Array.from(allCrops)
   const regions = phase2Data.value.map(item => item.regionName)
 
-  // 改为分组柱状图（grouped bar chart）
+  // 根据区域数量动态设置柱子宽度和字体大小：区域越少，柱子越粗，字体越大
+  const regionCount = regions.length
+  let barWidthPercent = '60%'
+  let barMaxWidth = 60  // 默认最大宽度60px
+  let labelFontSize = 14  // 默认标签字体大小
+  if (regionCount <= 2) {
+    barWidthPercent = '80%' // 2个或更少区域，柱子占80%，更粗
+    barMaxWidth = 100  // 最大宽度100px
+    labelFontSize = 16  // 字体更大
+  } else if (regionCount <= 4) {
+    barWidthPercent = '70%' // 3-4个区域，柱子占70%
+    barMaxWidth = 80  // 最大宽度80px
+    labelFontSize = 15  // 字体稍大
+  } else {
+    barWidthPercent = '60%' // 5个或更多区域，柱子占60%
+    barMaxWidth = 60  // 最大宽度60px
+    labelFontSize = 14  // 默认字体
+  }
+
+  // 改为横向堆叠柱状图，每个区域占一行
   const series = cropList.map(cropName => {
     const data = phase2Data.value.map(region => {
       if (region.cropDistribution) {
@@ -1654,35 +1755,41 @@ const initRegionCropCompareChart = () => {
     return {
       name: cropName,
       type: 'bar',
-      // 不使用stack，改为分组显示
-      barGap: '10%',
-      barMaxWidth: 40,
+      stack: 'total', // 使用堆叠
+      barWidth: barWidthPercent, // 根据区域数量动态调整柱子宽度
+      barMaxWidth: barMaxWidth, // 柱子最大宽度
       data: data,
       itemStyle: { 
         color: color,
-        borderRadius: [4, 4, 0, 0],
-        shadowBlur: 4,
-        shadowColor: 'rgba(0, 0, 0, 0.15)',
-        shadowOffsetY: 2
+        borderRadius: 0,
+        shadowBlur: 2,
+        shadowColor: 'rgba(0, 0, 0, 0.1)',
+        shadowOffsetY: 1
       },
       emphasis: {
         itemStyle: {
-          shadowBlur: 12,
+          shadowBlur: 8,
           shadowOffsetX: 0,
-          shadowOffsetY: 6,
-          shadowColor: 'rgba(0, 0, 0, 0.3)',
+          shadowOffsetY: 4,
+          shadowColor: 'rgba(0, 0, 0, 0.2)',
           borderWidth: 2,
           borderColor: 'rgba(255, 255, 255, 0.8)'
         }
       },
       label: {
         show: true,
-        position: 'top',
-        fontSize: 12,
-        fontWeight: '600',
-        color: '#333',
-        formatter: params => params.value > 0 ? params.value : '',
-        distance: 5
+        position: 'inside',
+        fontSize: labelFontSize,  // 根据区域数量动态调整字体大小
+        fontWeight: '700',
+        color: '#fff',
+        // 只显示值较大的标签，避免小值标签重叠（根据区域数量调整阈值）
+        formatter: params => {
+          if (params.value === 0) return ''
+          // 根据区域数量设置阈值：区域越多，阈值越高
+          const threshold = regionCount <= 2 ? 20 : regionCount <= 4 ? 50 : 100
+          return params.value >= threshold ? params.value : ''
+        },
+        distance: 0
       }
     }
   })
@@ -1694,6 +1801,7 @@ const initRegionCropCompareChart = () => {
     },
     tooltip: {
       trigger: 'axis',
+      confine: false,  // 允许tooltip溢出容器
       axisPointer: { 
         type: 'shadow',
         shadowStyle: {
@@ -1705,45 +1813,48 @@ const initRegionCropCompareChart = () => {
       borderWidth: 2,
       textStyle: {
         color: '#333',
-        fontSize: 13
+        fontSize: 14
       },
-      padding: [12, 16],
+      padding: [15, 18],
       formatter: params => {
-        let result = `<div style="font-weight: 700; font-size: 14px; margin-bottom: 10px; color: #2196f3; border-bottom: 1px solid #e3f2fd; padding-bottom: 6px;">${params[0].axisValue}</div>`
+        let result = `<div style="font-weight: 700; font-size: 16px; margin-bottom: 12px; color: #2196f3; border-bottom: 2px solid #e3f2fd; padding-bottom: 8px;">${params[0].axisValue}</div>`
         let total = 0
         params.forEach(item => {
           if (item.value > 0) {
             total += item.value
             result += `
-              <div style="display: flex; align-items: center; margin: 6px 0;">
-                <span style="display: inline-block; width: 14px; height: 14px; background: ${item.color}; border-radius: 3px; margin-right: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"></span>
-                <span style="flex: 1; font-size: 13px;">${item.seriesName}</span>
-                <span style="font-weight: 700; margin-left: 20px; color: #2196f3;">${item.value}</span>
+              <div style="display: flex; align-items: center; margin: 8px 0;">
+                <span style="display: inline-block; width: 16px; height: 16px; background: ${item.color}; border-radius: 3px; margin-right: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.15);"></span>
+                <span style="flex: 1; font-size: 14px;">${item.seriesName}</span>
+                <span style="font-weight: 700; margin-left: 25px; color: #2196f3; font-size: 15px;">${item.value}</span>
               </div>
             `
           }
         })
-        result += `<div style="margin-top: 10px; padding-top: 8px; border-top: 2px solid #e3f2fd; font-weight: 700; font-size: 14px; color: #2196f3;">总计: ${total}</div>`
+        result += `<div style="margin-top: 12px; padding-top: 10px; border-top: 2px solid #e3f2fd; font-weight: 700; font-size: 16px; color: #2196f3;">总计: ${total}</div>`
         return result
       }
     },
     legend: {
       data: cropList,
       type: 'scroll',
-      bottom: 15,
-      itemWidth: 20,
-      itemHeight: 14,
-      itemGap: 18,
+      top: 10,
+      right: 20,
+      orient: 'vertical',
+      itemWidth: 22,
+      itemHeight: 16,
+      itemGap: 15,
       textStyle: {
-        fontSize: 13,
-        color: '#666'
+        fontSize: 14,
+        color: '#666',
+        fontWeight: '500'
       },
       pageIconColor: '#2196f3',
       pageIconInactiveColor: '#ccc',
-      pageIconSize: 14,
+      pageIconSize: 16,
       pageTextStyle: {
         color: '#666',
-        fontSize: 12
+        fontSize: 13
       },
       itemStyle: {
         borderWidth: 0,
@@ -1754,12 +1865,44 @@ const initRegionCropCompareChart = () => {
     },
     grid: {
       left: '3%',
-      right: '4%',
-      bottom: '20%',
+      right: '25%',
+      bottom: '8%',
       top: '8%',
       containLabel: true
     },
     xAxis: {
+      type: 'value',
+      name: '地块数',
+      nameTextStyle: {
+        fontSize: 15,
+        color: '#666',
+        fontWeight: '600',
+        padding: [0, 0, 0, 10]
+      },
+      axisLine: {
+        show: true,
+        lineStyle: {
+          color: '#ddd',
+          width: 2
+        }
+      },
+      axisTick: {
+        show: false
+      },
+      axisLabel: {
+        fontSize: 14,
+        color: '#666',
+        fontWeight: '500'
+      },
+      splitLine: {
+        lineStyle: {
+          color: '#f5f5f5',
+          type: 'solid',
+          width: 1
+        }
+      }
+    },
+    yAxis: {
       type: 'category',
       data: regions,
       axisLine: {
@@ -1772,47 +1915,13 @@ const initRegionCropCompareChart = () => {
         show: false
       },
       axisLabel: {
-        rotate: 0,
-        interval: 0,
-        fontSize: 14,
+        fontSize: 16,
         color: '#333',
-        fontWeight: '600',
+        fontWeight: '700',
         margin: 15
       },
       splitLine: {
         show: false
-      }
-    },
-    yAxis: {
-      type: 'value',
-      name: '地块数',
-      nameTextStyle: {
-        fontSize: 14,
-        color: '#666',
-        fontWeight: '600',
-        padding: [0, 0, 12, 0]
-      },
-      axisLine: {
-        show: true,
-        lineStyle: {
-          color: '#ddd',
-          width: 2
-        }
-      },
-      axisTick: {
-        show: false
-      },
-      axisLabel: {
-        fontSize: 13,
-        color: '#666',
-        fontWeight: '500'
-      },
-      splitLine: {
-        lineStyle: {
-          color: '#f5f5f5',
-          type: 'solid',
-          width: 1
-        }
       }
     },
     series: series
@@ -1937,7 +2046,12 @@ const generateReportPdf = async () => {
       tableHeader: Number(fontConfig.value.tableHeader) || 20,
       tableCell: Number(fontConfig.value.tableCell) || 15,
       description: Number(fontConfig.value.description) || 14,
-      cardValue: Number(fontConfig.value.cardValue) || 32
+      cardValue: Number(fontConfig.value.cardValue) || 32,
+      // 图表字体
+      chartLegend: Number(fontConfig.value.chartLegend) || 12,
+      chartBarLabel: Number(fontConfig.value.chartBarLabel) || 12,
+      chartPieLabel: Number(fontConfig.value.chartPieLabel) || 12,
+      chartAxisLabel: Number(fontConfig.value.chartAxisLabel) || 12
     }
     
     console.log('字体配置:', fonts)
@@ -2151,10 +2265,10 @@ const addPhase1Content = async (pdf, pageWidth, pageHeight, fonts, colors) => {
 // 添加第一阶段图表（智能排版）
 const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   const charts = [
-    { instance: plantingRateChart, title: '各区域种植率对比' },
-    { instance: plantingStatusChart, title: '种植/撂荒地块统计' },
-    { instance: overallPieChart, title: '总体种植情况分布' },
-    { instance: fallowAreaChart, title: '各区域撂荒面积对比' }
+    { instance: plantingRateChart, title: '各区域种植率对比', pdfConfig: {} },
+    { instance: plantingStatusChart, title: '种植/撂荒地块统计', pdfConfig: {} },
+    { instance: overallPieChart, title: '总体种植情况分布', pdfConfig: {} },
+    { instance: fallowAreaChart, title: '各区域撂荒面积对比', pdfConfig: {} }
   ]
   
   // 第一阶段图表从新页面开始
@@ -2173,12 +2287,101 @@ const addPhase1Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       
       await new Promise(resolve => setTimeout(resolve, 100))
       
+      // 临时应用字体配置
+      let originalOption = chart.instance.getOption()
+      const tempOption = JSON.parse(JSON.stringify(originalOption))
+      
+      
+      // 应用图例字体大小
+      if (tempOption.legend) {
+        if (Array.isArray(tempOption.legend)) {
+          tempOption.legend.forEach(leg => {
+            if (leg.textStyle) leg.textStyle.fontSize = fonts.chartLegend
+            else leg.textStyle = { fontSize: fonts.chartLegend }
+          })
+        } else {
+          if (tempOption.legend.textStyle) {
+            tempOption.legend.textStyle.fontSize = fonts.chartLegend
+          } else {
+            tempOption.legend.textStyle = { fontSize: fonts.chartLegend }
+          }
+        }
+      }
+      
+      // 应用series字体配置
+      if (tempOption.series && tempOption.series.length > 0) {
+        tempOption.series.forEach(series => {
+          // 柱状图数值
+          if (series.type === 'bar' && series.label) {
+            series.label.fontSize = fonts.chartBarLabel
+          }
+          // 饼图数值
+          if (series.type === 'pie' && series.label) {
+            series.label.fontSize = fonts.chartPieLabel
+          }
+        })
+      }
+      
+      // 应用坐标轴文字（包括刻度标签和名称）
+      if (tempOption.xAxis) {
+        if (Array.isArray(tempOption.xAxis)) {
+          tempOption.xAxis.forEach(axis => {
+            // 刻度标签
+            if (!axis.axisLabel) axis.axisLabel = {}
+            axis.axisLabel.fontSize = fonts.chartAxisLabel
+            // 坐标轴名称
+            if (axis.name) {
+              if (!axis.nameTextStyle) axis.nameTextStyle = {}
+              axis.nameTextStyle.fontSize = fonts.chartAxisLabel
+            }
+          })
+        } else {
+          // 刻度标签
+          if (!tempOption.xAxis.axisLabel) tempOption.xAxis.axisLabel = {}
+          tempOption.xAxis.axisLabel.fontSize = fonts.chartAxisLabel
+          // 坐标轴名称
+          if (tempOption.xAxis.name) {
+            if (!tempOption.xAxis.nameTextStyle) tempOption.xAxis.nameTextStyle = {}
+            tempOption.xAxis.nameTextStyle.fontSize = fonts.chartAxisLabel
+          }
+        }
+      }
+      if (tempOption.yAxis) {
+        if (Array.isArray(tempOption.yAxis)) {
+          tempOption.yAxis.forEach(axis => {
+            // 刻度标签
+            if (!axis.axisLabel) axis.axisLabel = {}
+            axis.axisLabel.fontSize = fonts.chartAxisLabel
+            // 坐标轴名称
+            if (axis.name) {
+              if (!axis.nameTextStyle) axis.nameTextStyle = {}
+              axis.nameTextStyle.fontSize = fonts.chartAxisLabel
+            }
+          })
+        } else {
+          // 刻度标签
+          if (!tempOption.yAxis.axisLabel) tempOption.yAxis.axisLabel = {}
+          tempOption.yAxis.axisLabel.fontSize = fonts.chartAxisLabel
+          // 坐标轴名称
+          if (tempOption.yAxis.name) {
+            if (!tempOption.yAxis.nameTextStyle) tempOption.yAxis.nameTextStyle = {}
+            tempOption.yAxis.nameTextStyle.fontSize = fonts.chartAxisLabel
+          }
+        }
+      }
+      
+      chart.instance.setOption(tempOption, true)
+      await new Promise(resolve => setTimeout(resolve, 200))
+      
       // 直接从ECharts实例获取图片
       const imgData = chart.instance.getDataURL({
         type: 'jpeg',
         pixelRatio: 2,
         backgroundColor: '#ffffff'
       })
+      
+      // 恢复原始配置
+      chart.instance.setOption(originalOption, true)
       
       // 获取图表原始尺寸
       const chartWidth = chart.instance.getWidth()
@@ -2445,10 +2648,35 @@ const addPhase2DetailTable = async (pdf, pageWidth, pageHeight, fonts, colors) =
 // 添加第二阶段图表（智能排版）
 const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
   const charts = [
-    { instance: cropTypePieChart, title: '作物类型分布' },
-    { instance: cropVarietyChart, title: '各区域作物种类数量' },
-    { instance: cropAreaRankingChart, title: '作物面积排名' },
-    { instance: regionCropCompareChart, title: '各区域作物分布对比' }
+    { 
+      instance: cropTypePieChart, 
+      title: '作物类型分布',
+      pdfConfig: {}  // 空配置，用于触发字体应用
+    },
+    { 
+      instance: cropVarietyChart, 
+      title: '各区域作物种类数量',
+      pdfConfig: {}  // 空配置，用于触发字体应用
+    },
+    { 
+      instance: cropAreaRankingChart, 
+      title: '作物面积排名',
+      pdfSize: { width: 1200, height: 600 },  // PDF截图前临时设置的图表尺寸（更大）
+      pdfConfig: { 
+        barCategoryGap: '1%',      // 柱子间距1%（更紧凑）
+        labelFontSize: 16,         // 标签字体16px（更大）
+        axisLabelFontSize: 15      // 坐标轴字体15px（更大）
+      } 
+    },
+    { 
+      instance: regionCropCompareChart, 
+      title: '各区域作物分布对比',
+      pdfSize: { width: 1200, height: 600 },  // PDF截图前临时设置的图表尺寸（更大）
+      pdfConfig: {
+        gridRight: '14%',          // 减少右侧空白到14%
+        labelFontSize: 18          // 标签字体18px（更大）
+      }
+    }
   ]
   
   // 第一个图表从新页面开始
@@ -2467,6 +2695,160 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       
       await new Promise(resolve => setTimeout(resolve, 100))
       
+      // 如果有PDF专用尺寸，临时调整容器大小
+      let originalSize = null
+      if (chart.pdfSize) {
+        const chartDom = chart.instance.getDom()
+        originalSize = {
+          width: chartDom.style.width,
+          height: chartDom.style.height
+        }
+        
+        // 临时设置更大的尺寸
+        chartDom.style.width = chart.pdfSize.width + 'px'
+        chartDom.style.height = chart.pdfSize.height + 'px'
+        chart.instance.resize()
+        await new Promise(resolve => setTimeout(resolve, 100))
+        console.log(`图表 ${chart.title} 临时调整尺寸为: ${chart.pdfSize.width}x${chart.pdfSize.height}`)
+      }
+      
+      // 临时应用PDF配置和字体配置
+      let originalOption = chart.instance.getOption()
+      const tempOption = JSON.parse(JSON.stringify(originalOption))
+      let needApplyConfig = false
+      
+      
+      if (chart.pdfConfig) {
+        needApplyConfig = true
+        
+        // 应用PDF配置到series
+        if (tempOption.series && tempOption.series.length > 0) {
+          tempOption.series.forEach(series => {
+            if (series.type === 'bar') {
+              // 柱子间距
+              if (chart.pdfConfig.barCategoryGap !== undefined) {
+                series.barCategoryGap = chart.pdfConfig.barCategoryGap
+              }
+              // 注意：柱子宽度由后面的字体配置部分统一应用
+            }
+          })
+        }
+        
+        // 应用PDF配置到grid
+        if (tempOption.grid) {
+          const gridConfig = chart.pdfConfig
+          if (Array.isArray(tempOption.grid)) {
+            tempOption.grid.forEach(g => {
+              if (gridConfig.gridRight !== undefined) g.right = gridConfig.gridRight
+              if (gridConfig.gridLeft !== undefined) g.left = gridConfig.gridLeft
+              if (gridConfig.gridTop !== undefined) g.top = gridConfig.gridTop
+              if (gridConfig.gridBottom !== undefined) g.bottom = gridConfig.gridBottom
+            })
+          } else {
+            if (gridConfig.gridRight !== undefined) tempOption.grid.right = gridConfig.gridRight
+            if (gridConfig.gridLeft !== undefined) tempOption.grid.left = gridConfig.gridLeft
+            if (gridConfig.gridTop !== undefined) tempOption.grid.top = gridConfig.gridTop
+            if (gridConfig.gridBottom !== undefined) tempOption.grid.bottom = gridConfig.gridBottom
+          }
+        }
+        
+      }
+      
+      // 应用字体配置到所有图表（无论是否有pdfConfig）
+      needApplyConfig = true
+      
+      // 如果图表有pdfSize（高清截图），需要放大字体以匹配缩放后的效果
+      // 计算字体缩放系数：高清图是1200px宽，普通UI图约600px宽，所以需要2倍字体
+      const fontScale = chart.pdfSize ? 2 : 1
+      
+      // 应用图例字体大小
+      if (tempOption.legend) {
+        if (Array.isArray(tempOption.legend)) {
+          tempOption.legend.forEach(leg => {
+            if (leg.textStyle) leg.textStyle.fontSize = Math.round(fonts.chartLegend * fontScale)
+            else leg.textStyle = { fontSize: Math.round(fonts.chartLegend * fontScale) }
+          })
+        } else {
+          if (tempOption.legend.textStyle) {
+            tempOption.legend.textStyle.fontSize = Math.round(fonts.chartLegend * fontScale)
+          } else {
+            tempOption.legend.textStyle = { fontSize: Math.round(fonts.chartLegend * fontScale) }
+          }
+        }
+      }
+      
+      // 应用series字体配置
+      if (tempOption.series && tempOption.series.length > 0) {
+        tempOption.series.forEach(series => {
+          // 柱状图数值
+          if (series.type === 'bar' && series.label) {
+            series.label.fontSize = Math.round(fonts.chartBarLabel * fontScale)
+          }
+          // 饼图数值
+          if (series.type === 'pie' && series.label) {
+            series.label.fontSize = Math.round(fonts.chartPieLabel * fontScale)
+          }
+        })
+      }
+      
+      // 应用坐标轴文字（包括刻度标签和名称）
+      if (tempOption.xAxis) {
+        if (Array.isArray(tempOption.xAxis)) {
+          tempOption.xAxis.forEach(axis => {
+            // 刻度标签
+            if (!axis.axisLabel) axis.axisLabel = {}
+            axis.axisLabel.fontSize = Math.round(fonts.chartAxisLabel * fontScale)
+            // 坐标轴名称
+            if (axis.name) {
+              if (!axis.nameTextStyle) axis.nameTextStyle = {}
+              axis.nameTextStyle.fontSize = Math.round(fonts.chartAxisLabel * fontScale)
+            }
+          })
+        } else {
+          // 刻度标签
+          if (!tempOption.xAxis.axisLabel) tempOption.xAxis.axisLabel = {}
+          tempOption.xAxis.axisLabel.fontSize = Math.round(fonts.chartAxisLabel * fontScale)
+          // 坐标轴名称
+          if (tempOption.xAxis.name) {
+            if (!tempOption.xAxis.nameTextStyle) tempOption.xAxis.nameTextStyle = {}
+            tempOption.xAxis.nameTextStyle.fontSize = Math.round(fonts.chartAxisLabel * fontScale)
+          }
+        }
+      }
+      if (tempOption.yAxis) {
+        if (Array.isArray(tempOption.yAxis)) {
+          tempOption.yAxis.forEach(axis => {
+            // 刻度标签
+            if (!axis.axisLabel) axis.axisLabel = {}
+            axis.axisLabel.fontSize = Math.round(fonts.chartAxisLabel * fontScale)
+            // 坐标轴名称
+            if (axis.name) {
+              if (!axis.nameTextStyle) axis.nameTextStyle = {}
+              axis.nameTextStyle.fontSize = Math.round(fonts.chartAxisLabel * fontScale)
+            }
+          })
+        } else {
+          // 刻度标签
+          if (!tempOption.yAxis.axisLabel) tempOption.yAxis.axisLabel = {}
+          tempOption.yAxis.axisLabel.fontSize = Math.round(fonts.chartAxisLabel * fontScale)
+          // 坐标轴名称
+          if (tempOption.yAxis.name) {
+            if (!tempOption.yAxis.nameTextStyle) tempOption.yAxis.nameTextStyle = {}
+            tempOption.yAxis.nameTextStyle.fontSize = Math.round(fonts.chartAxisLabel * fontScale)
+          }
+        }
+      }
+      
+      // 应用配置
+      if (needApplyConfig) {
+        chart.instance.setOption(tempOption, true)
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+      
+      // 获取当前（可能是临时放大后的）图表尺寸
+      const chartWidth = chart.instance.getWidth()
+      const chartHeight = chart.instance.getHeight()
+      
       // 直接从ECharts实例获取图片
       const imgData = chart.instance.getDataURL({
         type: 'jpeg',
@@ -2474,13 +2856,21 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
         backgroundColor: '#ffffff'
       })
       
-      // 获取图表原始尺寸
-      const chartWidth = chart.instance.getWidth()
-      const chartHeight = chart.instance.getHeight()
+      // 恢复原始配置和尺寸
+      if (needApplyConfig) {
+        chart.instance.setOption(originalOption, true)
+      }
       
-      // 计算PDF中的尺寸
-      const imgWidth = pageWidth - 80
-      const imgHeight = (chartHeight * imgWidth) / chartWidth
+      if (originalSize) {
+        const chartDom = chart.instance.getDom()
+        chartDom.style.width = originalSize.width
+        chartDom.style.height = originalSize.height
+        chart.instance.resize()
+      }
+      
+      // 计算PDF中的尺寸（等比例缩放，保持页边距）
+      let imgWidth = pageWidth - 80  // 统一边距（左右各留40px），保持页边距一致
+      let imgHeight = (chartHeight * imgWidth) / chartWidth
       
       // 创建标题（用html2canvas渲染中文）
       const titleContainer = document.createElement('div')
@@ -2510,33 +2900,68 @@ const addPhase2Charts = async (pdf, pageWidth, pageHeight, fonts, colors) => {
       // 布局规则：
       // 索引0（作物类型分布）：第一页上半部，currentY = 20
       // 索引1（各区域作物种类数量）：和索引0同一页下半部，间距+30
-      // 索引2（作物面积排名）：新页面上半部，currentY = 20
-      // 索引3（各区域作物分布对比）：和索引2同一页下半部，间距+30
+      // 索引2（作物面积排名）：新页面，currentY = 20
+      // 索引3（各区域作物分布对比）：尝试和索引2同一页，如果放不下则新页面
       if (i === 1) {
         // 第二个图表：和第一个在同一页
         currentY += 30
       } else if (i === 2) {
-        // 第三个图表：新页面
+        // 第三个图表（作物面积排名）：新页面
         pdf.addPage()
         currentY = 20
       } else if (i === 3) {
-        // 第四个图表：和第三个在同一页
-        currentY += 30
+        // 第四个图表（各区域作物分布对比）：尝试和上一个图表在同一页
+        const spaceNeeded = totalHeight + 30  // 需要的空间 = 图表总高度 + 间距
+        const availableSpace = pageHeight - currentY - 20  // 剩余空间
+        
+        if (spaceNeeded > availableSpace) {
+          // 放不下，新开一页
+          pdf.addPage()
+          currentY = 20
+          console.log(`图表 ${chart.title} 放不下，新开一页`)
+        } else {
+          // 放得下，继续在当前页
+          currentY += 30
+          console.log(`图表 ${chart.title} 和上一个图表在同一页`)
+        }
       }
       // i === 0（第一个图表）使用初始值 currentY = 20
       
+      // 如果图表超出页面宽度，自动缩放以适应
+      let finalImgWidth = imgWidth
+      let finalImgHeight = imgHeight
+      let finalTitleWidth = imgWidth
+      let finalTitleHeight = titleImgHeight
+      
+      // 统一边距处理
+      const maxWidth = pageWidth - 60  // 左右各留30px边距
+      if (finalImgWidth > maxWidth) {
+        const scaleRatio = maxWidth / finalImgWidth
+        finalImgWidth = maxWidth
+        finalImgHeight = imgHeight * scaleRatio
+        finalTitleWidth = maxWidth
+        finalTitleHeight = titleImgHeight * scaleRatio
+        console.log(`图表 ${chart.title} 超出页面，自动缩放至 ${(scaleRatio * 100).toFixed(1)}%`)
+      }
+      
+      // 计算居中位置
+      const offsetX = (pageWidth - finalImgWidth) / 2
+      
       // 添加标题
-      pdf.addImage(titleImgData, 'JPEG', 40, currentY, imgWidth, titleImgHeight)
-      currentY += titleImgHeight + 10
+      pdf.addImage(titleImgData, 'JPEG', offsetX, currentY, finalTitleWidth, finalTitleHeight)
+      
+      // 标题和图表之间的间距：统一使用10px
+      const titleGap = 10
+      currentY += finalTitleHeight + titleGap
       
       // 添加图表
-      pdf.addImage(imgData, 'JPEG', 40, currentY, imgWidth, imgHeight)
+      pdf.addImage(imgData, 'JPEG', offsetX, currentY, finalImgWidth, finalImgHeight)
       
-      currentY += imgHeight
+      currentY += finalImgHeight
       
       // 清理
       document.body.removeChild(titleContainer)
-      console.log(`第二阶段图表导出成功: ${chart.title}，当前Y: ${currentY}`)
+      console.log(`第二阶段图表导出成功: ${chart.title}，当前Y: ${currentY}，最终尺寸: ${finalImgWidth}x${finalImgHeight}`)
     } catch (error) {
       console.error(`导出第二阶段图表失败 (${chart.title}):`, error)
     }
@@ -2739,143 +3164,129 @@ const closePdfPreview = () => {
   // 不清理PDF数据，允许重新打开预览
 }
 
-// 下载到本地
-const downloadToLocal = () => {
-  console.log('📥 点击了下载到本地按钮')
-  console.log('pdfBlob状态:', pdfBlob.value ? '存在' : '不存在')
-  console.log('generating状态:', generating.value)
+// 导出PDF（同时下载和保存）
+const handleExportPdf = async () => {
+  console.log('📤 点击了导出PDF按钮')
   
   if (!pdfBlob.value) {
-    ElMessage.error('没有可下载的PDF')
+    ElMessage.error('没有可导出的PDF')
     return
   }
   
+  exporting.value = true
+  
   try {
-    // 获取文件名
-    let filename = pdfFilename.value.trim()
-    console.log('用户输入的文件名:', filename)
-    
-    if (!filename) {
-      // 使用默认文件名
-      const date = new Date()
-      const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-      const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
-      filename = `Region_Comparison_${dateStr}_${timeStr}`
-      console.log('使用默认文件名:', filename)
-    }
-    
-    // 确保文件名以.pdf结尾
-    if (!filename.toLowerCase().endsWith('.pdf')) {
-      filename = filename + '.pdf'
-    }
-    
-    console.log('最终文件名:', filename)
-    
-    // 创建下载链接
-    const url = URL.createObjectURL(pdfBlob.value)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
+    // 并行执行下载和保存
+    await Promise.all([
+      downloadToLocal(),
+      saveToDataManagement()
+    ])
     
     ElMessage.success({
-      message: `✅ PDF已开始下载\n文件名: ${filename}`,
-      duration: 3000,
+      message: '✅ PDF导出成功！\n已下载到本地并保存到数据管理',
+      duration: 4000,
       showClose: true
     })
-    
-    console.log('✅ PDF下载成功:', filename)
   } catch (error) {
-    console.error('下载PDF失败:', error)
-    ElMessage.error('下载失败: ' + (error.message || '未知错误'))
+    console.error('导出PDF失败:', error)
+    ElMessage.error('导出失败: ' + (error.message || '未知错误'))
+  } finally {
+    exporting.value = false
   }
+}
+
+// 下载到本地
+const downloadToLocal = () => {
+  console.log('📥 执行下载到本地')
+  
+  // 获取文件名
+  let filename = pdfFilename.value.trim()
+  console.log('用户输入的文件名:', filename)
+  
+  if (!filename) {
+    // 使用默认文件名
+    const date = new Date()
+    const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+    const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
+    filename = `Region_Comparison_${dateStr}_${timeStr}`
+    console.log('使用默认文件名:', filename)
+  }
+  
+  // 确保文件名以.pdf结尾
+  if (!filename.toLowerCase().endsWith('.pdf')) {
+    filename = filename + '.pdf'
+  }
+  
+  console.log('最终文件名:', filename)
+  
+  // 创建下载链接
+  const url = URL.createObjectURL(pdfBlob.value)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+  
+  console.log('✅ PDF下载成功:', filename)
 }
 
 // 保存到数据管理
 const saveToDataManagement = async () => {
-  console.log('💾 点击了保存到数据管理按钮')
-  console.log('pdfBlob状态:', pdfBlob.value ? '存在' : '不存在')
-  console.log('generating状态:', generating.value)
+  console.log('💾 执行保存到数据管理')
   
-  if (!pdfBlob.value) {
-    ElMessage.error('没有可保存的PDF')
-    return
+  // 获取文件名
+  let filename = pdfFilename.value.trim()
+  console.log('用户输入的文件名:', filename)
+  
+  if (!filename) {
+    // 使用默认文件名
+    const date = new Date()
+    const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
+    const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
+    filename = `Region_Comparison_${dateStr}_${timeStr}`
+    console.log('使用默认文件名:', filename)
   }
   
-  const loading = ElMessage({
-    message: '正在保存PDF到数据管理...',
-    duration: 0,
-    type: 'info'
+  // 确保文件名以.pdf结尾
+  if (!filename.toLowerCase().endsWith('.pdf')) {
+    filename = filename + '.pdf'
+  }
+  
+  console.log('最终文件名:', filename)
+  
+  // 创建FormData用于上传PDF
+  const formData = new FormData()
+  formData.append('file', pdfBlob.value, filename)
+  formData.append('type', 'region_comparison') // 区域对比类型
+  formData.append('taskName', '区域对比') // 任务名
+  
+  console.log('准备上传到后端...')
+  
+  // 上传到后端
+  const response = await fetch('/api/analysis/upload-pdf-report', {
+    method: 'POST',
+    body: formData
   })
   
-  try {
-    // 获取文件名
-    let filename = pdfFilename.value.trim()
-    console.log('用户输入的文件名:', filename)
-    
-    if (!filename) {
-      // 使用默认文件名
-      const date = new Date()
-      const dateStr = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`
-      const timeStr = `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}`
-      filename = `Region_Comparison_${dateStr}_${timeStr}`
-      console.log('使用默认文件名:', filename)
-    }
-    
-    // 确保文件名以.pdf结尾
-    if (!filename.toLowerCase().endsWith('.pdf')) {
-      filename = filename + '.pdf'
-    }
-    
-    console.log('最终文件名:', filename)
-    
-    // 创建FormData用于上传PDF
-    const formData = new FormData()
-    formData.append('file', pdfBlob.value, filename)
-    formData.append('type', 'region_comparison') // 区域对比类型
-    formData.append('taskName', '区域对比') // 任务名
-    
-    console.log('准备上传到后端...')
-    
-    // 上传到后端
-    const response = await fetch('/api/analysis/upload-pdf-report', {
-      method: 'POST',
-      body: formData
+  console.log('后端响应状态:', response.status)
+  
+  const result = await response.json()
+  console.log('后端响应结果:', result)
+  
+  if (result.code === 200) {
+    console.log('✅ PDF已成功保存到数据管理:', {
+      filename,
+      taskName: '区域对比',
+      type: 'region_comparison',
+      size: `${(pdfBlob.value.size / 1024 / 1024).toFixed(2)} MB`
     })
     
-    console.log('后端响应状态:', response.status)
-    
-    const result = await response.json()
-    console.log('后端响应结果:', result)
-    
-    loading.close()
-    
-    if (result.code === 200) {
-      console.log('✅ PDF已成功保存到数据管理:', {
-        filename,
-        taskName: '区域对比',
-        type: 'region_comparison',
-        size: `${(pdfBlob.value.size / 1024 / 1024).toFixed(2)} MB`
-      })
-      
-      ElMessage.success({
-        message: `✅ PDF已保存到分析结果列表\n文件名: ${filename}\n分析类型: 区域对比`,
-        duration: 4000,
-        showClose: true
-      })
-      
-      console.log('💡 提示：前往数据管理界面 → 结果队列 → 分析结果，筛选"区域对比"即可查看')
-    } else {
-      console.error('❌ 保存失败:', result)
-      ElMessage.error('保存失败: ' + (result.message || '未知错误'))
-    }
-  } catch (error) {
-    loading.close()
-    console.error('保存PDF失败:', error)
-    ElMessage.error('保存失败: ' + (error.message || '网络错误'))
+    console.log('💡 提示：前往数据管理界面 → 结果队列 → 分析结果，筛选"区域对比"即可查看')
+  } else {
+    console.error('❌ 保存失败:', result)
+    throw new Error(result.message || '保存失败')
   }
 }
 
@@ -2950,6 +3361,17 @@ onBeforeUnmount(() => {
     margin-bottom: 15px;
     padding-bottom: 15px;
     border-bottom: 2px solid #e5e7eb;
+  }
+  
+  // Tabs标签居中
+  :deep(.el-tabs__header) {
+    display: flex;
+    justify-content: center;
+    
+    .el-tabs__nav-wrap {
+      display: flex;
+      justify-content: center;
+    }
   }
   
   .config-content {
@@ -3148,10 +3570,23 @@ onBeforeUnmount(() => {
   }
 }
 
+.chart-card-wide {
+  grid-column: 1 / -1;  // 占据一整行
+  transition: all 0.3s;
+  border: 1px solid #e4e7ed;
+  
+  &:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
+    border-color: #409EFF;
+  }
+}
+
 .chart-card-large {
   grid-column: 1 / -1;
   transition: all 0.3s;
   border: 1px solid #e4e7ed;
+  overflow: visible;  // 允许tooltip溢出卡片
 
       &:hover {
         transform: translateY(-3px);
@@ -3162,6 +3597,7 @@ onBeforeUnmount(() => {
   :deep(.el-card__body) {
     padding: 20px;
     background: linear-gradient(to bottom, #ffffff 0%, #f9fafb 100%);
+    overflow: visible;  // 允许tooltip溢出
   }
   
   :deep(.el-card__header) {
@@ -3179,9 +3615,9 @@ onBeforeUnmount(() => {
 
 .chart-container-large {
   width: 100%;
-  height: 450px;
+  height: 500px;  // 增加高度，让各区域作物分布对比图更大
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;  // 允许tooltip溢出容器
 }
 
 // 操作按钮
@@ -3582,6 +4018,24 @@ onBeforeUnmount(() => {
       justify-content: center;
       align-items: center;
       padding: 60px 20px;
+      
+      .loading-animation {
+        margin-bottom: 20px;
+        
+        .rotating-icon {
+          animation: rotate 1.5s linear infinite;
+          color: #667eea;
+        }
+      }
+      
+      @keyframes rotate {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
     }
     
     .preview-placeholder {
