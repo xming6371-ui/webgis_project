@@ -937,10 +937,9 @@ const loadTiffData = async () => {
   loadedImages.value = matchedImages
   currentImageIndex.value = 0 // 重置索引到第一个
   
-  // 如果TIF图层开关是打开的，加载所有选中的影像
-  if (tiffLayerVisible.value) {
-    await reloadMultipleTiffLayers(matchedImages)
-  }
+  // ✅ 修复：查询后自动打开图层并加载影像（用户期望点击查询后立即看到结果）
+  tiffLayerVisible.value = true
+  await reloadMultipleTiffLayers(matchedImages)
   
   // 使用第一个影像的统计数据
   if (matchedImages.length > 0) {
