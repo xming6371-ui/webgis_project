@@ -2013,7 +2013,40 @@ const handleConvertToKmz = async (row) => {
     }
   } catch (error) {
     console.error('❌ 转换失败:', error)
-    ElMessage.error('转换失败: ' + (error.message || '网络错误'))
+    
+    // 解析错误信息，给出友好提示
+    let errorMessage = error.message || '网络错误'
+    let troubleshootingTips = ''
+    
+    if (errorMessage.includes('Python进程') || errorMessage.includes('EPIPE')) {
+      troubleshootingTips = '\n\n💡 可能的原因：\n' +
+        '1. Python 未安装或未添加到系统 PATH\n' +
+        '2. 缺少必要的 Python 库（geopandas、shapely）\n' +
+        '3. Python 环境配置错误\n\n' +
+        '📝 解决方法：\n' +
+        '• 检查 Python: 在命令行运行 python --version\n' +
+        '• 安装依赖: pip install geopandas shapely pyproj'
+      
+      ElNotification({
+        title: '❌ 转换失败',
+        message: '转换过程中 Python 环境出错' + troubleshootingTips,
+        type: 'error',
+        duration: 15000,
+        dangerouslyUseHTMLString: false
+      })
+    } else if (errorMessage.includes('模块') || errorMessage.includes('module')) {
+      troubleshootingTips = '\n\n📝 解决方法：\n安装缺少的 Python 库\n' +
+        'pip install geopandas shapely pyproj'
+      
+      ElNotification({
+        title: '❌ 转换失败',
+        message: '缺少必要的 Python 库' + troubleshootingTips,
+        type: 'error',
+        duration: 12000
+      })
+    } else {
+      ElMessage.error('转换失败: ' + errorMessage)
+    }
   } finally {
     convertingFiles.value.delete(row.name)
   }

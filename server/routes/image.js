@@ -1337,7 +1337,7 @@ async function optimizeTifFile(id, options = {}) {
     startTime: Date.now()
   })
   
-  // 🔍 步骤4：判断是否为 RGB 影像 + 自动检测源坐标系
+  // 🔍 步骤4：判断是否为 RGB 影像 + 自动检测源坐标系 + 坐标范围验证
   let isRGB = false
   let sourceSRS = 'EPSG:32645' // 默认值
   let dataType = 'Unknown' // 数据类型
