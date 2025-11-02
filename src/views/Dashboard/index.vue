@@ -229,9 +229,8 @@
                   size="small"
                   style="width: 120px"
                 >
-                  <el-option label="高德路网" value="amap-vector" />
-                  <el-option label="高德影像" value="amap-satellite" />
-                  <el-option label="高德纯净" value="amap-pure" />
+                  <el-option label="天地图矢量" value="tianditu-vector" />
+                  <el-option label="天地图影像" value="tianditu-satellite" />
                   <el-option label="无底图" value="none" />
                 </el-select>
                 <el-button size="small" :icon="ZoomIn" @click="handleZoomIn">放大</el-button>
@@ -763,16 +762,16 @@ const loadedImages = ref([]) // 已加载的影像数据
 
 // 底图图层（多种类型）
 let baseMapLayers = {
-  'amap-vector': null,      // 高德路网图
-  'amap-satellite': null,   // 高德影像图
-  'amap-annotation': null,  // 高德影像标注
-  'amap-pure': null         // 高德纯净图
+  'tianditu-vector': null,      // 天地图矢量底图
+  'tianditu-vector-anno': null, // 天地图矢量标注
+  'tianditu-satellite': null,   // 天地图影像底图
+  'tianditu-satellite-anno': null // 天地图影像标注
 }
 
 // 图例相关状态
 const legendCollapsed = ref(false) // 图例是否收起
 const tiffLayerVisible = ref(false) // TIF 图层是否可见（默认关闭）
-const currentBaseMap = ref('amap-vector') // 当前底图类型（默认路网图）
+const currentBaseMap = ref('tianditu-vector') // 当前底图类型（默认矢量图）
 
 // 作物分类图例配置（使用像素值+1后的映射：1-10对应不同作物类型）
 // 注意：像素值已经整体+1，0表示NoData（透明）
@@ -952,51 +951,68 @@ const loadTiffData = async () => {
 
 // 加载识别结果数据（KMZ等）- 支持多选和增量加载
 const loadRecognitionData = async () => {
-  // 验证必填字段
-  if (!recognitionFilter.value.fileNames || recognitionFilter.value.fileNames.length === 0) {
-    ElMessage.warning('请选择要查看的文件')
-    return
+  try {
+    // 验证必填字段
+    if (!recognitionFilter.value.fileNames || recognitionFilter.value.fileNames.length === 0) {
+      ElMessage.warning('请选择要查看的文件')
+      return
+    }
+    
+    // 根据文件名查找对应的识别结果
+    const matchedFiles = recognitionResults.value.filter(file => 
+      recognitionFilter.value.fileNames.includes(file.name)
+    )
+    
+    if (matchedFiles.length === 0) {
+      ElMessage.error('未找到指定的文件')
+      return
+    }
+    
+    console.log(`🔍 选中了 ${matchedFiles.length} 个文件`)
+    
+    // 🔧 修复：增量添加文件，而不是替换
+    // 检查哪些文件是新的
+    const existingFileNames = loadedKmzFiles.value.map(f => f.name)
+    const newFiles = matchedFiles.filter(f => !existingFileNames.includes(f.name))
+    
+    if (newFiles.length > 0) {
+      // 添加新文件到已加载列表
+      loadedKmzFiles.value = [...loadedKmzFiles.value, ...newFiles]
+      console.log(`📦 新增 ${newFiles.length} 个文件到待加载列表`)
+    } else {
+      console.log(`ℹ️ 所有选中的文件都已在列表中`)
+    }
+    
+    // 如果这是第一次加载，设置当前索引和数据
+    if (currentKmzIndex.value === 0 && loadedKmzFiles.value.length > 0) {
+      currentRecognitionData.value = loadedKmzFiles.value[0]
+      updateRecognitionStatisticsPreview(loadedKmzFiles.value[0])
+    }
+    
+    // ✅ 修复：查询后自动打开图层并加载（与影像数据查询行为保持一致）
+    // 用户期望点击查询后立即看到识别结果
+    if (newFiles.length > 0) {
+      tiffLayerVisible.value = true
+      console.log(`🔄 开始加载 ${newFiles.length} 个新文件...`)
+      await loadRecognitionFilesIncremental(loadedKmzFiles.value)
+      console.log(`✅ 已成功加载 ${newFiles.length} 个新文件`)
+    } else if (loadedKmzFiles.value.length > 0) {
+      // 如果没有新文件，但有已加载的文件，确保图层可见
+      tiffLayerVisible.value = true
+      // 显示已有图层
+      kmzLayers.forEach(layer => {
+        if (layer) {
+          layer.setVisible(true)
+        }
+      })
+      console.log(`✅ 已显示 ${loadedKmzFiles.value.length} 个已加载的文件`)
+      ElMessage.success('已显示识别结果图层')
+    }
+  } catch (error) {
+    console.error('❌ 加载识别结果失败:', error)
+    // 重新抛出错误，让上层的 handleSearch 捕获
+    throw error
   }
-  
-  // 根据文件名查找对应的识别结果
-  const matchedFiles = recognitionResults.value.filter(file => 
-    recognitionFilter.value.fileNames.includes(file.name)
-  )
-  
-  if (matchedFiles.length === 0) {
-    ElMessage.error('未找到指定的文件')
-    return
-  }
-  
-  console.log(`🔍 选中了 ${matchedFiles.length} 个文件`)
-  
-  // 🔧 修复：增量添加文件，而不是替换
-  // 检查哪些文件是新的
-  const existingFileNames = loadedKmzFiles.value.map(f => f.name)
-  const newFiles = matchedFiles.filter(f => !existingFileNames.includes(f.name))
-  
-  if (newFiles.length > 0) {
-    // 添加新文件到已加载列表
-    loadedKmzFiles.value = [...loadedKmzFiles.value, ...newFiles]
-    console.log(`📦 新增 ${newFiles.length} 个文件到待加载列表`)
-  } else {
-    console.log(`ℹ️ 所有选中的文件都已在列表中`)
-  }
-  
-  // 如果这是第一次加载，设置当前索引和数据
-  if (currentKmzIndex.value === 0 && loadedKmzFiles.value.length > 0) {
-    currentRecognitionData.value = loadedKmzFiles.value[0]
-    updateRecognitionStatisticsPreview(loadedKmzFiles.value[0])
-  }
-  
-  // 如果图层开关已经打开，自动加载新文件
-  if (tiffLayerVisible.value && newFiles.length > 0) {
-    // 🔧 修复：根据文件类型加载不同格式的文件
-    await loadRecognitionFilesIncremental(loadedKmzFiles.value)
-  }
-  
-  console.log(`✅ 已准备 ${loadedKmzFiles.value.length} 个文件，${tiffLayerVisible.value ? '正在加载' : '勾选图层开关以显示'}`)
-  ElMessage.success(`已选择 ${matchedFiles.length} 个文件${newFiles.length > 0 ? '，其中' + newFiles.length + '个是新增的' : ''}`)
 }
 
 // 前端解析KMZ为GeoJSON（使用JSZip）
@@ -1074,11 +1090,12 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
     
     // 🚀 性能警告和限制：如果选择的文件太多，提示用户并限制数量
     if (selectedFiles.length > 10) {
+      const errorMsg = `为保证性能，最多只能同时加载10个文件，当前选择了${selectedFiles.length}个。请减少选择的文件数量。`
       ElMessage.error({
-        message: `为保证性能，最多只能同时加载10个文件，当前选择了${selectedFiles.length}个。请减少选择的文件数量。`,
+        message: errorMsg,
         duration: 5000
       })
-      return
+      throw new Error(errorMsg)
     } else if (selectedFiles.length > 5) {
       ElMessage.warning({
         message: `您选择了 ${selectedFiles.length} 个文件，加载可能需要一些时间`,
@@ -1194,17 +1211,33 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
       
       ElMessage.success(`成功加载 ${newFiles.length} 个文件`)
     } else {
-      console.log('✅ 所有文件已加载，仅显示图层')
+      console.log('✅ 所有KMZ文件已加载，显示图层并缩放')
       
       // 显示所有已加载的图层
       kmzLayers.forEach(layer => layer.setVisible(true))
+      
+      // 🔧 修复：缩放到第一个图层范围
+      if (kmzLayers.length > 0) {
+        const firstLayer = kmzLayers[0]
+        const extent = firstLayer.getSource().getExtent()
+        if (extent && extent.every(coord => isFinite(coord))) {
+          console.log(`📍 缩放到已加载KMZ图层范围:`, extent)
+          map.getView().fit(extent, {
+            padding: [80, 80, 80, 80],
+            duration: 800,
+            maxZoom: 15
+          })
+        }
+      }
       
       ElMessage.success('已显示识别结果图层')
     }
     
   } catch (error) {
     console.error('❌ KMZ增量加载失败:', error)
-    ElMessage.error(`加载失败: ${error.message}`)
+    ElMessage.error(`KMZ加载失败: ${error.message || '未知错误'}`)
+    // 重新抛出错误，让上层处理
+    throw error
   }
 }
 
@@ -1226,22 +1259,56 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
     console.log(`   SHP文件: ${shpFiles.length} 个`)
     console.log(`   GeoJSON文件: ${geojsonFiles.length} 个`)
     
+    // 统计加载结果
+    let successCount = 0
+    let failCount = 0
+    
     // 分别加载不同类型的文件
     if (kmzFiles.length > 0) {
-      await loadKmzFilesIncremental(kmzFiles)
+      try {
+        await loadKmzFilesIncremental(kmzFiles)
+        successCount += kmzFiles.length
+      } catch (error) {
+        console.error('❌ KMZ文件加载失败:', error)
+        failCount += kmzFiles.length
+      }
     }
     
     if (shpFiles.length > 0) {
-      await loadShpFilesIncremental(shpFiles)
+      try {
+        await loadShpFilesIncremental(shpFiles)
+        successCount += shpFiles.length
+      } catch (error) {
+        console.error('❌ SHP文件加载失败:', error)
+        failCount += shpFiles.length
+      }
     }
     
     if (geojsonFiles.length > 0) {
-      await loadGeoJsonFilesIncremental(geojsonFiles)
+      try {
+        await loadGeoJsonFilesIncremental(geojsonFiles)
+        successCount += geojsonFiles.length
+      } catch (error) {
+        console.error('❌ GeoJSON文件加载失败:', error)
+        failCount += geojsonFiles.length
+      }
+    }
+    
+    // 显示加载结果
+    if (failCount === 0 && successCount > 0) {
+      ElMessage.success(`✅ 成功加载 ${successCount} 个文件`)
+    } else if (successCount > 0 && failCount > 0) {
+      ElMessage.warning(`⚠️ 成功 ${successCount} 个，失败 ${failCount} 个`)
+    } else if (failCount > 0) {
+      ElMessage.error(`❌ 加载失败，请检查文件格式和网络连接`)
+      throw new Error('所有文件加载失败')
     }
     
   } catch (error) {
     console.error('❌ 识别结果文件增量加载失败:', error)
-    ElMessage.error(`加载失败: ${error.message}`)
+    ElMessage.error(`加载失败: ${error.message || '未知错误'}`)
+    // 重新抛出错误
+    throw error
   }
 }
 
@@ -1295,11 +1362,75 @@ const loadShpFilesIncremental = async (selectedFiles) => {
           }
           
           if (geojsonData) {
+            // 🔍 调试：检查 GeoJSON 原始坐标范围
+            console.log(`🔍 GeoJSON 数据结构:`, {
+              type: geojsonData.type,
+              features: geojsonData.features?.length,
+              firstFeature: geojsonData.features?.[0]
+            })
+            
+            // 检查第一个要素的坐标
+            if (geojsonData.features && geojsonData.features.length > 0) {
+              const firstCoords = geojsonData.features[0].geometry?.coordinates
+              console.log(`🔍 第一个要素的原始坐标:`, firstCoords)
+              
+              // 判断坐标系（简单判断：如果坐标绝对值大于180，可能是投影坐标系）
+              if (firstCoords && firstCoords.length > 0) {
+                const firstPoint = Array.isArray(firstCoords[0]) 
+                  ? firstCoords[0][0] // Polygon
+                  : firstCoords // Point
+                
+                const x = Array.isArray(firstPoint) ? firstPoint[0] : firstPoint[0]
+                const y = Array.isArray(firstPoint) ? firstPoint[1] : firstPoint[1]
+                
+                console.log(`🔍 第一个坐标点: [${x}, ${y}]`)
+                
+                if (Math.abs(x) > 180 || Math.abs(y) > 90) {
+                  console.warn(`⚠️ 坐标超出WGS84范围，可能已经是投影坐标系: [${x}, ${y}]`)
+                  console.warn(`⚠️ 将直接使用EPSG:3857读取，不进行坐标转换`)
+                }
+              }
+            }
+            
+            // 🔧 根据坐标范围判断坐标系
+            let dataProjection = 'EPSG:4326'  // 默认假设是 WGS84
+            
+            // 检查第一个有效要素的坐标范围
+            if (geojsonData.features && geojsonData.features.length > 0) {
+              const firstFeature = geojsonData.features.find(f => f.geometry && f.geometry.coordinates)
+              
+              if (firstFeature) {
+                const coords = firstFeature.geometry.coordinates
+                let firstPoint = null
+                
+                if (firstFeature.geometry.type === 'Polygon') {
+                  firstPoint = coords[0]?.[0]
+                } else if (firstFeature.geometry.type === 'MultiPolygon') {
+                  firstPoint = coords[0]?.[0]?.[0]
+                }
+                
+                if (firstPoint && firstPoint.length >= 2) {
+                  const x = firstPoint[0]
+                  const y = firstPoint[1]
+                  
+                  // 判断坐标系：如果超出 WGS84 范围，说明已经是投影坐标系
+                  if (Math.abs(x) > 180 || Math.abs(y) > 90) {
+                    dataProjection = 'EPSG:3857'  // 已经是 Web Mercator
+                    console.log(`🔧 检测到投影坐标系，将直接使用 EPSG:3857，不进行转换`)
+                  } else {
+                    console.log(`🔧 检测到地理坐标系，将从 EPSG:4326 转换为 EPSG:3857`)
+                  }
+                }
+              }
+            }
+            
             // 将GeoJSON转换为OL features
             const features = new GeoJSON().readFeatures(geojsonData, {
-              dataProjection: 'EPSG:4326',
-              featureProjection: 'EPSG:3857'
+              dataProjection: dataProjection,      // 动态判断：EPSG:4326 或 EPSG:3857
+              featureProjection: 'EPSG:3857'  // 地图使用 Web Mercator
             })
+            
+            console.log(`✅ 坐标读取完成: ${dataProjection} -> EPSG:3857`)
             
             if (features && features.length > 0) {
               // 🚀 性能警告：如果单个文件的地块数量太多，提示用户
@@ -1308,6 +1439,26 @@ const loadShpFilesIncremental = async (selectedFiles) => {
                   message: `${file.name} 包含 ${features.length} 个地块，数量较多可能影响性能`,
                   duration: 5000
                 })
+              }
+              
+              // 🔍 验证图层范围
+              const firstFeatureExtent = features[0].getGeometry().getExtent()
+              console.log(`🔍 第一个要素的范围 (EPSG:3857):`, firstFeatureExtent)
+              
+              // Web Mercator (EPSG:3857) 的有效范围
+              const WEB_MERCATOR_MAX = 20037508.34
+              const isValidExtent = firstFeatureExtent.every(coord => 
+                Math.abs(coord) <= WEB_MERCATOR_MAX * 100  // 允许一些误差
+              )
+              
+              if (!isValidExtent) {
+                console.error(`❌ 坐标范围异常，超出 Web Mercator 有效范围:`, firstFeatureExtent)
+                console.error(`❌ 这可能是坐标系不匹配导致的，请检查后端 GeoJSON 数据`)
+                ElMessage.error({
+                  message: `${file.name} 坐标系错误，无法显示。请联系管理员检查数据。`,
+                  duration: 5000
+                })
+                throw new Error('坐标系不匹配')
               }
               
               // 创建图层
@@ -1329,6 +1480,10 @@ const loadShpFilesIncremental = async (selectedFiles) => {
               
               map.addLayer(newLayer)
               kmzLayers.push(newLayer)
+              
+              // 验证添加后的图层范围
+              const layerExtent = newLayer.getSource().getExtent()
+              console.log(`✅ 图层范围 (EPSG:3857):`, layerExtent)
               
               kmzLayerVisibility.value[file.id] = true  // 🔧 修复：使用文件ID
               
@@ -1370,12 +1525,34 @@ const loadShpFilesIncremental = async (selectedFiles) => {
       
       ElMessage.success(`成功加载 ${newFiles.length} 个SHP文件`)
     } else {
-      console.log('✅ 所有SHP文件已加载')
+      console.log('✅ 所有SHP文件已加载，显示图层并缩放')
+      
+      // 🔧 修复：显示图层并缩放到范围
+      if (kmzLayers.length > 0) {
+        // 显示所有图层
+        kmzLayers.forEach(layer => layer.setVisible(true))
+        
+        // 缩放到第一个图层
+        const firstLayer = kmzLayers[0]
+        const extent = firstLayer.getSource().getExtent()
+        if (extent && extent.every(coord => isFinite(coord))) {
+          console.log(`📍 缩放到已加载SHP图层范围:`, extent)
+          map.getView().fit(extent, {
+            padding: [80, 80, 80, 80],
+            duration: 800,
+            maxZoom: 15
+          })
+        }
+        
+        ElMessage.success('已显示SHP图层')
+      }
     }
     
   } catch (error) {
     console.error('❌ SHP增量加载失败:', error)
-    ElMessage.error(`SHP加载失败: ${error.message}`)
+    ElMessage.error(`SHP加载失败: ${error.message || '未知错误'}`)
+    // 重新抛出错误，让上层处理
+    throw error
   }
 }
 
@@ -1408,12 +1585,185 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
           if (response.data.code === 200) {
             const geojsonData = response.data.data
             
-            // 将GeoJSON转换为OL features
-            // 🔧 修复：GeoJSON数据是WGS84（EPSG:4326），需要转换为地图投影（EPSG:3857）
-            const features = new GeoJSON().readFeatures(geojsonData, {
-              dataProjection: 'EPSG:4326',    // GeoJSON数据是WGS84
-              featureProjection: 'EPSG:3857'  // 地图使用Web Mercator，自动转换
+            // 🔍 诊断：先输出原始数据的基本信息
+            console.log(`🔍 ===== GeoJSON 原始数据检查 =====`)
+            console.log(`文件名: ${file.name}`)
+            console.log(`后端响应:`, {
+              type: geojsonData?.type,
+              features: geojsonData?.features?.length,
+              crs: geojsonData?.crs
             })
+            
+            // 输出前3个要素的完整信息
+            if (geojsonData?.features?.length > 0) {
+              console.log(`前3个要素:`)
+              geojsonData.features.slice(0, 3).forEach((feature, idx) => {
+                console.log(`  要素 ${idx + 1}:`, {
+                  type: feature.type,
+                  geometry: feature.geometry,
+                  properties: Object.keys(feature.properties || {})
+                })
+              })
+            }
+            console.log(`======================================`)
+            
+            // 🔍 诊断：输出原始GeoJSON坐标
+            console.log(`🔍 ===== GeoJSON 坐标诊断 =====`)
+            console.log(`文件名: ${file.name}`)
+            console.log(`要素总数: ${geojsonData.features?.length || 0}`)
+            
+            // 检查空 geometry 的数量
+            let validGeometryCount = 0
+            let nullGeometryCount = 0
+            
+            if (geojsonData.features && geojsonData.features.length > 0) {
+              // 统计有效和无效的 geometry
+              geojsonData.features.forEach((feature, idx) => {
+                if (feature.geometry && feature.geometry.coordinates) {
+                  validGeometryCount++
+                } else {
+                  nullGeometryCount++
+                  if (idx < 5) {
+                    console.warn(`⚠️ 要素 ${idx + 1} 的 geometry 为空:`, feature)
+                  }
+                }
+              })
+              
+              console.log(`有效 geometry: ${validGeometryCount}`)
+              console.log(`空 geometry: ${nullGeometryCount}`)
+              
+              if (validGeometryCount === 0) {
+                console.error(`❌ 所有要素的 geometry 都为空！文件可能已损坏`)
+                throw new Error('GeoJSON 文件中所有要素的 geometry 都为空')
+              }
+              
+              // 找到第一个有效的要素
+              const firstValidFeature = geojsonData.features.find(f => f.geometry && f.geometry.coordinates)
+              
+              if (firstValidFeature) {
+                const coords = firstValidFeature.geometry.coordinates
+                console.log(`几何类型: ${firstValidFeature.geometry.type}`)
+                
+                // 获取第一个坐标点
+                let firstPoint = null
+                if (coords) {
+                  if (firstValidFeature.geometry.type === 'Polygon') {
+                    firstPoint = coords[0]?.[0]  // [[x,y], [x,y], ...]
+                  } else if (firstValidFeature.geometry.type === 'MultiPolygon') {
+                    firstPoint = coords[0]?.[0]?.[0]  // [[[x,y], [x,y], ...]]
+                  } else if (firstValidFeature.geometry.type === 'Point') {
+                    firstPoint = coords  // [x,y]
+                  }
+                }
+                
+                if (firstPoint && firstPoint.length >= 2) {
+                  const x = firstPoint[0]
+                  const y = firstPoint[1]
+                  
+                  console.log(`🔍 原始坐标 (第一个点): [${x}, ${y}]`)
+                  
+                  // 检查坐标值是否有效
+                  if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
+                    console.error(`❌ 坐标包含无效值 (NaN 或 Infinity): [${x}, ${y}]`)
+                    throw new Error('GeoJSON 坐标包含无效值')
+                  }
+                  
+                  // 判断坐标系
+                  if (Math.abs(x) <= 180 && Math.abs(y) <= 90) {
+                    console.log(`✅ 坐标在 WGS84 范围内 (经度: -180~180, 纬度: -90~90)`)
+                    console.log(`   将使用 EPSG:4326 -> EPSG:3857 转换`)
+                  } else if (Math.abs(x) > 180 && Math.abs(x) < 20037509) {
+                    console.log(`⚠️ 坐标超出 WGS84 范围，可能已经是 Web Mercator (EPSG:3857)`)
+                    console.log(`   将直接使用，不进行转换`)
+                  } else {
+                    console.error(`❌ 坐标异常: [${x}, ${y}]`)
+                    console.error(`   超出所有已知坐标系范围！`)
+                  }
+                } else {
+                  console.error(`❌ 无法提取坐标点`)
+                }
+              }
+            }
+            console.log(`==============================`)
+            
+            // 🔧 根据坐标范围判断坐标系
+            let dataProjection = 'EPSG:4326'  // 默认假设是 WGS84
+            
+            // 检查第一个有效要素的坐标范围
+            if (geojsonData.features && geojsonData.features.length > 0) {
+              const firstFeature = geojsonData.features.find(f => f.geometry && f.geometry.coordinates)
+              
+              if (firstFeature) {
+                const coords = firstFeature.geometry.coordinates
+                let firstPoint = null
+                
+                if (firstFeature.geometry.type === 'Polygon') {
+                  firstPoint = coords[0]?.[0]
+                } else if (firstFeature.geometry.type === 'MultiPolygon') {
+                  firstPoint = coords[0]?.[0]?.[0]
+                } else if (firstFeature.geometry.type === 'Point') {
+                  firstPoint = coords
+                }
+                
+                if (firstPoint && firstPoint.length >= 2) {
+                  const x = firstPoint[0]
+                  const y = firstPoint[1]
+                  
+                  // 判断坐标系：如果超出 WGS84 范围，说明已经是投影坐标系
+                  if (Math.abs(x) > 180 || Math.abs(y) > 90) {
+                    dataProjection = 'EPSG:3857'  // 已经是 Web Mercator
+                    console.log(`🔧 [GeoJSON] 检测到投影坐标系，将直接使用 EPSG:3857，不进行转换`)
+                  } else {
+                    console.log(`🔧 [GeoJSON] 检测到地理坐标系，将从 EPSG:4326 转换为 EPSG:3857`)
+                  }
+                }
+              }
+            }
+            
+            // 将GeoJSON转换为OL features
+            const features = new GeoJSON().readFeatures(geojsonData, {
+              dataProjection: dataProjection,      // 动态判断：EPSG:4326 或 EPSG:3857
+              featureProjection: 'EPSG:3857'  // 地图使用 Web Mercator
+            })
+            
+            console.log(`✅ [GeoJSON] 坐标读取完成: ${dataProjection} -> EPSG:3857`)
+            
+            // 🔍 诊断：输出转换后的坐标范围
+            if (features.length > 0) {
+              const firstFeatureExtent = features[0].getGeometry()?.getExtent()
+              
+              if (!firstFeatureExtent || firstFeatureExtent.some(coord => !isFinite(coord))) {
+                console.error(`❌ 转换后坐标范围无效: [${firstFeatureExtent}]`)
+                console.error(`   这通常意味着 GeoJSON 文件的 geometry 数据有问题`)
+                
+                ElMessage.error({
+                  message: `${file.name} 坐标数据无效，无法显示。可能是文件损坏，请重新生成。`,
+                  duration: 8000
+                })
+                
+                throw new Error('转换后坐标范围无效')
+              }
+              
+              console.log(`🔍 转换后范围 (EPSG:3857): [${firstFeatureExtent.map(v => v.toFixed(2)).join(', ')}]`)
+              
+              // 验证范围是否合理
+              const WEB_MERCATOR_MAX = 20037508.34
+              const isValid = firstFeatureExtent.every(coord => Math.abs(coord) <= WEB_MERCATOR_MAX)
+              
+              if (isValid) {
+                console.log(`✅ 转换后坐标范围正常`)
+              } else {
+                console.error(`❌ 转换后坐标范围异常，超出 Web Mercator 有效范围!`)
+                console.error(`   有效范围: ±${WEB_MERCATOR_MAX.toFixed(2)}`)
+                
+                ElMessage.error({
+                  message: `${file.name} 坐标范围超出有效范围，请检查坐标系设置。`,
+                  duration: 8000
+                })
+                
+                throw new Error('坐标范围超出有效范围')
+              }
+            }
             
             if (features && features.length > 0) {
               // 🚀 性能警告：如果单个文件的地块数量太多，提示用户
@@ -1465,10 +1815,12 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
       
       loadingMsg.close()
       
+      // 缩放到第一个图层
       if (kmzLayers.length > 0) {
         const firstLayer = kmzLayers[0]
         const extent = firstLayer.getSource().getExtent()
         if (extent && extent.every(coord => isFinite(coord))) {
+          console.log(`📍 缩放到图层范围:`, extent)
           map.getView().fit(extent, {
             padding: [80, 80, 80, 80],
             duration: 800,
@@ -1479,12 +1831,57 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
       
       ElMessage.success(`成功加载 ${newFiles.length} 个GeoJSON文件`)
     } else {
-      console.log('✅ 所有GeoJSON文件已加载')
+      console.log('✅ 所有GeoJSON文件已加载，显示图层')
+      
+      // 🔧 修复：即使文件已加载，也需要缩放到图层范围
+      if (kmzLayers.length > 0) {
+        // 显示所有图层
+        kmzLayers.forEach(layer => layer.setVisible(true))
+        
+        // 缩放到第一个图层
+        const firstLayer = kmzLayers[0]
+        const extent = firstLayer.getSource().getExtent()
+        
+        console.log(`🔍 ===== 缩放诊断 =====`)
+        console.log(`图层数量: ${kmzLayers.length}`)
+        console.log(`图层范围: [${extent.map(v => v.toFixed(2)).join(', ')}]`)
+        console.log(`图层可见性: ${firstLayer.getVisible()}`)
+        
+        if (extent && extent.every(coord => isFinite(coord))) {
+          // 缩放前的状态
+          const viewBefore = map.getView()
+          const centerBefore = viewBefore.getCenter()
+          const zoomBefore = viewBefore.getZoom()
+          console.log(`缩放前 - 中心: [${centerBefore?.map(v => v.toFixed(2)).join(', ')}], 缩放: ${zoomBefore?.toFixed(2)}`)
+          
+          // 执行缩放
+          map.getView().fit(extent, {
+            padding: [80, 80, 80, 80],
+            duration: 800,
+            maxZoom: 15
+          })
+          
+          // 延迟检查缩放后的状态（等待动画完成）
+          setTimeout(() => {
+            const viewAfter = map.getView()
+            const centerAfter = viewAfter.getCenter()
+            const zoomAfter = viewAfter.getZoom()
+            console.log(`缩放后 - 中心: [${centerAfter?.map(v => v.toFixed(2)).join(', ')}], 缩放: ${zoomAfter?.toFixed(2)}`)
+            console.log(`========================`)
+          }, 100)
+        } else {
+          console.error(`❌ 图层范围无效，无法缩放`)
+        }
+        
+        ElMessage.success('已显示GeoJSON图层')
+      }
     }
     
   } catch (error) {
     console.error('❌ GeoJSON增量加载失败:', error)
-    ElMessage.error(`GeoJSON加载失败: ${error.message}`)
+    ElMessage.error(`GeoJSON加载失败: ${error.message || '未知错误'}`)
+    // 重新抛出错误，让上层处理
+    throw error
   }
 }
 
@@ -2352,9 +2749,18 @@ const calculateKmzArea = (features) => {
   features.forEach((feature, idx) => {
     const props = feature.getProperties()
     
-    // 🆕 优先读取预计算的面积（从 GeoJSON properties 中）
+    // 🆕 优先读取预计算的面积（支持多种字段名）
+    // area_mu: KMZ 标准字段
+    // dcmj: SHP 地块面积字段（中文拼音）
+    let areaMu = null
+    
     if (props.area_mu && !isNaN(props.area_mu)) {
-      const areaMu = parseFloat(props.area_mu)
+      areaMu = parseFloat(props.area_mu)
+    } else if (props.dcmj && !isNaN(props.dcmj)) {
+      areaMu = parseFloat(props.dcmj)
+    }
+    
+    if (areaMu !== null) {
       totalAreaMu += areaMu
       precalculatedCount++
       
@@ -2364,7 +2770,7 @@ const calculateKmzArea = (features) => {
     } else {
       // 没有预计算面积数据
       if (idx < 3) {
-        console.warn(`   ⚠️ 地块${idx + 1}缺少面积数据`)
+        console.warn(`   ⚠️ 地块${idx + 1}缺少面积数据，可用字段:`, Object.keys(props).filter(k => k !== 'geometry'))
       }
     }
   })
@@ -2610,6 +3016,15 @@ const reloadMultipleTiffLayers = async (images) => {
           pathToLoad = `/api/image/file/${encodeURIComponent(filename)}`
         }
         
+        // 🔧 修复：添加时间戳参数破坏浏览器缓存（避免加载旧文件）
+        // 原因：优化覆盖原文件后，浏览器可能缓存了旧版本的 TIF 文件
+        const timestamp = Date.now()
+        pathToLoad += (pathToLoad.includes('?') ? '&' : '?') + `t=${timestamp}`
+        
+        if (isDev) {
+          console.log(`   🔄 添加缓存破坏参数: t=${timestamp}`)
+        }
+        
         // 🎨 检测是否为 RGB 影像
         // ✅ 智能判断逻辑：
         // 1. 如果有统计数据且 bandCount === 3，则认为是RGB（最可靠）
@@ -2664,21 +3079,65 @@ const reloadMultipleTiffLayers = async (images) => {
                 const width = imageGT.getWidth()
                 const height = imageGT.getHeight()
                 
-                // 读取中心区域进行采样（避免边缘NoData）
-                const centerX = Math.floor(width / 2)
-                const centerY = Math.floor(height / 2)
+                // 🔧 修复：多区域智能采样（适配中心区域为NaN的影像）
+                // 采样5个区域：四角 + 中心，至少找到一个有效区域
                 const sampleSize = 256
+                const sampleRegions = [
+                  { name: '中心', x: Math.floor(width / 2), y: Math.floor(height / 2) },
+                  { name: '左上角', x: Math.floor(width * 0.25), y: Math.floor(height * 0.25) },
+                  { name: '右上角', x: Math.floor(width * 0.75), y: Math.floor(height * 0.25) },
+                  { name: '左下角', x: Math.floor(width * 0.25), y: Math.floor(height * 0.75) },
+                  { name: '右下角', x: Math.floor(width * 0.75), y: Math.floor(height * 0.75) }
+                ]
                 
-                const rasters = await imageGT.readRasters({ 
-                  window: [
-                    Math.max(0, centerX - sampleSize / 2),
-                    Math.max(0, centerY - sampleSize / 2),
-                    Math.min(width, centerX + sampleSize / 2),
-                    Math.min(height, centerY + sampleSize / 2)
-                  ]
-                })
+                let rasters = null
+                let selectedRegion = null
+                
+                // 尝试每个区域，直到找到有效数据
+                for (const region of sampleRegions) {
+                  try {
+                    const testRasters = await imageGT.readRasters({ 
+                      window: [
+                        Math.max(0, region.x - sampleSize / 2),
+                        Math.max(0, region.y - sampleSize / 2),
+                        Math.min(width, region.x + sampleSize / 2),
+                        Math.min(height, region.y + sampleSize / 2)
+                      ]
+                    })
+                    
+                    // 检查是否有有效数据（至少有10%非NaN像素）
+                    let validCount = 0
+                    const totalPixels = testRasters[0].length
+                    for (let i = 0; i < Math.min(1000, totalPixels); i++) {
+                      const r = testRasters[0][i]
+                      const g = testRasters[1][i]
+                      const b = testRasters[2][i]
+                      if (!isNaN(r) && !isNaN(g) && !isNaN(b) && (r !== 0 || g !== 0 || b !== 0)) {
+                        validCount++
+                      }
+                    }
+                    
+                    const validPercent = (validCount / Math.min(1000, totalPixels)) * 100
+                    console.log(`   🔍 尝试采样区域【${region.name}】: 有效像素 ${validPercent.toFixed(1)}%`)
+                    
+                    if (validPercent > 10) {
+                      rasters = testRasters
+                      selectedRegion = region.name
+                      console.log(`   ✅ 选择【${region.name}】作为采样区域`)
+                      break
+                    }
+                  } catch (e) {
+                    console.warn(`   ⚠️ 区域【${region.name}】采样失败:`, e.message)
+                  }
+                }
+                
+                if (!rasters) {
+                  console.error(`   ❌ 所有采样区域都无有效数据，影像可能全为NaN`)
+                  throw new Error('无法找到有效采样区域')
+                }
                 
                 // 🎯 计算每个波段的2%-98%百分位数（标准遥感拉伸方法）
+                console.log(`   📊 使用【${selectedRegion}】区域计算百分位数`)
                 const bandStats = []
                 for (let b = 0; b < 3; b++) {
                   const bandData = rasters[b]
@@ -2686,7 +3145,8 @@ const reloadMultipleTiffLayers = async (images) => {
                   
                   for (let i = 0; i < bandData.length; i++) {
                     const val = bandData[i]
-                    if (!isNaN(val) && isFinite(val) && val !== 0) {
+                    // 只过滤NaN，保留0值（0可能是有效的黑色）
+                    if (!isNaN(val) && isFinite(val)) {
                       validValues.push(val)
                     }
                   }
@@ -2761,20 +3221,105 @@ const reloadMultipleTiffLayers = async (images) => {
           })
         }
         
-        // 📊 监听数据源加载事件（调试用）
-        if (isDev) {
-          let hasLoggedLoadType = false
-          source.on('change', function() {
-            if (!hasLoggedLoadType && source.getState() === 'ready') {
-              hasLoggedLoadType = true
+        // 📊 监听数据源加载事件（调试用）+ 🆕 输出元数据诊断
+        let hasLoggedLoadType = false
+        source.on('change', async function() {
+          if (!hasLoggedLoadType && source.getState() === 'ready') {
+            hasLoggedLoadType = true
+            
+            if (isDev) {
               // 尝试判断是否为COG（通过检查是否使用了分块）
               const view = source.getView()
               if (view) {
                 console.log(`   📦 ${image.name} 加载模式: ${pathToLoad.includes('_optimized') ? 'COG分块加载 ✅' : '完整文件加载 ⚠️'}`)
               }
             }
-          })
-        }
+            
+            // 🆕 读取并输出 TIF 元数据（用于诊断坐标系问题）
+            try {
+              console.log(`\n========== 📋 TIF 元数据诊断: ${image.name} ==========`)
+              
+              // 使用 geotiff.js 读取 TIF 文件元数据
+              const { fromUrl } = await import('geotiff')
+              const tiff = await fromUrl(pathToLoad)
+              const tiffImage = await tiff.getImage()
+              
+              // 1. 获取 GeoKeys（包含坐标系信息）
+              const geoKeys = tiffImage.getGeoKeys()
+              console.log('🌐 GeoKeys (坐标系元数据):')
+              console.log(geoKeys)
+              
+              // 2. 提取关键信息
+              const width = tiffImage.getWidth()
+              const height = tiffImage.getHeight()
+              const bbox = tiffImage.getBoundingBox()
+              const origin = tiffImage.getOrigin()
+              const resolution = tiffImage.getResolution()
+              
+              console.log('\n📐 基本信息:')
+              console.log(`   影像尺寸: ${width} × ${height}`)
+              console.log(`   原点坐标 (Origin): [${origin[0].toFixed(2)}, ${origin[1].toFixed(2)}]`)
+              console.log(`   像元分辨率: [${resolution[0].toFixed(4)}, ${resolution[1].toFixed(4)}]`)
+              console.log(`   边界范围 (BBox): [${bbox.map(v => v.toFixed(2)).join(', ')}]`)
+              
+              // 3. 尝试识别坐标系
+              let detectedProjection = 'Unknown'
+              if (geoKeys.ProjectedCSTypeGeoKey) {
+                const epsgCode = geoKeys.ProjectedCSTypeGeoKey
+                detectedProjection = `EPSG:${epsgCode}`
+                console.log(`\n✅ 检测到投影坐标系: ${detectedProjection}`)
+                
+                // 判断常见坐标系
+                if (epsgCode === 3857) {
+                  console.log('   📍 Web Mercator (EPSG:3857) - 这是正确的！')
+                } else if (epsgCode === 32645) {
+                  console.log('   📍 UTM Zone 45N (EPSG:32645) - 需要转换为 EPSG:3857')
+                } else if (epsgCode === 4326) {
+                  console.log('   📍 WGS84 地理坐标系 (EPSG:4326)')
+                }
+              } else if (geoKeys.GeographicTypeGeoKey) {
+                detectedProjection = `EPSG:${geoKeys.GeographicTypeGeoKey}`
+                console.log(`\n✅ 检测到地理坐标系: ${detectedProjection}`)
+              } else {
+                console.log('\n⚠️  未检测到坐标系标签（可能导致位置偏移）')
+              }
+              
+              // 4. 坐标范围诊断
+              console.log('\n🔍 坐标范围诊断:')
+              const [minX, minY, maxX, maxY] = bbox
+              
+              // Web Mercator 有效范围
+              const webMercatorValid = Math.abs(minX) <= 20037508.34 && 
+                                       Math.abs(maxX) <= 20037508.34 && 
+                                       Math.abs(minY) <= 20037508.34 && 
+                                       Math.abs(maxY) <= 20037508.34
+              
+              // UTM Zone 45N 典型范围
+              const utmLike = (minX >= 100000 && minX <= 1000000) && 
+                             (minY >= 3000000 && minY <= 6000000)
+              
+              if (detectedProjection === 'EPSG:3857' && webMercatorValid) {
+                console.log('   ✅ 坐标系标签 = EPSG:3857，坐标范围正常')
+                console.log('   ✅ 前端应该能正确显示')
+              } else if (detectedProjection === 'EPSG:3857' && utmLike) {
+                console.log('   ❌ 坐标系标签 = EPSG:3857，但坐标范围像 UTM！')
+                console.log('   ❌ 【元数据错误】标签正确但地理变换错误')
+                console.log('   ❌ 这会导致前端位置偏移！')
+              } else if (detectedProjection.includes('32645')) {
+                console.log('   ⚠️  坐标系 = EPSG:32645 (UTM Zone 45N)')
+                console.log('   ⚠️  OpenLayers 会自动转换为 EPSG:3857')
+                console.log('   ⚠️  如果显示偏移，可能是浏览器缓存了旧文件')
+              } else {
+                console.log('   ⚠️  坐标系或范围异常，可能影响显示')
+              }
+              
+              console.log('========================================\n')
+              
+            } catch (metaError) {
+              console.warn(`⚠️  无法读取 ${image.name} 的元数据:`, metaError.message)
+            }
+          }
+        })
         
         // 🎨 根据影像类型选择不同的样式
         const layerStyle = isRGB ? {
@@ -3268,78 +3813,26 @@ const handleSearch = async () => {
       return
     }
     
-    // 🆕 对每个文件进行预验证（需要先加载数据）
-    const invalidFiles = []
+    // 🔧 优化：移除预验证逻辑，改为在加载时验证（避免重复加载和卡顿）
+    // 预验证会导致每个文件加载两次，影响性能
+    // 验证逻辑已集成到实际加载流程中
+    console.log('✅ 查询参数验证通过，准备加载识别结果...')
     
-    for (const file of matchedFiles) {
-      try {
-        let features = null
-        
-        // 根据文件类型加载features进行验证
-        if (file.type === 'SHP') {
-          const response = await axios.post('/api/analysis/convert-shp-temp', {
-            shpFilename: file.name,
-            relativePath: file.relativePath || ''
-          })
-          
-          if (response.data.code === 200) {
-            const geojsonData = response.data.data.geojson
-            features = new GeoJSON().readFeatures(geojsonData, {
-              dataProjection: 'EPSG:4326',
-              featureProjection: 'EPSG:3857'
-            })
-          }
-        } else if (file.type === 'GeoJSON') {
-          const response = await axios.get(`/api/analysis/read-geojson/${file.name}`)
-          if (response.data.code === 200) {
-            const geojsonData = response.data.data
-            features = new GeoJSON().readFeatures(geojsonData, {
-              dataProjection: 'EPSG:4326',
-              featureProjection: 'EPSG:3857'
-            })
-          }
-        } else if (file.type === 'KMZ') {
-          const fileName = file.relativePath 
-            ? `${file.relativePath}/${file.name}`.replace(/\\/g, '/')
-            : file.name
-          const filePath = `/api/analysis/download/kmz/${encodeURIComponent(fileName)}`
-          features = await parseKmzToGeoJSON(filePath)
-        }
-        
-        if (features && features.length > 0) {
-          const validationResult = validateRecognitionData(file, features)
-          if (!validationResult.isValid) {
-            invalidFiles.push({
-              name: file.name,
-              message: validationResult.message
-            })
-          }
-        }
-      } catch (error) {
-        console.error(`验证文件 ${file.name} 失败:`, error)
-      }
+    // 显示加载提示
+    const loadingMsg = ElMessage.info({
+      message: `正在准备加载 ${matchedFiles.length} 个文件...`,
+      duration: 2000
+    })
+    
+    // 直接加载，在加载过程中进行验证
+    try {
+      await loadRecognitionData()
+      loadingMsg.close()
+    } catch (error) {
+      loadingMsg.close()
+      console.error('❌ 加载识别结果失败:', error)
+      ElMessage.error(`加载失败: ${error.message || '未知错误'}`)
     }
-    
-    // 如果有不匹配的文件，弹出对话框提示
-    if (invalidFiles.length > 0) {
-      const messages = invalidFiles.map(f => f.message).join('\n\n')
-      
-      await ElMessageBox.alert(
-        messages,
-        '识别任务类型不匹配',
-        {
-          confirmButtonText: '确定',
-          type: 'warning',
-          dangerouslyUseHTMLString: false
-        }
-      )
-      
-      // 不加载图层，直接返回
-      return
-    }
-    
-    // 验证通过，正常加载
-    loadRecognitionData()
   }
 }
 
@@ -3936,17 +4429,16 @@ const handleBaseMapChange = (value) => {
   // 根据选择显示对应底图
   if (value === 'none') {
     ElMessage.success('已关闭底图')
-  } else if (value === 'amap-satellite') {
+  } else if (value === 'tianditu-satellite') {
     // 影像图需要同时显示影像和标注
-    baseMapLayers['amap-satellite'].setVisible(true)
-    baseMapLayers['amap-annotation'].setVisible(true)
-    console.log('✅ 已切换到高德影像图')
-  } else if (value === 'amap-vector') {
-    baseMapLayers['amap-vector'].setVisible(true)
-    console.log('✅ 已切换到高德路网图')
-  } else if (value === 'amap-pure') {
-    baseMapLayers['amap-pure'].setVisible(true)
-    console.log('✅ 已切换到高德纯净图')
+    baseMapLayers['tianditu-satellite'].setVisible(true)
+    baseMapLayers['tianditu-satellite-anno'].setVisible(true)
+    console.log('✅ 已切换到天地图影像图')
+  } else if (value === 'tianditu-vector') {
+    // 矢量图需要同时显示底图和标注
+    baseMapLayers['tianditu-vector'].setVisible(true)
+    baseMapLayers['tianditu-vector-anno'].setVisible(true)
+    console.log('✅ 已切换到天地图矢量图')
   }
 }
 
@@ -4022,54 +4514,58 @@ const initMap = () => {
   try {
     console.log('开始初始化地图...')
     
-    // 创建高德路网图（矢量图）
-    baseMapLayers['amap-vector'] = new TileLayer({
+    // 天地图 Token（请到 https://console.tianditu.gov.cn/ 申请）
+    // 注意：如果没有token，地图可能无法正常显示，请替换为你自己的token
+    const tdtToken = '78df5367f82fb9ed2db089f8761f1d29' // 请替换为你的天地图token
+    
+    // 创建天地图矢量底图（vec_w：墨卡托投影矢量底图）
+    baseMapLayers['tianditu-vector'] = new TileLayer({
       source: new XYZ({
-        url: 'https://wprd0{1-4}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&style=7&x={x}&y={y}&z={z}',
+        url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${tdtToken}`,
         wrapX: false
       }),
-      visible: currentBaseMap.value === 'amap-vector',
+      visible: currentBaseMap.value === 'tianditu-vector',
       zIndex: 0
     })
     
-    // 创建高德影像图
-    baseMapLayers['amap-satellite'] = new TileLayer({
+    // 创建天地图矢量标注（cva_w：墨卡托投影矢量标注）
+    baseMapLayers['tianditu-vector-anno'] = new TileLayer({
       source: new XYZ({
-        url: 'https://webst0{1-4}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
+        url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${tdtToken}`,
         wrapX: false
       }),
-      visible: currentBaseMap.value === 'amap-satellite',
-      zIndex: 0
-    })
-    
-    // 创建高德影像标注图层
-    baseMapLayers['amap-annotation'] = new TileLayer({
-      source: new XYZ({
-        url: 'https://webst0{1-4}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}',
-        wrapX: false
-      }),
-      visible: currentBaseMap.value === 'amap-satellite',
+      visible: currentBaseMap.value === 'tianditu-vector',
       zIndex: 1
     })
     
-    // 创建高德纯净图（无标注路网）
-    baseMapLayers['amap-pure'] = new TileLayer({
+    // 创建天地图影像底图（img_w：墨卡托投影影像底图）
+    baseMapLayers['tianditu-satellite'] = new TileLayer({
       source: new XYZ({
-        url: 'https://wprd0{1-4}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&style=8&x={x}&y={y}&z={z}',
+        url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${tdtToken}`,
         wrapX: false
       }),
-      visible: currentBaseMap.value === 'amap-pure',
+      visible: currentBaseMap.value === 'tianditu-satellite',
       zIndex: 0
+    })
+    
+    // 创建天地图影像标注（cia_w：墨卡托投影影像标注）
+    baseMapLayers['tianditu-satellite-anno'] = new TileLayer({
+      source: new XYZ({
+        url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=cia_w&x={x}&y={y}&l={z}&tk=${tdtToken}`,
+        wrapX: false
+      }),
+      visible: currentBaseMap.value === 'tianditu-satellite',
+      zIndex: 1
     })
 
     // 创建地图实例（初始不加载 TIF 图层）
     map = new Map({
       target: 'map-container',
       layers: [
-        baseMapLayers['amap-vector'],
-        baseMapLayers['amap-satellite'],
-        baseMapLayers['amap-annotation'],
-        baseMapLayers['amap-pure']
+        baseMapLayers['tianditu-vector'],
+        baseMapLayers['tianditu-vector-anno'],
+        baseMapLayers['tianditu-satellite'],
+        baseMapLayers['tianditu-satellite-anno']
       ],
       view: new View({
         center: fromLonLat([87.6, 43.8]), // 新疆中心
@@ -4083,7 +4579,7 @@ const initMap = () => {
       })
     })
 
-    console.log('地图初始化成功（高德地图）')
+    console.log('地图初始化成功（天地图）')
     ElMessage.success('地图加载成功')
   } catch (error) {
     console.error('地图初始化失败:', error)

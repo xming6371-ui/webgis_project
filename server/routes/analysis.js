@@ -409,10 +409,19 @@ async function calculateAreasWithGeopandas(geojson) {
     // 使用 python 命令（假设在系统 PATH 中）
     // 如果需要使用 conda 环境，可以使用: conda run -n <env_name> python
     const pythonCmd = 'python'
-    const python = spawn(pythonCmd, [CALCULATE_AREA_SCRIPT])
+    
+    let python
+    try {
+      python = spawn(pythonCmd, [CALCULATE_AREA_SCRIPT])
+    } catch (spawnError) {
+      console.error('❌ 启动Python进程失败:', spawnError.message)
+      return reject(new Error(`启动Python失败: ${spawnError.message}`))
+    }
     
     let output = ''
     let errorOutput = ''
+    let processExited = false
+    let writeError = null
     
     python.stdout.on('data', (data) => {
       output += data.toString()
@@ -423,10 +432,31 @@ async function calculateAreasWithGeopandas(geojson) {
     })
     
     python.on('close', (code) => {
+      processExited = true
+      
+      // 如果在写入时已经出错，使用写入错误信息
+      if (writeError) {
+        console.error('❌ Python进程提前退出，可能是环境配置问题')
+        console.error('   错误输出:', errorOutput || '(无)')
+        console.error('   提示: 请确保已正确安装 Python 和 geopandas 库')
+        console.error('   安装命令: pip install geopandas shapely pyproj')
+        return reject(new Error(`Python进程提前退出: ${errorOutput || '请检查Python环境配置'}`))
+      }
+      
       if (code !== 0) {
         console.error('❌ Python脚本执行失败')
+        console.error('   退出码:', code)
         console.error('   错误输出:', errorOutput)
-        return reject(new Error(`Python脚本失败 (退出码 ${code}): ${errorOutput}`))
+        
+        // 检测常见错误并给出友好提示
+        let errorMessage = errorOutput
+        if (errorOutput.includes('ModuleNotFoundError') || errorOutput.includes('No module named')) {
+          errorMessage = '缺少必要的Python库。请安装：pip install geopandas shapely pyproj'
+        } else if (errorOutput.includes('ImportError')) {
+          errorMessage = 'Python库加载失败。请检查Python环境配置'
+        }
+        
+        return reject(new Error(`Python脚本失败 (退出码 ${code}): ${errorMessage}`))
       }
       
       try {
@@ -446,19 +476,53 @@ async function calculateAreasWithGeopandas(geojson) {
     })
     
     python.on('error', (error) => {
-      console.error('❌ 启动Python进程失败:', error.message)
-      console.error('   提示: 请确保已安装 Python 和 geopandas')
-      console.error('   安装命令: conda install geopandas')
-      reject(new Error(`启动Python失败: ${error.message}`))
+      processExited = true
+      console.error('❌ Python进程错误:', error.message)
+      console.error('   提示: 请确保系统中已安装 Python')
+      console.error('   检查命令: python --version')
+      reject(new Error(`Python进程错误: ${error.message}。请确保已安装Python并添加到系统PATH`))
     })
     
-    // 将GeoJSON通过stdin传给Python
-    try {
-      python.stdin.write(JSON.stringify(geojson))
-      python.stdin.end()
-    } catch (e) {
-      reject(new Error('写入Python stdin失败: ' + e.message))
-    }
+    // ✅ 关键修复：在写入前等待一小段时间，确保进程已启动
+    // 并在写入时捕获 EPIPE 错误
+    setTimeout(() => {
+      // 检查进程是否已经退出
+      if (processExited) {
+        console.error('❌ Python进程启动失败或立即退出')
+        console.error('   错误输出:', errorOutput || '(无)')
+        return reject(new Error('Python进程启动失败，请检查Python环境配置'))
+      }
+      
+      // 将GeoJSON通过stdin传给Python
+      try {
+        const geojsonStr = JSON.stringify(geojson)
+        
+        // 检查数据大小
+        const dataSizeMB = Buffer.byteLength(geojsonStr, 'utf8') / (1024 * 1024)
+        if (dataSizeMB > 100) {
+          console.warn(`   ⚠️ GeoJSON数据较大 (${dataSizeMB.toFixed(2)} MB)，可能需要较长时间`)
+        }
+        
+        python.stdin.write(geojsonStr, (err) => {
+          if (err) {
+            writeError = err
+            console.error('❌ 写入Python stdin失败:', err.message)
+            // 不立即reject，等待close事件
+          }
+        })
+        
+        python.stdin.end((err) => {
+          if (err) {
+            writeError = err
+            console.error('❌ 关闭Python stdin失败:', err.message)
+          }
+        })
+      } catch (e) {
+        writeError = e
+        console.error('❌ 准备数据失败:', e.message)
+        reject(new Error('准备数据失败: ' + e.message))
+      }
+    }, 100) // 等待100毫秒确保进程启动
   })
 }
 
