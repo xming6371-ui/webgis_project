@@ -1861,7 +1861,7 @@ except Exception as e:
     sys.exit(1)
 `
         
-        const python = spawn('python', ['-c', pythonScript])
+        const python = spawn(PYTHON_CMD, ['-c', pythonScript])
         
         let stdout = ''
         let stderr = ''
