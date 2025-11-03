@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 
 data/
+
+# SpecStory plugin files
+.specstory/**
+.cursorindexingignore

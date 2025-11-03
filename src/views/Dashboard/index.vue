@@ -97,6 +97,20 @@
               </el-option>
             </el-select>
           </div>
+          <div class="filter-item">
+            <span class="filter-label">优化状态：</span>
+            <el-select 
+              v-model="filterForm.optimizationStatus" 
+              placeholder="选择优化状态" 
+              style="width: 140px" 
+              clearable
+              @change="handleOptimizationStatusChange"
+            >
+              <el-option label="未优化" value="unoptimized" />
+              <el-option label="已优化" value="optimized" />
+              <el-option label="优化结果" value="optimized_result" />
+            </el-select>
+          </div>
           </template>
           
           <!-- 识别结果筛选条件 -->
@@ -166,7 +180,7 @@
                 <el-option label="种植情况识别" value="planting_situation" />
               </el-select>
             </div>
-            <!-- 🆕 文件格式筛选 -->
+            <!-- 文件格式筛选 -->
             <div class="filter-item">
               <span class="filter-label">文件格式：</span>
               <el-select 
@@ -242,7 +256,7 @@
           <div id="map-container" class="map-container">
             
             <!-- 栅格图层图例（左下角） - 根据数据源动态显示 -->
-            <div class="map-legend" v-show="currentImageData || currentRecognitionData">
+            <div class="map-legend" v-show="(dataSource === 'image' && loadedImages.length > 0) || (dataSource === 'recognition' && currentRecognitionData)">
               <div class="legend-header" @click="legendCollapsed = !legendCollapsed">
                 <span class="legend-title">{{ getLegendTitle() }}</span>
                 <el-icon 
@@ -258,30 +272,30 @@
                   <div class="layer-items">
                     <!-- 影像数据显示作物图例 -->
                     <template v-if="dataSource === 'image'">
-                      <!-- 多影像文件列表（多选时显示） -->
-                      <div v-if="loadedImages.length > 1" class="legend-files">
+                      <!-- 多影像文件列表（多选时显示，支持开关控制） -->
+                      <div v-if="loadedImages.length > 0" class="legend-files">
                         <div class="legend-section-title">已加载影像 ({{ loadedImages.length }})</div>
                         <div 
                           v-for="(img, index) in loadedImages" 
                           :key="img.id"
                           class="legend-file-item"
                           :class="{ active: index === currentImageIndex }"
-                          @click="switchImage(index)"
                         >
-                          <el-icon><Check v-if="index === currentImageIndex" /></el-icon>
-                          <span>{{ img.name }}</span>
-                    </div>
-                        <el-divider style="margin: 8px 0" />
+                          <el-checkbox 
+                            :model-value="isTiffLayerVisible(img.id)"
+                            @change="(val) => toggleTiffLayerVisibility(img.id, val)"
+                            @click.stop
+                          />
+                          <span @click="switchImage(index)" style="flex: 1; cursor: pointer;">{{ img.name }}</span>
+                        </div>
+                        <el-divider style="margin: 8px 0" v-if="availableCropTypes.length > 0" />
                       </div>
                       
                       <!-- 作物图例 -->
-                    <div v-if="availableCropTypes.length === 0" class="legend-empty">
-                      暂无作物类型数据
-                    </div>
-                    <div class="legend-item" v-for="item in availableCropTypes" :key="item.value">
-                      <div class="legend-color" :style="{ background: item.color }"></div>
-                      <span class="legend-label">{{ item.label }}</span>
-                    </div>
+                      <div class="legend-item" v-for="item in availableCropTypes" :key="item.value">
+                        <div class="legend-color" :style="{ background: item.color }"></div>
+                        <span class="legend-label">{{ item.label }}</span>
+                      </div>
                     </template>
                     
                     <!-- 识别结果显示文件信息 -->
@@ -305,7 +319,7 @@
                         <el-divider style="margin: 8px 0" />
                 </div>
                       
-                      <!-- 🔧 修复：优化图例显示逻辑和样式 -->
+                      <!-- 修复：优化图例显示逻辑和样式 -->
                       <div class="legend-colors">
                         <!-- 检查已加载文件的类型 -->
                         <template v-if="loadedKmzFiles.length > 0">
@@ -629,6 +643,7 @@ import { OSM, XYZ } from 'ol/source'
 import VectorSource from 'ol/source/Vector'
 import KML from 'ol/format/KML'
 import { fromLonLat, transformExtent } from 'ol/proj'
+import { createEmpty, extend } from 'ol/extent'
 import GeoTIFF from 'ol/source/GeoTIFF'
 import WebGLTile from 'ol/layer/WebGLTile'
 import { defaults as defaultControls } from 'ol/control'
@@ -656,7 +671,8 @@ const filterForm = ref({
   period: '',
   imageNames: [], // 影像名称（多选）
   region: [],
-  keyword: ''
+  keyword: '',
+  optimizationStatus: '' // 优化状态筛选
 })
 
 // 识别结果相关
@@ -670,7 +686,7 @@ const recognitionFilter = ref({
   period: '',
   region: '',
   recognitionType: '',
-  fileFormat: '',  // 🆕 文件格式筛选
+  fileFormat: '',  // 文件格式筛选
   fileNames: []  // 改为数组支持多选
 })
 
@@ -678,8 +694,10 @@ const recognitionFilter = ref({
 const loadedKmzFiles = ref([])
 // 当前显示的KMZ文件索引
 const currentKmzIndex = ref(0)
-// 🆕 KMZ图层可见性状态（响应式）- 用于同步checkbox状态
+// KMZ图层可见性状态（响应式）- 用于同步checkbox状态
 const kmzLayerVisibility = ref({})
+// TIF图层可见性状态（响应式）- 用于同步checkbox状态
+const tiffLayerVisibility = ref({})
 
 // 选中的作物类型（多选）
 // 默认显示所有类型（包括裸地）
@@ -727,7 +745,7 @@ const filteredRecognitionFiles = computed(() => {
     filtered = filtered.filter(file => file.recognitionType === recognitionFilter.value.recognitionType)
   }
   
-  // 🆕 根据文件格式筛选
+  // 根据文件格式筛选
   if (recognitionFilter.value.fileFormat) {
     filtered = filtered.filter(file => file.type === recognitionFilter.value.fileFormat)
   }
@@ -791,7 +809,7 @@ const cropLegend = [
 // 获取影像数据列表
 const fetchImageData = async () => {
   try {
-    // 🔧 修复：使用后端 API 获取影像数据，而不是直接访问静态文件
+    // 修复：使用后端 API 获取影像数据，而不是直接访问静态文件
     const response = await axios.get('/api/image/list')
     imageData.value = response.data.data || []
     
@@ -799,7 +817,7 @@ const fetchImageData = async () => {
     const years = [...new Set(imageData.value.map(img => img.year))]
     availableYears.value = years.sort((a, b) => b - a)
     
-    // 🔧 修复：初始化时显示所有影像（不需要先选年份期次）
+    // 修复：初始化时显示所有影像（不需要先选年份期次）
     updateAvailableImages()
     
     // 更新可用期次
@@ -833,24 +851,45 @@ const updateAvailablePeriods = () => {
   updateAvailableImages()
 }
 
-// 更新可用影像列表（根据年份和期次）
+// 更新可用影像列表（根据年份、期次和优化状态）
 const updateAvailableImages = () => {
-  // 🔧 修复：如果没有选择年份期次，显示所有影像；否则根据年份期次筛选
-  if (filterForm.value.year && filterForm.value.period) {
-    // 有年份和期次，进行筛选
-    availableImages.value = imageData.value.filter(img => 
-      img.year === filterForm.value.year &&
-      img.period === filterForm.value.period
-    )
-  } else if (filterForm.value.year) {
-    // 只有年份，按年份筛选
-    availableImages.value = imageData.value.filter(img => 
-      img.year === filterForm.value.year
-    )
-  } else {
-    // 没有选择年份期次，显示所有影像
-    availableImages.value = imageData.value
+  let filtered = imageData.value
+  
+  // 根据年份筛选
+  if (filterForm.value.year) {
+    filtered = filtered.filter(img => img.year === filterForm.value.year)
+    
+    // 根据期次筛选
+    if (filterForm.value.period) {
+      filtered = filtered.filter(img => img.period === filterForm.value.period)
+    }
   }
+  
+  // 根据优化状态筛选
+  if (filterForm.value.optimizationStatus) {
+    if (filterForm.value.optimizationStatus === 'unoptimized') {
+      // 未优化：isOptimized为false或不包含_optimized
+      filtered = filtered.filter(img => {
+        const path = img.optimizedPath || img.filePath || img.originalPath || ''
+        return !img.isOptimized && !path.includes('_optimized')
+      })
+    } else if (filterForm.value.optimizationStatus === 'optimized') {
+      // 已优化：isOptimized为true或路径包含_optimized
+      filtered = filtered.filter(img => {
+        const path = img.optimizedPath || img.filePath || img.originalPath || ''
+        return img.isOptimized || path.includes('_optimized')
+      })
+    } else if (filterForm.value.optimizationStatus === 'optimized_result') {
+      // 优化结果：路径包含_optimized或文件名包含_optimized
+      filtered = filtered.filter(img => {
+        const path = img.optimizedPath || img.filePath || img.originalPath || ''
+        const name = img.name || ''
+        return path.includes('_optimized') || name.includes('_optimized')
+      })
+    }
+  }
+  
+  availableImages.value = filtered
   
   // 如果当前选择的影像名称不在列表中，清空选择
   if (filterForm.value.imageNames && filterForm.value.imageNames.length > 0) {
@@ -880,6 +919,11 @@ const handlePeriodChange = () => {
 const handleImageNameChange = () => {
   // 不再自动分析，等待查询时再分析
   // 避免频繁分析导致卡顿
+}
+
+// 优化状态变化处理
+const handleOptimizationStatusChange = () => {
+  updateAvailableImages()
 }
 
 // 作物类型变化处理
@@ -936,7 +980,7 @@ const loadTiffData = async () => {
   loadedImages.value = matchedImages
   currentImageIndex.value = 0 // 重置索引到第一个
   
-  // ✅ 修复：查询后自动打开图层并加载影像（用户期望点击查询后立即看到结果）
+  // 修复：查询后自动打开图层并加载影像（用户期望点击查询后立即看到结果）
   tiffLayerVisible.value = true
   await reloadMultipleTiffLayers(matchedImages)
   
@@ -946,7 +990,29 @@ const loadTiffData = async () => {
     await updateStatistics(matchedImages[0])
   }
   
-  console.log(`✅ 已选择 ${matchedImages.length} 个影像`)
+  // 缩放至影像数据图层（所有图层的合并范围）
+  if (tiffLayers.length > 0 && map) {
+    const zoomToAllLayers = async () => {
+      const extent = await getAllTiffLayersExtent()
+      
+      if (extent) {
+        map.getView().fit(extent, {
+          padding: [80, 80, 80, 80],
+          duration: 800,
+          maxZoom: 15
+        })
+        console.log('已缩放至所有影像图层的合并范围')
+      } else {
+        // 如果还未准备好，等待一段时间再试
+        setTimeout(zoomToAllLayers, 500)
+      }
+    }
+    
+    // 延迟执行，等待图层加载
+    setTimeout(zoomToAllLayers, 1500)
+  }
+  
+  console.log(`已选择 ${matchedImages.length} 个影像`)
 }
 
 // 加载识别结果数据（KMZ等）- 支持多选和增量加载
@@ -968,9 +1034,9 @@ const loadRecognitionData = async () => {
       return
     }
     
-    console.log(`🔍 选中了 ${matchedFiles.length} 个文件`)
+    console.log(` 选中了 ${matchedFiles.length} 个文件`)
     
-    // 🔧 修复：增量添加文件，而不是替换
+    //  修复：增量添加文件，而不是替换
     // 检查哪些文件是新的
     const existingFileNames = loadedKmzFiles.value.map(f => f.name)
     const newFiles = matchedFiles.filter(f => !existingFileNames.includes(f.name))
@@ -978,9 +1044,9 @@ const loadRecognitionData = async () => {
     if (newFiles.length > 0) {
       // 添加新文件到已加载列表
       loadedKmzFiles.value = [...loadedKmzFiles.value, ...newFiles]
-      console.log(`📦 新增 ${newFiles.length} 个文件到待加载列表`)
+      console.log(` 新增 ${newFiles.length} 个文件到待加载列表`)
     } else {
-      console.log(`ℹ️ 所有选中的文件都已在列表中`)
+      console.log(` 所有选中的文件都已在列表中`)
     }
     
     // 如果这是第一次加载，设置当前索引和数据
@@ -989,13 +1055,13 @@ const loadRecognitionData = async () => {
       updateRecognitionStatisticsPreview(loadedKmzFiles.value[0])
     }
     
-    // ✅ 修复：查询后自动打开图层并加载（与影像数据查询行为保持一致）
+    //  修复：查询后自动打开图层并加载（与影像数据查询行为保持一致）
     // 用户期望点击查询后立即看到识别结果
     if (newFiles.length > 0) {
       tiffLayerVisible.value = true
-      console.log(`🔄 开始加载 ${newFiles.length} 个新文件...`)
+      console.log(` 开始加载 ${newFiles.length} 个新文件...`)
       await loadRecognitionFilesIncremental(loadedKmzFiles.value)
-      console.log(`✅ 已成功加载 ${newFiles.length} 个新文件`)
+      console.log(` 已成功加载 ${newFiles.length} 个新文件`)
     } else if (loadedKmzFiles.value.length > 0) {
       // 如果没有新文件，但有已加载的文件，确保图层可见
       tiffLayerVisible.value = true
@@ -1005,11 +1071,11 @@ const loadRecognitionData = async () => {
           layer.setVisible(true)
         }
       })
-      console.log(`✅ 已显示 ${loadedKmzFiles.value.length} 个已加载的文件`)
+      console.log(` 已显示 ${loadedKmzFiles.value.length} 个已加载的文件`)
       ElMessage.success('已显示识别结果图层')
     }
   } catch (error) {
-    console.error('❌ 加载识别结果失败:', error)
+    console.error(' 加载识别结果失败:', error)
     // 重新抛出错误，让上层的 handleSearch 捕获
     throw error
   }
@@ -1018,7 +1084,7 @@ const loadRecognitionData = async () => {
 // 前端解析KMZ为GeoJSON（使用JSZip）
 const parseKmzToGeoJSON = async (kmzUrl) => {
   try {
-    console.log(`🔧 前端解析KMZ: ${kmzUrl}`)
+    console.log(` 前端解析KMZ: ${kmzUrl}`)
     
     // 1. 下载KMZ文件
     const response = await fetch(kmzUrl)
@@ -1054,14 +1120,14 @@ const parseKmzToGeoJSON = async (kmzUrl) => {
       featureProjection: 'EPSG:3857'
     })
     
-    console.log(`✅ KML解析成功，包含 ${features.length} 个要素`)
+    console.log(` KML解析成功，包含 ${features.length} 个要素`)
     
     // 输出GeoJSON内容到控制台（用户请求）
     if (features.length > 0) {
       const geojsonFormat = new GeoJSON()
       const geojsonData = JSON.parse(geojsonFormat.writeFeatures(features))
       
-      console.log('📄 ===== GeoJSON完整内容 =====')
+      console.log(' ===== GeoJSON完整内容 =====')
       console.log('GeoJSON类型:', geojsonData.type)
       console.log('要素总数:', geojsonData.features.length)
       console.log('第一个要素完整信息:', geojsonData.features[0])
@@ -1076,7 +1142,7 @@ const parseKmzToGeoJSON = async (kmzUrl) => {
     
     return features
   } catch (error) {
-    console.error('❌ KMZ解析失败:', error)
+    console.error(' KMZ解析失败:', error)
     throw error
   }
 }
@@ -1084,11 +1150,11 @@ const parseKmzToGeoJSON = async (kmzUrl) => {
 // 增量加载KMZ文件（只加载新增的文件）
 const loadKmzFilesIncremental = async (selectedFiles) => {
   try {
-    console.log(`📥 开始增量加载KMZ文件...`)
+    console.log(` 开始增量加载KMZ文件...`)
     console.log(`   已选择: ${selectedFiles.length} 个文件`)
     console.log(`   已加载: ${kmzLayers.length} 个图层`)
     
-    // 🚀 性能警告和限制：如果选择的文件太多，提示用户并限制数量
+    //  性能警告和限制：如果选择的文件太多，提示用户并限制数量
     if (selectedFiles.length > 10) {
       const errorMsg = `为保证性能，最多只能同时加载10个文件，当前选择了${selectedFiles.length}个。请减少选择的文件数量。`
       ElMessage.error({
@@ -1115,7 +1181,7 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
     const newFiles = selectedFiles.filter(file => !loadedFileNames.includes(file.name))
     
     if (newFiles.length > 0) {
-      console.log(`📦 需要加载 ${newFiles.length} 个新文件:`, newFiles.map(f => f.name))
+      console.log(` 需要加载 ${newFiles.length} 个新文件:`, newFiles.map(f => f.name))
       
       // 显示加载提示
       const loadingMsg = ElMessage.info({
@@ -1128,10 +1194,10 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
         const file = newFiles[i]
         const layerIndex = kmzLayers.length  // 新图层的索引
         
-        console.log(`🔄 [${i + 1}/${newFiles.length}] 加载: ${file.name}`)
+        console.log(` [${i + 1}/${newFiles.length}] 加载: ${file.name}`)
         
         try {
-          // 🔧 修复：构建文件路径，使用后端 API 而不是直接访问静态文件
+          //  修复：构建文件路径，使用后端 API 而不是直接访问静态文件
           // 如果有 relativePath，需要在文件名中包含它
           const fileName = file.relativePath 
             ? `${file.relativePath}/${file.name}`.replace(/\\/g, '/')
@@ -1146,7 +1212,7 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
           const features = await parseKmzToGeoJSON(filePath)
           
           if (features && features.length > 0) {
-            // 🚀 性能警告：如果单个文件的地块数量太多，提示用户
+            //  性能警告：如果单个文件的地块数量太多，提示用户
             if (features.length > 5000) {
               ElMessage.warning({
                 message: `${file.name} 包含 ${features.length} 个地块，数量较多可能影响性能`,
@@ -1158,7 +1224,7 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
               features: features
             })
             
-            // 🎨 使用动态样式函数（根据class字段显示不同颜色）
+            //  使用动态样式函数（根据class字段显示不同颜色）
             const newLayer = new VectorLayer({
               source: geojsonSource,
               style: getFeatureStyle,  // 使用动态样式函数
@@ -1168,18 +1234,18 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
             
             // 保存文件名到图层（用于增量加载判断）
             newLayer.set('fileName', file.name)
-            newLayer.set('fileId', file.id)  // 🔧 修复：添加唯一ID
+            newLayer.set('fileId', file.id)  //  修复：添加唯一ID
             newLayer.set('fileData', file)
             
             map.addLayer(newLayer)
             kmzLayers.push(newLayer)
             
-            // 🔧 修复：使用文件ID初始化可见性状态
+            //  修复：使用文件ID初始化可见性状态
             kmzLayerVisibility.value[file.id] = true
             
-            console.log(`✅ [${i + 1}/${newFiles.length}] 加载成功: ${file.name} (${features.length}个要素)`)
+            console.log(` [${i + 1}/${newFiles.length}] 加载成功: ${file.name} (${features.length}个要素)`)
             
-            // 🔧 修复：加载新文件后，自动切换到最新加载的文件并更新统计
+            //  修复：加载新文件后，自动切换到最新加载的文件并更新统计
             currentKmzIndex.value = kmzLayers.length - 1
             currentRecognitionData.value = file
             
@@ -1187,10 +1253,10 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
             
             await updateKmzStatistics(file, kmzLayers.length - 1)
           } else {
-            console.warn(`⚠️ ${file.name} 解析后无要素`)
+            console.warn(` ${file.name} 解析后无要素`)
           }
         } catch (error) {
-          console.error(`❌ ${file.name} 加载失败:`, error)
+          console.error(` ${file.name} 加载失败:`, error)
         }
       }
       
@@ -1211,17 +1277,17 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
       
       ElMessage.success(`成功加载 ${newFiles.length} 个文件`)
     } else {
-      console.log('✅ 所有KMZ文件已加载，显示图层并缩放')
+      console.log(' 所有KMZ文件已加载，显示图层并缩放')
       
       // 显示所有已加载的图层
       kmzLayers.forEach(layer => layer.setVisible(true))
       
-      // 🔧 修复：缩放到第一个图层范围
+      //  修复：缩放到第一个图层范围
       if (kmzLayers.length > 0) {
         const firstLayer = kmzLayers[0]
         const extent = firstLayer.getSource().getExtent()
         if (extent && extent.every(coord => isFinite(coord))) {
-          console.log(`📍 缩放到已加载KMZ图层范围:`, extent)
+          console.log(` 缩放到已加载KMZ图层范围:`, extent)
           map.getView().fit(extent, {
             padding: [80, 80, 80, 80],
             duration: 800,
@@ -1234,7 +1300,7 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
     }
     
   } catch (error) {
-    console.error('❌ KMZ增量加载失败:', error)
+    console.error(' KMZ增量加载失败:', error)
     ElMessage.error(`KMZ加载失败: ${error.message || '未知错误'}`)
     // 重新抛出错误，让上层处理
     throw error
@@ -1244,10 +1310,10 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
 // 【已废弃】tryManualKmzParsing函数已删除，直接在loadKmzFilesIncremental中使用parseKmzToGeoJSON
 // 【已废弃】原loadAllKmzLayers函数已删除，改用loadKmzFilesIncremental实现增量加载
 
-// 🆕 通用识别结果文件增量加载（支持KMZ、SHP、GeoJSON）
+//  通用识别结果文件增量加载（支持KMZ、SHP、GeoJSON）
 const loadRecognitionFilesIncremental = async (selectedFiles) => {
   try {
-    console.log(`📥 开始增量加载识别结果文件...`)
+    console.log(` 开始增量加载识别结果文件...`)
     console.log(`   已选择: ${selectedFiles.length} 个文件`)
     
     // 按文件类型分组
@@ -1269,7 +1335,7 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
         await loadKmzFilesIncremental(kmzFiles)
         successCount += kmzFiles.length
       } catch (error) {
-        console.error('❌ KMZ文件加载失败:', error)
+        console.error(' KMZ文件加载失败:', error)
         failCount += kmzFiles.length
       }
     }
@@ -1279,7 +1345,7 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
         await loadShpFilesIncremental(shpFiles)
         successCount += shpFiles.length
       } catch (error) {
-        console.error('❌ SHP文件加载失败:', error)
+        console.error(' SHP文件加载失败:', error)
         failCount += shpFiles.length
       }
     }
@@ -1289,33 +1355,33 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
         await loadGeoJsonFilesIncremental(geojsonFiles)
         successCount += geojsonFiles.length
       } catch (error) {
-        console.error('❌ GeoJSON文件加载失败:', error)
+        console.error(' GeoJSON文件加载失败:', error)
         failCount += geojsonFiles.length
       }
     }
     
     // 显示加载结果
     if (failCount === 0 && successCount > 0) {
-      ElMessage.success(`✅ 成功加载 ${successCount} 个文件`)
+      ElMessage.success(` 成功加载 ${successCount} 个文件`)
     } else if (successCount > 0 && failCount > 0) {
-      ElMessage.warning(`⚠️ 成功 ${successCount} 个，失败 ${failCount} 个`)
+      ElMessage.warning(` 成功 ${successCount} 个，失败 ${failCount} 个`)
     } else if (failCount > 0) {
-      ElMessage.error(`❌ 加载失败，请检查文件格式和网络连接`)
+      ElMessage.error(` 加载失败，请检查文件格式和网络连接`)
       throw new Error('所有文件加载失败')
     }
     
   } catch (error) {
-    console.error('❌ 识别结果文件增量加载失败:', error)
+    console.error(' 识别结果文件增量加载失败:', error)
     ElMessage.error(`加载失败: ${error.message || '未知错误'}`)
     // 重新抛出错误
     throw error
   }
 }
 
-// 🆕 加载SHP文件（转换为GeoJSON后显示）
+//  加载SHP文件（转换为GeoJSON后显示）
 const loadShpFilesIncremental = async (selectedFiles) => {
   try {
-    console.log(`📥 开始增量加载SHP文件...`)
+    console.log(` 开始增量加载SHP文件...`)
     
     // 获取已加载的文件名列表
     const loadedFileNames = kmzLayers.map(layer => layer.get('fileName')).filter(Boolean)
@@ -1324,7 +1390,7 @@ const loadShpFilesIncremental = async (selectedFiles) => {
     const newFiles = selectedFiles.filter(file => !loadedFileNames.includes(file.name))
     
     if (newFiles.length > 0) {
-      console.log(`📦 需要加载 ${newFiles.length} 个新SHP文件:`, newFiles.map(f => f.name))
+      console.log(` 需要加载 ${newFiles.length} 个新SHP文件:`, newFiles.map(f => f.name))
       
       const loadingMsg = ElMessage.info({
         message: `正在加载 ${newFiles.length} 个SHP文件...`,
@@ -1335,10 +1401,10 @@ const loadShpFilesIncremental = async (selectedFiles) => {
         const file = newFiles[i]
         const layerIndex = kmzLayers.length
         
-        console.log(`🔄 [${i + 1}/${newFiles.length}] 加载SHP: ${file.name}`)
+        console.log(` [${i + 1}/${newFiles.length}] 加载SHP: ${file.name}`)
         
         try {
-          // 🆕 方案1+2：优先使用缓存，否则先快速加载再异步计算面积
+          //  方案1+2：优先使用缓存，否则先快速加载再异步计算面积
           // Step 1: 尝试从缓存加载（带面积数据）
           let response = await axios.post('/api/analysis/convert-shp-temp', {
             shpFilename: file.name,
@@ -1353,17 +1419,17 @@ const loadShpFilesIncremental = async (selectedFiles) => {
             fromCache = response.data.data.fromCache
             
             if (fromCache) {
-              console.log(`✅ 从缓存加载: ${file.name} (${response.data.data.featureCount}个要素)`)
+              console.log(` 从缓存加载: ${file.name} (${response.data.data.featureCount}个要素)`)
             } else {
-              console.log(`✅ 首次计算完成: ${file.name} (${response.data.data.featureCount}个要素)`)
+              console.log(` 首次计算完成: ${file.name} (${response.data.data.featureCount}个要素)`)
             }
           } else {
-            console.error(`❌ ${file.name} 转换失败: ${response.data.message}`)
+            console.error(` ${file.name} 转换失败: ${response.data.message}`)
           }
           
           if (geojsonData) {
-            // 🔍 调试：检查 GeoJSON 原始坐标范围
-            console.log(`🔍 GeoJSON 数据结构:`, {
+            //  调试：检查 GeoJSON 原始坐标范围
+            console.log(` GeoJSON 数据结构:`, {
               type: geojsonData.type,
               features: geojsonData.features?.length,
               firstFeature: geojsonData.features?.[0]
@@ -1372,7 +1438,7 @@ const loadShpFilesIncremental = async (selectedFiles) => {
             // 检查第一个要素的坐标
             if (geojsonData.features && geojsonData.features.length > 0) {
               const firstCoords = geojsonData.features[0].geometry?.coordinates
-              console.log(`🔍 第一个要素的原始坐标:`, firstCoords)
+              console.log(` 第一个要素的原始坐标:`, firstCoords)
               
               // 判断坐标系（简单判断：如果坐标绝对值大于180，可能是投影坐标系）
               if (firstCoords && firstCoords.length > 0) {
@@ -1383,16 +1449,16 @@ const loadShpFilesIncremental = async (selectedFiles) => {
                 const x = Array.isArray(firstPoint) ? firstPoint[0] : firstPoint[0]
                 const y = Array.isArray(firstPoint) ? firstPoint[1] : firstPoint[1]
                 
-                console.log(`🔍 第一个坐标点: [${x}, ${y}]`)
+                console.log(` 第一个坐标点: [${x}, ${y}]`)
                 
                 if (Math.abs(x) > 180 || Math.abs(y) > 90) {
-                  console.warn(`⚠️ 坐标超出WGS84范围，可能已经是投影坐标系: [${x}, ${y}]`)
-                  console.warn(`⚠️ 将直接使用EPSG:3857读取，不进行坐标转换`)
+                  console.warn(` 坐标超出WGS84范围，可能已经是投影坐标系: [${x}, ${y}]`)
+                  console.warn(` 将直接使用EPSG:3857读取，不进行坐标转换`)
                 }
               }
             }
             
-            // 🔧 根据坐标范围判断坐标系
+            //  根据坐标范围判断坐标系
             let dataProjection = 'EPSG:4326'  // 默认假设是 WGS84
             
             // 检查第一个有效要素的坐标范围
@@ -1416,9 +1482,9 @@ const loadShpFilesIncremental = async (selectedFiles) => {
                   // 判断坐标系：如果超出 WGS84 范围，说明已经是投影坐标系
                   if (Math.abs(x) > 180 || Math.abs(y) > 90) {
                     dataProjection = 'EPSG:3857'  // 已经是 Web Mercator
-                    console.log(`🔧 检测到投影坐标系，将直接使用 EPSG:3857，不进行转换`)
+                    console.log(` 检测到投影坐标系，将直接使用 EPSG:3857，不进行转换`)
                   } else {
-                    console.log(`🔧 检测到地理坐标系，将从 EPSG:4326 转换为 EPSG:3857`)
+                    console.log(` 检测到地理坐标系，将从 EPSG:4326 转换为 EPSG:3857`)
                   }
                 }
               }
@@ -1430,10 +1496,10 @@ const loadShpFilesIncremental = async (selectedFiles) => {
               featureProjection: 'EPSG:3857'  // 地图使用 Web Mercator
             })
             
-            console.log(`✅ 坐标读取完成: ${dataProjection} -> EPSG:3857`)
+            console.log(` 坐标读取完成: ${dataProjection} -> EPSG:3857`)
             
             if (features && features.length > 0) {
-              // 🚀 性能警告：如果单个文件的地块数量太多，提示用户
+              //  性能警告：如果单个文件的地块数量太多，提示用户
               if (features.length > 5000) {
                 ElMessage.warning({
                   message: `${file.name} 包含 ${features.length} 个地块，数量较多可能影响性能`,
@@ -1441,9 +1507,9 @@ const loadShpFilesIncremental = async (selectedFiles) => {
                 })
               }
               
-              // 🔍 验证图层范围
+              //  验证图层范围
               const firstFeatureExtent = features[0].getGeometry().getExtent()
-              console.log(`🔍 第一个要素的范围 (EPSG:3857):`, firstFeatureExtent)
+              console.log(` 第一个要素的范围 (EPSG:3857):`, firstFeatureExtent)
               
               // Web Mercator (EPSG:3857) 的有效范围
               const WEB_MERCATOR_MAX = 20037508.34
@@ -1452,8 +1518,8 @@ const loadShpFilesIncremental = async (selectedFiles) => {
               )
               
               if (!isValidExtent) {
-                console.error(`❌ 坐标范围异常，超出 Web Mercator 有效范围:`, firstFeatureExtent)
-                console.error(`❌ 这可能是坐标系不匹配导致的，请检查后端 GeoJSON 数据`)
+                console.error(` 坐标范围异常，超出 Web Mercator 有效范围:`, firstFeatureExtent)
+                console.error(` 这可能是坐标系不匹配导致的，请检查后端 GeoJSON 数据`)
                 ElMessage.error({
                   message: `${file.name} 坐标系错误，无法显示。请联系管理员检查数据。`,
                   duration: 5000
@@ -1474,7 +1540,7 @@ const loadShpFilesIncremental = async (selectedFiles) => {
               })
               
               newLayer.set('fileName', file.name)
-              newLayer.set('fileId', file.id)  // 🔧 修复：添加唯一ID
+              newLayer.set('fileId', file.id)  //  修复：添加唯一ID
               newLayer.set('fileData', file)
               newLayer.set('fileType', 'SHP')
               
@@ -1483,11 +1549,11 @@ const loadShpFilesIncremental = async (selectedFiles) => {
               
               // 验证添加后的图层范围
               const layerExtent = newLayer.getSource().getExtent()
-              console.log(`✅ 图层范围 (EPSG:3857):`, layerExtent)
+              console.log(` 图层范围 (EPSG:3857):`, layerExtent)
               
-              kmzLayerVisibility.value[file.id] = true  // 🔧 修复：使用文件ID
+              kmzLayerVisibility.value[file.id] = true  //  修复：使用文件ID
               
-              console.log(`✅ [${i + 1}/${newFiles.length}] SHP加载成功: ${file.name} (${features.length}个要素)`)
+              console.log(` [${i + 1}/${newFiles.length}] SHP加载成功: ${file.name} (${features.length}个要素)`)
               
               // 切换到最新加载的文件并更新统计
               currentKmzIndex.value = kmzLayers.length - 1
@@ -1497,13 +1563,13 @@ const loadShpFilesIncremental = async (selectedFiles) => {
               
               updateGeoJsonStatistics(file, features)
             } else {
-              console.warn(`⚠️ ${file.name} 转换后无要素`)
+              console.warn(` ${file.name} 转换后无要素`)
             }
           } else {
-            console.error(`❌ ${file.name} 转换失败或数据为空`)
+            console.error(` ${file.name} 转换失败或数据为空`)
           }
         } catch (error) {
-          console.error(`❌ ${file.name} 加载失败:`, error)
+          console.error(` ${file.name} 加载失败:`, error)
           ElMessage.error(`${file.name} 加载失败`)
         }
       }
@@ -1525,9 +1591,9 @@ const loadShpFilesIncremental = async (selectedFiles) => {
       
       ElMessage.success(`成功加载 ${newFiles.length} 个SHP文件`)
     } else {
-      console.log('✅ 所有SHP文件已加载，显示图层并缩放')
+      console.log(' 所有SHP文件已加载，显示图层并缩放')
       
-      // 🔧 修复：显示图层并缩放到范围
+      //  修复：显示图层并缩放到范围
       if (kmzLayers.length > 0) {
         // 显示所有图层
         kmzLayers.forEach(layer => layer.setVisible(true))
@@ -1536,7 +1602,7 @@ const loadShpFilesIncremental = async (selectedFiles) => {
         const firstLayer = kmzLayers[0]
         const extent = firstLayer.getSource().getExtent()
         if (extent && extent.every(coord => isFinite(coord))) {
-          console.log(`📍 缩放到已加载SHP图层范围:`, extent)
+          console.log(` 缩放到已加载SHP图层范围:`, extent)
           map.getView().fit(extent, {
             padding: [80, 80, 80, 80],
             duration: 800,
@@ -1549,23 +1615,23 @@ const loadShpFilesIncremental = async (selectedFiles) => {
     }
     
   } catch (error) {
-    console.error('❌ SHP增量加载失败:', error)
+    console.error(' SHP增量加载失败:', error)
     ElMessage.error(`SHP加载失败: ${error.message || '未知错误'}`)
     // 重新抛出错误，让上层处理
     throw error
   }
 }
 
-// 🆕 加载GeoJSON文件
+//  加载GeoJSON文件
 const loadGeoJsonFilesIncremental = async (selectedFiles) => {
   try {
-    console.log(`📥 开始增量加载GeoJSON文件...`)
+    console.log(` 开始增量加载GeoJSON文件...`)
     
     const loadedFileNames = kmzLayers.map(layer => layer.get('fileName')).filter(Boolean)
     const newFiles = selectedFiles.filter(file => !loadedFileNames.includes(file.name))
     
     if (newFiles.length > 0) {
-      console.log(`📦 需要加载 ${newFiles.length} 个新GeoJSON文件:`, newFiles.map(f => f.name))
+      console.log(` 需要加载 ${newFiles.length} 个新GeoJSON文件:`, newFiles.map(f => f.name))
       
       const loadingMsg = ElMessage.info({
         message: `正在加载 ${newFiles.length} 个GeoJSON文件...`,
@@ -1576,7 +1642,7 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
         const file = newFiles[i]
         const layerIndex = kmzLayers.length
         
-        console.log(`🔄 [${i + 1}/${newFiles.length}] 加载GeoJSON: ${file.name}`)
+        console.log(` [${i + 1}/${newFiles.length}] 加载GeoJSON: ${file.name}`)
         
         try {
           // 读取GeoJSON文件
@@ -1585,8 +1651,8 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
           if (response.data.code === 200) {
             const geojsonData = response.data.data
             
-            // 🔍 诊断：先输出原始数据的基本信息
-            console.log(`🔍 ===== GeoJSON 原始数据检查 =====`)
+            //  诊断：先输出原始数据的基本信息
+            console.log(` ===== GeoJSON 原始数据检查 =====`)
             console.log(`文件名: ${file.name}`)
             console.log(`后端响应:`, {
               type: geojsonData?.type,
@@ -1607,8 +1673,8 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
             }
             console.log(`======================================`)
             
-            // 🔍 诊断：输出原始GeoJSON坐标
-            console.log(`🔍 ===== GeoJSON 坐标诊断 =====`)
+            //  诊断：输出原始GeoJSON坐标
+            console.log(` ===== GeoJSON 坐标诊断 =====`)
             console.log(`文件名: ${file.name}`)
             console.log(`要素总数: ${geojsonData.features?.length || 0}`)
             
@@ -1624,7 +1690,7 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
                 } else {
                   nullGeometryCount++
                   if (idx < 5) {
-                    console.warn(`⚠️ 要素 ${idx + 1} 的 geometry 为空:`, feature)
+                    console.warn(` 要素 ${idx + 1} 的 geometry 为空:`, feature)
                   }
                 }
               })
@@ -1633,7 +1699,7 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
               console.log(`空 geometry: ${nullGeometryCount}`)
               
               if (validGeometryCount === 0) {
-                console.error(`❌ 所有要素的 geometry 都为空！文件可能已损坏`)
+                console.error(` 所有要素的 geometry 都为空！文件可能已损坏`)
                 throw new Error('GeoJSON 文件中所有要素的 geometry 都为空')
               }
               
@@ -1660,33 +1726,33 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
                   const x = firstPoint[0]
                   const y = firstPoint[1]
                   
-                  console.log(`🔍 原始坐标 (第一个点): [${x}, ${y}]`)
+                  console.log(` 原始坐标 (第一个点): [${x}, ${y}]`)
                   
                   // 检查坐标值是否有效
                   if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
-                    console.error(`❌ 坐标包含无效值 (NaN 或 Infinity): [${x}, ${y}]`)
+                    console.error(` 坐标包含无效值 (NaN 或 Infinity): [${x}, ${y}]`)
                     throw new Error('GeoJSON 坐标包含无效值')
                   }
                   
                   // 判断坐标系
                   if (Math.abs(x) <= 180 && Math.abs(y) <= 90) {
-                    console.log(`✅ 坐标在 WGS84 范围内 (经度: -180~180, 纬度: -90~90)`)
+                    console.log(` 坐标在 WGS84 范围内 (经度: -180~180, 纬度: -90~90)`)
                     console.log(`   将使用 EPSG:4326 -> EPSG:3857 转换`)
                   } else if (Math.abs(x) > 180 && Math.abs(x) < 20037509) {
-                    console.log(`⚠️ 坐标超出 WGS84 范围，可能已经是 Web Mercator (EPSG:3857)`)
+                    console.log(` 坐标超出 WGS84 范围，可能已经是 Web Mercator (EPSG:3857)`)
                     console.log(`   将直接使用，不进行转换`)
                   } else {
-                    console.error(`❌ 坐标异常: [${x}, ${y}]`)
+                    console.error(` 坐标异常: [${x}, ${y}]`)
                     console.error(`   超出所有已知坐标系范围！`)
                   }
                 } else {
-                  console.error(`❌ 无法提取坐标点`)
+                  console.error(` 无法提取坐标点`)
                 }
               }
             }
             console.log(`==============================`)
             
-            // 🔧 根据坐标范围判断坐标系
+            //  根据坐标范围判断坐标系
             let dataProjection = 'EPSG:4326'  // 默认假设是 WGS84
             
             // 检查第一个有效要素的坐标范围
@@ -1712,9 +1778,9 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
                   // 判断坐标系：如果超出 WGS84 范围，说明已经是投影坐标系
                   if (Math.abs(x) > 180 || Math.abs(y) > 90) {
                     dataProjection = 'EPSG:3857'  // 已经是 Web Mercator
-                    console.log(`🔧 [GeoJSON] 检测到投影坐标系，将直接使用 EPSG:3857，不进行转换`)
+                    console.log(` [GeoJSON] 检测到投影坐标系，将直接使用 EPSG:3857，不进行转换`)
                   } else {
-                    console.log(`🔧 [GeoJSON] 检测到地理坐标系，将从 EPSG:4326 转换为 EPSG:3857`)
+                    console.log(` [GeoJSON] 检测到地理坐标系，将从 EPSG:4326 转换为 EPSG:3857`)
                   }
                 }
               }
@@ -1726,14 +1792,14 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
               featureProjection: 'EPSG:3857'  // 地图使用 Web Mercator
             })
             
-            console.log(`✅ [GeoJSON] 坐标读取完成: ${dataProjection} -> EPSG:3857`)
+            console.log(` [GeoJSON] 坐标读取完成: ${dataProjection} -> EPSG:3857`)
             
-            // 🔍 诊断：输出转换后的坐标范围
+            //  诊断：输出转换后的坐标范围
             if (features.length > 0) {
               const firstFeatureExtent = features[0].getGeometry()?.getExtent()
               
               if (!firstFeatureExtent || firstFeatureExtent.some(coord => !isFinite(coord))) {
-                console.error(`❌ 转换后坐标范围无效: [${firstFeatureExtent}]`)
+                console.error(` 转换后坐标范围无效: [${firstFeatureExtent}]`)
                 console.error(`   这通常意味着 GeoJSON 文件的 geometry 数据有问题`)
                 
                 ElMessage.error({
@@ -1744,16 +1810,16 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
                 throw new Error('转换后坐标范围无效')
               }
               
-              console.log(`🔍 转换后范围 (EPSG:3857): [${firstFeatureExtent.map(v => v.toFixed(2)).join(', ')}]`)
+              console.log(` 转换后范围 (EPSG:3857): [${firstFeatureExtent.map(v => v.toFixed(2)).join(', ')}]`)
               
               // 验证范围是否合理
               const WEB_MERCATOR_MAX = 20037508.34
               const isValid = firstFeatureExtent.every(coord => Math.abs(coord) <= WEB_MERCATOR_MAX)
               
               if (isValid) {
-                console.log(`✅ 转换后坐标范围正常`)
+                console.log(` 转换后坐标范围正常`)
               } else {
-                console.error(`❌ 转换后坐标范围异常，超出 Web Mercator 有效范围!`)
+                console.error(` 转换后坐标范围异常，超出 Web Mercator 有效范围!`)
                 console.error(`   有效范围: ±${WEB_MERCATOR_MAX.toFixed(2)}`)
                 
                 ElMessage.error({
@@ -1766,7 +1832,7 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
             }
             
             if (features && features.length > 0) {
-              // 🚀 性能警告：如果单个文件的地块数量太多，提示用户
+              //  性能警告：如果单个文件的地块数量太多，提示用户
               if (features.length > 5000) {
                 ElMessage.warning({
                   message: `${file.name} 包含 ${features.length} 个地块，数量较多可能影响性能`,
@@ -1778,7 +1844,7 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
                 features: features
               })
               
-              // 🎨 使用动态样式函数（根据class字段显示不同颜色）
+              //  使用动态样式函数（根据class字段显示不同颜色）
               const newLayer = new VectorLayer({
                 source: geojsonSource,
                 style: getFeatureStyle,  // 使用动态样式函数
@@ -1787,18 +1853,18 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
               })
               
               newLayer.set('fileName', file.name)
-              newLayer.set('fileId', file.id)  // 🔧 修复：添加唯一ID
+              newLayer.set('fileId', file.id)  //  修复：添加唯一ID
               newLayer.set('fileData', file)
               newLayer.set('fileType', 'GeoJSON')
               
               map.addLayer(newLayer)
               kmzLayers.push(newLayer)
               
-              kmzLayerVisibility.value[file.id] = true  // 🔧 修复：使用文件ID
+              kmzLayerVisibility.value[file.id] = true  //  修复：使用文件ID
               
-              console.log(`✅ [${i + 1}/${newFiles.length}] GeoJSON加载成功: ${file.name} (${features.length}个要素)`)
+              console.log(` [${i + 1}/${newFiles.length}] GeoJSON加载成功: ${file.name} (${features.length}个要素)`)
               
-              // 🔧 修复：加载新文件后，自动切换到最新加载的文件并更新统计
+              //  修复：加载新文件后，自动切换到最新加载的文件并更新统计
               currentKmzIndex.value = kmzLayers.length - 1
               currentRecognitionData.value = file
               
@@ -1808,7 +1874,7 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
             }
           }
         } catch (error) {
-          console.error(`❌ ${file.name} 加载失败:`, error)
+          console.error(` ${file.name} 加载失败:`, error)
           ElMessage.error(`${file.name} 加载失败`)
         }
       }
@@ -1820,7 +1886,7 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
         const firstLayer = kmzLayers[0]
         const extent = firstLayer.getSource().getExtent()
         if (extent && extent.every(coord => isFinite(coord))) {
-          console.log(`📍 缩放到图层范围:`, extent)
+          console.log(` 缩放到图层范围:`, extent)
           map.getView().fit(extent, {
             padding: [80, 80, 80, 80],
             duration: 800,
@@ -1831,9 +1897,9 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
       
       ElMessage.success(`成功加载 ${newFiles.length} 个GeoJSON文件`)
     } else {
-      console.log('✅ 所有GeoJSON文件已加载，显示图层')
+      console.log(' 所有GeoJSON文件已加载，显示图层')
       
-      // 🔧 修复：即使文件已加载，也需要缩放到图层范围
+      //  修复：即使文件已加载，也需要缩放到图层范围
       if (kmzLayers.length > 0) {
         // 显示所有图层
         kmzLayers.forEach(layer => layer.setVisible(true))
@@ -1842,7 +1908,7 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
         const firstLayer = kmzLayers[0]
         const extent = firstLayer.getSource().getExtent()
         
-        console.log(`🔍 ===== 缩放诊断 =====`)
+        console.log(` ===== 缩放诊断 =====`)
         console.log(`图层数量: ${kmzLayers.length}`)
         console.log(`图层范围: [${extent.map(v => v.toFixed(2)).join(', ')}]`)
         console.log(`图层可见性: ${firstLayer.getVisible()}`)
@@ -1870,7 +1936,7 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
             console.log(`========================`)
           }, 100)
         } else {
-          console.error(`❌ 图层范围无效，无法缩放`)
+          console.error(` 图层范围无效，无法缩放`)
         }
         
         ElMessage.success('已显示GeoJSON图层')
@@ -1878,14 +1944,14 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
     }
     
   } catch (error) {
-    console.error('❌ GeoJSON增量加载失败:', error)
+    console.error(' GeoJSON增量加载失败:', error)
     ElMessage.error(`GeoJSON加载失败: ${error.message || '未知错误'}`)
     // 重新抛出错误，让上层处理
     throw error
   }
 }
 
-// 🆕 验证识别任务类型与数据是否匹配
+//  验证识别任务类型与数据是否匹配
 const validateRecognitionData = (fileData, features) => {
   if (!features || features.length === 0) {
     return { isValid: true, message: '' }
@@ -1924,7 +1990,7 @@ const validateRecognitionData = (fileData, features) => {
   const minValue = Math.min(...values)
   const maxValue = Math.max(...values)
   
-  console.log(`🔍 字段 ${fieldName} 值范围: ${minValue} - ${maxValue}`)
+  console.log(` 字段 ${fieldName} 值范围: ${minValue} - ${maxValue}`)
   
   // 判断识别任务类型
   const isPlantingData = maxValue <= 1 // 0-1范围：种植情况数据
@@ -1950,27 +2016,27 @@ const validateRecognitionData = (fileData, features) => {
   return { isValid: true, message: '' }
 }
 
-// 🆕 从GeoJSON features更新统计信息
+//  从GeoJSON features更新统计信息
 const updateGeoJsonStatistics = (fileData, features) => {
   if (!features || features.length === 0) {
-    console.warn('⚠️ GeoJSON文件中没有地理要素')
+    console.warn(' GeoJSON文件中没有地理要素')
     return
   }
   
-  console.log(`📊 开始统计GeoJSON数据，共 ${features.length} 个要素`)
+  console.log(` 开始统计GeoJSON数据，共 ${features.length} 个要素`)
   
   // 打印第一个feature的属性
   if (features.length > 0) {
     const firstFeature = features[0]
     const firstProps = firstFeature.getProperties()
-    console.log('📋 第一个要素的所有属性:', firstProps)
+    console.log(' 第一个要素的所有属性:', firstProps)
   }
   
   // 计算总面积
   const totalArea = calculateKmzArea(features)
   const plotCount = features.length
   
-  // 🔧 修复：根据识别任务类型选择正确的字段进行统计
+  //  修复：根据识别任务类型选择正确的字段进行统计
   const typeCounts = {}
   
   // 判断使用哪个字段（gridcode 或 class）
@@ -1983,7 +2049,7 @@ const updateGeoJsonStatistics = (fileData, features) => {
     classFieldName = 'class'
   }
   
-  console.log(`📋 使用字段: ${classFieldName || '未找到分类字段'}`)
+  console.log(` 使用字段: ${classFieldName || '未找到分类字段'}`)
   
   features.forEach((feature, idx) => {
     const props = feature.getProperties()
@@ -1998,7 +2064,7 @@ const updateGeoJsonStatistics = (fileData, features) => {
     
     let type = '未知'
     
-    // 🆕 优先使用 gridcode 或 class 字段
+    //  优先使用 gridcode 或 class 字段
     if (classFieldName && props[classFieldName] !== undefined && props[classFieldName] !== null) {
       const value = Number(props[classFieldName])
       
@@ -2032,7 +2098,7 @@ const updateGeoJsonStatistics = (fileData, features) => {
     typeCounts[type] = (typeCounts[type] || 0) + 1
   })
   
-  console.log('📊 分类统计:', typeCounts)
+  console.log(' 分类统计:', typeCounts)
   
   // 更新KPI数据
   kpiData.value = {
@@ -2042,7 +2108,7 @@ const updateGeoJsonStatistics = (fileData, features) => {
     diffCount: '—'   // SHP/GeoJSON文件没有差异数
   }
   
-  // 🆕 更新饼图（根据识别任务类型使用不同的颜色）
+  //  更新饼图（根据识别任务类型使用不同的颜色）
   if (cropChart) {
     const chartData = Object.entries(typeCounts).map(([name, value]) => {
       let color
@@ -2064,25 +2130,25 @@ const updateGeoJsonStatistics = (fileData, features) => {
       }
     })
     
-    console.log('📊 准备更新饼图，数据:', chartData)
+    console.log(' 准备更新饼图，数据:', chartData)
     
-    // 🔧 修复：按数量排序（与KMZ饼图一致）
+    //  修复：按数量排序（与KMZ饼图一致）
     chartData.sort((a, b) => b.value - a.value)
     
     const chartTitle = fileData.recognitionType === 'crop_recognition' ? '作物类型分布' : '种植情况分布'
     
-    // ✅ 使用完整的配置，确保饼图正确显示
+    //  使用完整的配置，确保饼图正确显示
     const option = {
       tooltip: {
         trigger: 'item',
         formatter: '{b}: {c}个 ({d}%)',
-        confine: false,  // 🔧 允许tooltip超出容器边界
-        appendToBody: true  // 🔧 将tooltip添加到body，避免被卡片遮挡
+        confine: false,  //  允许tooltip超出容器边界
+        appendToBody: true  //  将tooltip添加到body，避免被卡片遮挡
       },
       legend: {
         bottom: '2%',
         left: 'center',
-        type: 'scroll',  // 🔧 使用可滚动图例
+        type: 'scroll',  //  使用可滚动图例
         orient: 'horizontal',
         pageButtonPosition: 'end',  // 翻页按钮位置
         pageIconColor: '#409EFF',  // 翻页按钮颜色
@@ -2104,7 +2170,7 @@ const updateGeoJsonStatistics = (fileData, features) => {
         name: chartTitle,
         type: 'pie',
         radius: ['35%', '65%'],
-        center: ['50%', '40%'],  // 🔧 向上移动，为图例留更多空间
+        center: ['50%', '40%'],  //  向上移动，为图例留更多空间
         avoidLabelOverlap: true,
         itemStyle: {
           borderRadius: 8,
@@ -2112,7 +2178,7 @@ const updateGeoJsonStatistics = (fileData, features) => {
           borderWidth: 2
         },
         label: {
-          show: false  // 🔧 不显示标签，只在悬停时显示
+          show: false  //  不显示标签，只在悬停时显示
         },
         labelLine: {
           show: false
@@ -2130,28 +2196,28 @@ const updateGeoJsonStatistics = (fileData, features) => {
     
     cropChart.setOption(option, true)  // 完全替换配置
     
-    console.log('✅ 饼图已更新，数据项数:', chartData.length)
+    console.log(' 饼图已更新，数据项数:', chartData.length)
   } else {
-    console.warn('⚠️ cropChart未初始化')
+    console.warn(' cropChart未初始化')
   }
 }
 
-// 🎨 定义种植情况颜色映射（与饼图颜色一致）
+//  定义种植情况颜色映射（与饼图颜色一致）
 const plantingStatusColors = {
   '已种植': '#409EFF',    // 蓝色
   '未种植': '#F56C6C',    // 红色
   '未知': '#909399'        // 灰色
 }
 
-// 🎨 根据识别任务类型和字段值返回动态样式函数（高性能优化版）
+//  根据识别任务类型和字段值返回动态样式函数（高性能优化版）
 // 样式缓存，避免重复创建Style对象
 const styleCache = new Map()
 
 const getFeatureStyle = (feature, resolution) => {
   const props = feature.getProperties()
   
-  // 🆕 尝试从图层的 fileData 获取识别任务类型
-  // 🚀 性能优化：使用feature的自定义属性缓存layer引用，避免每次遍历
+  //  尝试从图层的 fileData 获取识别任务类型
+  //  性能优化：使用feature的自定义属性缓存layer引用，避免每次遍历
   let layer = feature.get('_cachedLayer')
   if (!layer) {
     layer = kmzLayers.find(l => {
@@ -2201,11 +2267,11 @@ const getFeatureStyle = (feature, resolution) => {
     color = plantingStatusColors[status] || plantingStatusColors['未知']
   }
   
-  // 🚀 性能优化：根据分辨率和缩放级别大幅简化样式
+  //  性能优化：根据分辨率和缩放级别大幅简化样式
   // 当缩小到一定程度时，只显示填充色，不显示边框
   const strokeWidth = resolution > 100 ? 0 : (resolution > 50 ? 1 : 2)
   
-  // 🚀 样式缓存：使用颜色和边框宽度作为key
+  //  样式缓存：使用颜色和边框宽度作为key
   const cacheKey = `${color}_${strokeWidth}`
   let style = styleCache.get(cacheKey)
   
@@ -2243,14 +2309,14 @@ const updateKmzStatistics = async (fileData, index) => {
   const features = source.getFeatures()
   
   if (features.length === 0) {
-    console.warn('⚠️ KMZ文件中没有地理要素')
+    console.warn(' KMZ文件中没有地理要素')
     ElMessage.warning('KMZ文件中没有地理要素')
     return
   }
   
-  console.log(`📊 开始统计KMZ数据，共 ${features.length} 个要素`)
+  console.log(` 开始统计KMZ数据，共 ${features.length} 个要素`)
   
-  // 🆕 检查KMZ的ExtendedData是否已包含面积和class
+  //  检查KMZ的ExtendedData是否已包含面积和class
   // OpenLayers的KML解析器会自动将ExtendedData中的Data元素转换为properties
   const firstFeature = features[0]
   const hasExtendedData = firstFeature && 
@@ -2258,11 +2324,11 @@ const updateKmzStatistics = async (fileData, index) => {
                          firstFeature.getProperties().class !== undefined
   
   if (hasExtendedData) {
-    console.log(`✅ KMZ的ExtendedData已包含面积和class字段，直接使用`)
+    console.log(` KMZ的ExtendedData已包含面积和class字段，直接使用`)
     
     // 打印前几个features的properties以验证
     if (features.length > 0) {
-      console.log(`📋 前3个要素的properties:`)
+      console.log(` 前3个要素的properties:`)
       features.slice(0, 3).forEach((feature, idx) => {
         const props = feature.getProperties()
         console.log(`   要素${idx + 1}:`, {
@@ -2275,7 +2341,7 @@ const updateKmzStatistics = async (fileData, index) => {
     }
   } else {
     // 如果KMZ没有ExtendedData（旧文件），尝试从后端获取
-    console.log(`⚠️ KMZ缺少ExtendedData，尝试从后端获取面积数据...`)
+    console.log(` KMZ缺少ExtendedData，尝试从后端获取面积数据...`)
     try {
       const kmzFilename = fileData.name
       const relativePath = fileData.relativePath || ''
@@ -2284,7 +2350,7 @@ const updateKmzStatistics = async (fileData, index) => {
       
       if (response.code === 200) {
         const { areas, totalAreaMu, source: dataSource } = response.data
-        console.log(`✅ 从后端获取面积数据成功 (来源: ${dataSource})，总面积: ${totalAreaMu.toFixed(2)} 亩`)
+        console.log(` 从后端获取面积数据成功 (来源: ${dataSource})，总面积: ${totalAreaMu.toFixed(2)} 亩`)
         
         // 设置面积数据到features
         features.forEach((feature, idx) => {
@@ -2296,30 +2362,30 @@ const updateKmzStatistics = async (fileData, index) => {
           }
         })
       } else {
-        console.warn(`⚠️ 无法获取面积数据: ${response.message}`)
+        console.warn(` 无法获取面积数据: ${response.message}`)
       }
     } catch (error) {
-      console.error(`❌ 获取面积数据失败:`, error)
+      console.error(` 获取面积数据失败:`, error)
     }
   }
   
-  // 🆕 更新KMZ图层样式（根据class字段显示不同颜色）
+  //  更新KMZ图层样式（根据class字段显示不同颜色）
   kmzLayers[index].setStyle(getFeatureStyle)
-  console.log('🎨 已更新KMZ图层样式（根据class字段）')
+  console.log(' 已更新KMZ图层样式（根据class字段）')
   
   // 打印第一个feature的所有属性，帮助调试
   if (features.length > 0) {
     const firstFeature = features[0]
     const firstProps = firstFeature.getProperties()
-    console.log('📋 第一个要素的所有属性:', firstProps)
-    console.log('📋 属性字段名:', Object.keys(firstProps).filter(k => k !== 'geometry'))
+    console.log(' 第一个要素的所有属性:', firstProps)
+    console.log(' 属性字段名:', Object.keys(firstProps).filter(k => k !== 'geometry'))
   }
   
   // 计算统计信息（从properties读取面积）
   const totalArea = calculateKmzArea(features)
   const plotCount = features.length
   
-  // 🔧 修复：根据识别任务类型统计分布（与updateGeoJsonStatistics一致）
+  //  修复：根据识别任务类型统计分布（与updateGeoJsonStatistics一致）
   const statusCounts = {}
   
   // 判断使用哪个字段（gridcode 或 class）
@@ -2332,7 +2398,7 @@ const updateKmzStatistics = async (fileData, index) => {
     classFieldName = 'class'
   }
   
-  console.log(`📋 KMZ使用字段: ${classFieldName || '未找到分类字段'}`)
+  console.log(` KMZ使用字段: ${classFieldName || '未找到分类字段'}`)
   
   features.forEach((feature, idx) => {
     const props = feature.getProperties()
@@ -2347,7 +2413,7 @@ const updateKmzStatistics = async (fileData, index) => {
     
     let type = '未知'
     
-    // 🆕 优先使用 gridcode 或 class 字段
+    //  优先使用 gridcode 或 class 字段
     if (classFieldName && props[classFieldName] !== undefined && props[classFieldName] !== null) {
       const value = Number(props[classFieldName])
       
@@ -2393,17 +2459,17 @@ const updateKmzStatistics = async (fileData, index) => {
     statusCounts[type] = (statusCounts[type] || 0) + 1
   })
   
-  console.log(`📊 ${fileData.recognitionType === 'crop_recognition' ? '作物类型' : '种植情况'}统计:`, statusCounts)
+  console.log(` ${fileData.recognitionType === 'crop_recognition' ? '作物类型' : '种植情况'}统计:`, statusCounts)
   
   // 更新统计数据
   kpiData.value = {
-    totalArea: totalArea.toFixed(2),  // 🆕 保留两位小数
+    totalArea: totalArea.toFixed(2),  //  保留两位小数
     matchRate: '0',
     diffCount: '0',
     plotCount: formatNumber(plotCount)
   }
   
-  // 🔧 修复：根据识别任务类型使用不同的颜色（与updateGeoJsonStatistics一致）
+  //  修复：根据识别任务类型使用不同的颜色（与updateGeoJsonStatistics一致）
   if (cropChart) {
     const chartData = Object.entries(statusCounts).map(([name, count]) => {
       let color
@@ -2428,7 +2494,7 @@ const updateKmzStatistics = async (fileData, index) => {
     // 按数量排序
     chartData.sort((a, b) => b.value - a.value)
     
-    console.log('📊 饼图数据:', chartData)
+    console.log(' 饼图数据:', chartData)
     
     const chartTitle = fileData.recognitionType === 'crop_recognition' ? '作物类型分布' : '种植情况分布'
     
@@ -2436,13 +2502,13 @@ const updateKmzStatistics = async (fileData, index) => {
       tooltip: {
         trigger: 'item',
         formatter: '{b}: {c}个 ({d}%)',
-        confine: false,  // 🔧 允许tooltip超出容器边界
-        appendToBody: true  // 🔧 将tooltip添加到body，避免被卡片遮挡
+        confine: false,  //  允许tooltip超出容器边界
+        appendToBody: true  //  将tooltip添加到body，避免被卡片遮挡
       },
       legend: {
         bottom: '2%',
         left: 'center',
-        type: 'scroll',  // 🔧 使用可滚动图例
+        type: 'scroll',  //  使用可滚动图例
         orient: 'horizontal',
         pageButtonPosition: 'end',
         pageIconColor: '#409EFF',
@@ -2464,7 +2530,7 @@ const updateKmzStatistics = async (fileData, index) => {
         name: chartTitle,
         type: 'pie',
         radius: ['35%', '65%'],
-        center: ['50%', '40%'],  // 🔧 向上移动，为图例留更多空间
+        center: ['50%', '40%'],  //  向上移动，为图例留更多空间
         avoidLabelOverlap: true,
         itemStyle: {
           borderRadius: 8,
@@ -2472,7 +2538,7 @@ const updateKmzStatistics = async (fileData, index) => {
           borderWidth: 2
         },
         label: {
-          show: false  // 🔧 不显示标签，只在悬停时显示
+          show: false  //  不显示标签，只在悬停时显示
         },
         labelLine: {
           show: false
@@ -2488,10 +2554,122 @@ const updateKmzStatistics = async (fileData, index) => {
       }]
     }, true)  // 使用notMerge确保完全替换
     
-    console.log('✅ 饼图已更新')
+    console.log(' 饼图已更新')
   }
   
-  console.log(`✅ 更新KMZ统计完成: 面积=${totalArea.toFixed(2)}亩, 地块=${plotCount}`)
+  console.log(` 更新KMZ统计完成: 面积=${totalArea.toFixed(2)}亩, 地块=${plotCount}`)
+}
+
+// 获取所有TIF图层的合并范围
+const getAllTiffLayersExtent = async () => {
+  if (!tiffLayers || tiffLayers.length === 0) {
+    return null
+  }
+  
+  const extents = []
+  
+  // 获取所有可见图层的extent
+  for (const layer of tiffLayers) {
+    if (!layer.getVisible()) {
+      continue
+    }
+    
+    const source = layer.getSource()
+    if (!source) {
+      continue
+    }
+    
+    try {
+      // 如果图层已加载完成，获取extent
+      if (source.getState() === 'ready') {
+        try {
+          const viewConfig = source.getView()
+          // getView可能返回Promise或直接返回对象
+          const resolvedViewConfig = viewConfig instanceof Promise ? await viewConfig : viewConfig
+          
+          if (resolvedViewConfig && resolvedViewConfig.extent) {
+            const extent = resolvedViewConfig.extent
+            if (extent && extent.every(coord => isFinite(coord))) {
+              extents.push(extent)
+              continue
+            }
+          }
+        } catch (e) {
+          // getView失败，尝试其他方法
+        }
+        
+        // 如果getView失败或没有extent，尝试getExtent
+        try {
+          const extent = source.getExtent()
+          if (extent && extent.length === 4 && extent.every(coord => isFinite(coord))) {
+            extents.push(extent)
+          }
+        } catch (e2) {
+          console.warn('获取图层范围失败:', e2)
+        }
+      }
+    } catch (error) {
+      console.warn('获取图层范围失败:', error)
+    }
+  }
+  
+  if (extents.length === 0) {
+    return null
+  }
+  
+  // 合并所有extent
+  let unionExtent = createEmpty()
+  for (const extent of extents) {
+    extend(unionExtent, extent)
+  }
+  
+  return unionExtent
+}
+
+// 获取单个影像图层的范围
+const getSingleImageLayerExtent = async (imageId) => {
+  const layer = tiffLayers.find(l => l.get('imageId') === imageId)
+  if (!layer) {
+    return null
+  }
+  
+  const source = layer.getSource()
+  if (!source) {
+    return null
+  }
+  
+  try {
+    if (source.getState() === 'ready') {
+      try {
+        const viewConfig = source.getView()
+        // getView可能返回Promise或直接返回对象
+        const resolvedViewConfig = viewConfig instanceof Promise ? await viewConfig : viewConfig
+        
+        if (resolvedViewConfig && resolvedViewConfig.extent) {
+          const extent = resolvedViewConfig.extent
+          if (extent && extent.every(coord => isFinite(coord))) {
+            return extent
+          }
+        }
+      } catch (e) {
+        // getView失败，尝试其他方法
+      }
+      
+      // 如果getView失败或没有extent，尝试getExtent
+      try {
+        const extent = source.getExtent()
+        if (extent && extent.length === 4 && extent.every(coord => isFinite(coord))) {
+          return extent
+        }
+      } catch (e2) {
+        console.warn('获取图层范围失败:', e2)
+      }
+    }
+  } catch (error) {
+    console.warn('获取图层范围失败:', error)
+  }
+  
+  return null
 }
 
 // 切换显示不同的影像统计
@@ -2506,25 +2684,71 @@ const switchImage = async (index) => {
   // 更新统计信息
   await updateStatistics(loadedImages.value[index])
   
-  console.log(`✅ 已切换到: ${loadedImages.value[index].name}`)
+  // 缩放到该影像的图层范围
+  if (map && currentImageData.value) {
+    const imageId = currentImageData.value.id
+    const extent = await getSingleImageLayerExtent(imageId)
+    
+    if (extent) {
+      map.getView().fit(extent, {
+        padding: [80, 80, 80, 80],
+        duration: 500,
+        maxZoom: 15
+      })
+      console.log('已缩放至该影像图层范围')
+    } else {
+      // 如果图层还未加载完成，等待一段时间再试
+      setTimeout(async () => {
+        const extent = await getSingleImageLayerExtent(imageId)
+        if (extent) {
+          map.getView().fit(extent, {
+            padding: [80, 80, 80, 80],
+            duration: 500,
+            maxZoom: 15
+          })
+        }
+      }, 1000)
+    }
+  }
+  
+  console.log(` 已切换到: ${loadedImages.value[index].name}`)
 }
 
 // 检查KMZ图层是否可见（使用唯一ID）
 const isKmzLayerVisible = (fileId) => {
-  // 🔧 修复：使用文件的唯一ID而不是文件名，避免同名文件冲突
+  //  修复：使用文件的唯一ID而不是文件名，避免同名文件冲突
   return kmzLayerVisibility.value[fileId] ?? false
 }
 
 // 切换KMZ图层可见性（支持多选）
 const toggleKmzLayerVisibility = (fileId, visible) => {
-  // 🔧 修复：使用文件ID查找图层
+  //  修复：使用文件ID查找图层
   const layer = kmzLayers.find(layer => layer.get('fileId') === fileId)
   if (layer) {
     layer.setVisible(visible)
-    // 🔧 修复：使用文件ID更新响应式状态
+    //  修复：使用文件ID更新响应式状态
     kmzLayerVisibility.value[fileId] = visible
     const fileName = layer.get('fileName')
-    console.log(`${visible ? '✅ 显示' : '⭕ 隐藏'} KMZ图层: ${fileName} (ID: ${fileId})`)
+    console.log(`${visible ? ' 显示' : ' 隐藏'} KMZ图层: ${fileName} (ID: ${fileId})`)
+  }
+}
+
+// 检查TIF图层是否可见（使用影像ID）
+const isTiffLayerVisible = (imageId) => {
+  return tiffLayerVisibility.value[imageId] ?? false
+}
+
+// 切换TIF图层可见性（支持多选）
+const toggleTiffLayerVisibility = (imageId, visible) => {
+  // 使用影像ID查找图层
+  const layer = tiffLayers.find(layer => layer.get('imageId') === imageId)
+  if (layer) {
+    layer.setVisible(visible)
+    // 使用影像ID更新响应式状态
+    tiffLayerVisibility.value[imageId] = visible
+    const imageData = layer.get('imageData')
+    const imageName = imageData ? imageData.name : '未知'
+    console.log(`${visible ? ' 显示' : ' 隐藏'} TIF图层: ${imageName} (ID: ${imageId})`)
   }
 }
 
@@ -2544,7 +2768,7 @@ const switchKmzFile = async (index) => {
   
   // ⚡ 优化4：防抖优化 - 如果是同一个索引，取消之前的操作
   if (lastSwitchIndex === index && switchKmzFileTimer) {
-    console.log('⏭️ 跳过重复点击')
+    console.log(' 跳过重复点击')
     return
   }
   
@@ -2560,7 +2784,7 @@ const switchKmzFile = async (index) => {
   const layerIndex = kmzLayers.findIndex(layer => layer.get('fileName') === file.name)
   
   if (layerIndex === -1) {
-    console.warn(`⚠️ 未找到文件 ${file.name} 对应的图层，图层尚未加载`)
+    console.warn(` 未找到文件 ${file.name} 对应的图层，图层尚未加载`)
     updateRecognitionStatisticsPreview(file)
     ElMessage.info(`${file.name} 图层未加载，请勾选"种植情况"开关以加载图层`)
     return
@@ -2580,7 +2804,7 @@ const switchKmzFile = async (index) => {
     })
   }
   
-  console.log(`✅ 已切换到: ${file.name}`)
+  console.log(` 已切换到: ${file.name}`)
   
   // ⚡ 优化3：延迟更新统计信息（避免阻塞UI，使用requestAnimationFrame）
   switchKmzFileTimer = setTimeout(() => {
@@ -2594,7 +2818,7 @@ const switchKmzFile = async (index) => {
         await updateKmzStatistics(file, layerIndex)
       }
       
-      console.log(`📊 统计信息已更新 (类型: ${fileType})`)
+      console.log(` 统计信息已更新 (类型: ${fileType})`)
       switchKmzFileTimer = null
     })
   }, 50)  // 延迟50ms更新统计，优先保证视觉响应
@@ -2629,7 +2853,7 @@ const loadKmzLayer = async (filePath) => {
       })
     })
     
-    // 🎨 创建矢量图层（使用动态样式函数）
+    //  创建矢量图层（使用动态样式函数）
     const newKmzLayer = new VectorLayer({
       source: kmzSource,
       style: getFeatureStyle,  // 使用动态样式函数（根据class字段显示不同颜色）
@@ -2656,7 +2880,7 @@ const loadKmzLayer = async (filePath) => {
         console.log('KMZ features数量:', features.length)
         
         if (features.length > 0) {
-          // 🆕 从filePath提取文件名和relativePath
+          //  从filePath提取文件名和relativePath
           const pathParts = filePath.split('/')
           const kmzFilename = pathParts[pathParts.length - 1]
           
@@ -2669,14 +2893,14 @@ const loadKmzLayer = async (filePath) => {
             relativePath = pathParts.slice(kmzIndex + 1, pathParts.length - 1).join('/')
           }
           
-          console.log(`📐 准备获取面积数据: ${kmzFilename}, relativePath: ${relativePath}`)
+          console.log(` 准备获取面积数据: ${kmzFilename}, relativePath: ${relativePath}`)
           
-          // 🆕 调用后端API获取面积数据
+          //  调用后端API获取面积数据
           getKmzAreas(kmzFilename, relativePath)
             .then(response => {
               if (response.code === 200) {
                 const { areas, totalAreaMu, source } = response.data
-                console.log(`✅ 获取面积数据成功 (来源: ${source})，总面积: ${totalAreaMu.toFixed(2)} 亩`)
+                console.log(` 获取面积数据成功 (来源: ${source})，总面积: ${totalAreaMu.toFixed(2)} 亩`)
                 
                 // 将面积数据设置到features的properties中
                 features.forEach((feature, idx) => {
@@ -2691,13 +2915,13 @@ const loadKmzLayer = async (filePath) => {
                 // 使用统一的统计函数
                 updateKmzStatistics(currentRecognitionData.value, 0)
               } else {
-                console.warn(`⚠️ 无法获取面积数据: ${response.message}`)
+                console.warn(` 无法获取面积数据: ${response.message}`)
                 // 即使无法获取面积，也继续显示图层
                 updateKmzStatistics(currentRecognitionData.value, 0)
               }
             })
             .catch(error => {
-              console.error(`❌ 获取面积数据失败:`, error)
+              console.error(` 获取面积数据失败:`, error)
               // 即使失败，也继续显示图层
               updateKmzStatistics(currentRecognitionData.value, 0)
             })
@@ -2744,12 +2968,12 @@ const calculateKmzArea = (features) => {
   let totalAreaMu = 0
   let precalculatedCount = 0
   
-  console.log(`📐 开始统计面积，共 ${features.length} 个地块`)
+  console.log(` 开始统计面积，共 ${features.length} 个地块`)
   
   features.forEach((feature, idx) => {
     const props = feature.getProperties()
     
-    // 🆕 优先读取预计算的面积（支持多种字段名）
+    //  优先读取预计算的面积（支持多种字段名）
     // area_mu: KMZ 标准字段
     // dcmj: SHP 地块面积字段（中文拼音）
     let areaMu = null
@@ -2770,29 +2994,29 @@ const calculateKmzArea = (features) => {
     } else {
       // 没有预计算面积数据
       if (idx < 3) {
-        console.warn(`   ⚠️ 地块${idx + 1}缺少面积数据，可用字段:`, Object.keys(props).filter(k => k !== 'geometry'))
+        console.warn(`    地块${idx + 1}缺少面积数据，可用字段:`, Object.keys(props).filter(k => k !== 'geometry'))
       }
     }
   })
   
   if (precalculatedCount > 0) {
-    console.log(`✅ 面积统计完成: ${precalculatedCount}/${features.length} 个地块`)
-    console.log(`   📊 总面积: ${totalAreaMu.toFixed(2)} 亩`)
+    console.log(` 面积统计完成: ${precalculatedCount}/${features.length} 个地块`)
+    console.log(`    总面积: ${totalAreaMu.toFixed(2)} 亩`)
   } else {
-    console.warn(`⚠️ 没有可用的面积数据，请先将SHP转换为GeoJSON或等待后端计算`)
+    console.warn(` 没有可用的面积数据，请先将SHP转换为GeoJSON或等待后端计算`)
   }
   
   return totalAreaMu
 }
 
-// 🆕 预览识别结果统计信息（在图层加载前显示基本信息）
+//  预览识别结果统计信息（在图层加载前显示基本信息）
 const updateRecognitionStatisticsPreview = (fileData) => {
   if (!fileData) {
     console.log('没有识别结果数据')
     return
   }
   
-  console.log('📊 更新识别结果预览信息:', fileData.name)
+  console.log(' 更新识别结果预览信息:', fileData.name)
   
   // 先显示"加载中"状态
   kpiData.value = {
@@ -2804,7 +3028,7 @@ const updateRecognitionStatisticsPreview = (fileData) => {
   
   // 确保cropChart已初始化
   if (!cropChart) {
-    console.warn('⚠️ cropChart未初始化，尝试初始化...')
+    console.warn(' cropChart未初始化，尝试初始化...')
     initCropChart()
   }
   
@@ -2820,7 +3044,7 @@ const updateRecognitionStatisticsPreview = (fileData) => {
       legend: {
         bottom: '0%',
         left: 'center',
-        type: 'plain',  // 🔧 修复：使用plain类型，避免截断显示
+        type: 'plain',  //  修复：使用plain类型，避免截断显示
         orient: 'horizontal'
       },
       series: [{
@@ -2856,7 +3080,7 @@ const updateRecognitionStatisticsPreview = (fileData) => {
     }, true)
   }
   
-  console.log('✅ 识别结果预览信息已更新')
+  console.log(' 识别结果预览信息已更新')
 }
 
 // 更新识别结果统计数据（已废弃，使用updateKmzStatistics替代）
@@ -2933,7 +3157,7 @@ const hexToRgb = (hex) => {
   ] : [0, 0, 0]
 }
 
-// 🚀 优化版：重新加载多个 TIF 图层（支持大数据，添加错误恢复）
+//  优化版：重新加载多个 TIF 图层（支持大数据，添加错误恢复）
 const reloadMultipleTiffLayers = async (images) => {
   // 限制同时加载的影像数量（避免浏览器崩溃）
   const MAX_LAYERS = 10
@@ -2942,7 +3166,7 @@ const reloadMultipleTiffLayers = async (images) => {
     images = images.slice(0, MAX_LAYERS)
   }
   
-  // 🌐 严格检查：禁止加载未优化影像（避免卡死和坐标错误）
+  //  严格检查：禁止加载未优化影像（避免卡死和坐标错误）
   const unoptimizedImages = images.filter(img => {
     const path = img.optimizedPath || img.filePath || img.originalPath
     return !img.isOptimized && path && !path.includes('_optimized')
@@ -2963,11 +3187,11 @@ const reloadMultipleTiffLayers = async (images) => {
       router.push('/image-management')
     })
     
-    console.error('❌ 禁止加载未优化影像')
-    console.error('🌐 未优化影像列表:', names)
-    console.error('💡 必须先优化：前往"数据管理" → 点击"优化" → 等待完成')
+    console.error(' 禁止加载未优化影像')
+    console.error(' 未优化影像列表:', names)
+    console.error(' 必须先优化：前往"数据管理" → 点击"优化" → 等待完成')
     
-    // 🔒 直接返回，不加载任何影像
+    //  直接返回，不加载任何影像
     return
   }
   
@@ -2991,7 +3215,7 @@ const reloadMultipleTiffLayers = async (images) => {
     
     const isDev = import.meta.env.DEV
     if (isDev) {
-      console.log(`📂 开始加载 ${images.length} 个影像`)
+      console.log(` 开始加载 ${images.length} 个影像`)
     }
     
     let successCount = 0
@@ -3002,11 +3226,11 @@ const reloadMultipleTiffLayers = async (images) => {
       const image = images[i]
       
       try {
-        // 🔧 从完整路径中提取文件名，转换为API路径
+        //  从完整路径中提取文件名，转换为API路径
         let pathToLoad = image.optimizedPath || image.filePath || image.originalPath
         
         if (!pathToLoad) {
-          console.warn(`⚠️ 影像 ${image.name} 缺少路径信息，跳过`)
+          console.warn(` 影像 ${image.name} 缺少路径信息，跳过`)
           failCount++
           continue
         }
@@ -3016,17 +3240,17 @@ const reloadMultipleTiffLayers = async (images) => {
           pathToLoad = `/api/image/file/${encodeURIComponent(filename)}`
         }
         
-        // 🔧 修复：添加时间戳参数破坏浏览器缓存（避免加载旧文件）
+        //  修复：添加时间戳参数破坏浏览器缓存（避免加载旧文件）
         // 原因：优化覆盖原文件后，浏览器可能缓存了旧版本的 TIF 文件
         const timestamp = Date.now()
         pathToLoad += (pathToLoad.includes('?') ? '&' : '?') + `t=${timestamp}`
         
         if (isDev) {
-          console.log(`   🔄 添加缓存破坏参数: t=${timestamp}`)
+          console.log(`    添加缓存破坏参数: t=${timestamp}`)
         }
         
-        // 🎨 检测是否为 RGB 影像
-        // ✅ 智能判断逻辑：
+        //  检测是否为 RGB 影像
+        //  智能判断逻辑：
         // 1. 如果有统计数据且 bandCount === 3，则认为是RGB（最可靠）
         // 2. 否则使用 statistics.isRGB 字段
         // 3. 最后回退到文件名判断
@@ -3042,16 +3266,16 @@ const reloadMultipleTiffLayers = async (images) => {
         const source = new GeoTIFF({
           sources: [{
             url: pathToLoad,
-            // 🔧 设置NoData值（NaN会被自动处理为透明）
+            //  设置NoData值（NaN会被自动处理为透明）
             nodata: NaN
           }],
-          // 🔧 关键修复：对于RGB影像，不使用normalize（会导致错误的归一化）
+          //  关键修复：对于RGB影像，不使用normalize（会导致错误的归一化）
           normalize: false,
           interpolate: false,
           transition: 0,
           wrapX: false,
           convertToRGB: false,  // 关闭自动转换，手动控制RGB渲染
-          // 🚀 性能优化：COG分块加载配置
+          //  性能优化：COG分块加载配置
           sourceOptions: {
             allowFullFile: true,  // Fallback：允许加载完整文件（仅用于非COG格式）
             // COG文件会自动使用HTTP Range请求进行分块加载
@@ -3059,17 +3283,17 @@ const reloadMultipleTiffLayers = async (images) => {
           }
         })
         
-        // 🔍 RGB影像：动态计算极值并应用归一化
+        //  RGB影像：动态计算极值并应用归一化
         let rgbMinMax = null // 存储计算出的min/max
         
         if (isRGB) {
-          console.log(`   🎨 RGB影像配置: 动态极值归一化`)
+          console.log(`    RGB影像配置: 动态极值归一化`)
           
           // 等待数据源准备就绪后读取元数据并计算极值
           source.on('change', async function checkMetadata() {
             if (source.getState() === 'ready') {
               try {
-                console.log(`   🔍 ========== 计算RGB影像极值 ==========`)
+                console.log(`    ========== 计算RGB影像极值 ==========`)
                 
                 // 使用 geotiff.js 直接读取 TIF 文件
                 const { fromUrl } = await import('geotiff')
@@ -3079,7 +3303,7 @@ const reloadMultipleTiffLayers = async (images) => {
                 const width = imageGT.getWidth()
                 const height = imageGT.getHeight()
                 
-                // 🔧 修复：多区域智能采样（适配中心区域为NaN的影像）
+                //  修复：多区域智能采样（适配中心区域为NaN的影像）
                 // 采样5个区域：四角 + 中心，至少找到一个有效区域
                 const sampleSize = 256
                 const sampleRegions = [
@@ -3118,26 +3342,26 @@ const reloadMultipleTiffLayers = async (images) => {
                     }
                     
                     const validPercent = (validCount / Math.min(1000, totalPixels)) * 100
-                    console.log(`   🔍 尝试采样区域【${region.name}】: 有效像素 ${validPercent.toFixed(1)}%`)
+                    console.log(`    尝试采样区域【${region.name}】: 有效像素 ${validPercent.toFixed(1)}%`)
                     
                     if (validPercent > 10) {
                       rasters = testRasters
                       selectedRegion = region.name
-                      console.log(`   ✅ 选择【${region.name}】作为采样区域`)
+                      console.log(`    选择【${region.name}】作为采样区域`)
                       break
                     }
                   } catch (e) {
-                    console.warn(`   ⚠️ 区域【${region.name}】采样失败:`, e.message)
+                    console.warn(`    区域【${region.name}】采样失败:`, e.message)
                   }
                 }
                 
                 if (!rasters) {
-                  console.error(`   ❌ 所有采样区域都无有效数据，影像可能全为NaN`)
+                  console.error(`    所有采样区域都无有效数据，影像可能全为NaN`)
                   throw new Error('无法找到有效采样区域')
                 }
                 
-                // 🎯 计算每个波段的2%-98%百分位数（标准遥感拉伸方法）
-                console.log(`   📊 使用【${selectedRegion}】区域计算百分位数`)
+                //  计算每个波段的2%-98%百分位数（标准遥感拉伸方法）
+                console.log(`    使用【${selectedRegion}】区域计算百分位数`)
                 const bandStats = []
                 for (let b = 0; b < 3; b++) {
                   const bandData = rasters[b]
@@ -3173,17 +3397,17 @@ const reloadMultipleTiffLayers = async (images) => {
                     
                     console.log(`      - 波段${b + 1}:`)
                     console.log(`        绝对范围: ${absMin.toFixed(0)} ~ ${absMax.toFixed(0)}`)
-                    console.log(`        2%-98%: ${p2.toFixed(0)} ~ ${p98.toFixed(0)} ⭐(用于拉伸)`)
+                    console.log(`        2%-98%: ${p2.toFixed(0)} ~ ${p98.toFixed(0)} (用于拉伸)`)
                   }
                 }
                 
                 if (bandStats.length === 3) {
                   rgbMinMax = bandStats
                   
-                  // 🔧 使用2%-98%百分位拉伸（标准遥感显示方法）
+                  //  使用2%-98%百分位拉伸（标准遥感显示方法）
                   const threshold = Math.min(bandStats[0].absMin, bandStats[1].absMin, bandStats[2].absMin) * 0.5
                   
-                  console.log(`   📊 归一化方式: 2%-98% 百分位拉伸`)
+                  console.log(`    归一化方式: 2%-98% 百分位拉伸`)
                   console.log(`   R波段: (value - ${bandStats[0].min.toFixed(0)}) / ${bandStats[0].range.toFixed(0)}`)
                   console.log(`   G波段: (value - ${bandStats[1].min.toFixed(0)}) / ${bandStats[1].range.toFixed(0)}`)
                   console.log(`   B波段: (value - ${bandStats[2].min.toFixed(0)}) / ${bandStats[2].range.toFixed(0)}`)
@@ -3209,11 +3433,11 @@ const reloadMultipleTiffLayers = async (images) => {
                     ]
                   })
                   
-                  console.log(`   ✅ 已应用百分位拉伸 (2%-98%) + 阈值透明`)
+                  console.log(`    已应用百分位拉伸 (2%-98%) + 阈值透明`)
                   console.log(`   ========================================`)
                 }
               } catch (e) {
-                console.error(`   ❌ 极值计算失败: ${e.message}`)
+                console.error(`    极值计算失败: ${e.message}`)
               }
               
               source.un('change', checkMetadata)
@@ -3221,7 +3445,7 @@ const reloadMultipleTiffLayers = async (images) => {
           })
         }
         
-        // 📊 监听数据源加载事件（调试用）+ 🆕 输出元数据诊断
+        //  监听数据源加载事件（调试用）+  输出元数据诊断
         let hasLoggedLoadType = false
         source.on('change', async function() {
           if (!hasLoggedLoadType && source.getState() === 'ready') {
@@ -3231,13 +3455,13 @@ const reloadMultipleTiffLayers = async (images) => {
               // 尝试判断是否为COG（通过检查是否使用了分块）
               const view = source.getView()
               if (view) {
-                console.log(`   📦 ${image.name} 加载模式: ${pathToLoad.includes('_optimized') ? 'COG分块加载 ✅' : '完整文件加载 ⚠️'}`)
+                console.log(`    ${image.name} 加载模式: ${pathToLoad.includes('_optimized') ? 'COG分块加载 ' : '完整文件加载 '}`)
               }
             }
             
-            // 🆕 读取并输出 TIF 元数据（用于诊断坐标系问题）
+            //  读取并输出 TIF 元数据（用于诊断坐标系问题）
             try {
-              console.log(`\n========== 📋 TIF 元数据诊断: ${image.name} ==========`)
+              console.log(`\n==========  TIF 元数据诊断: ${image.name} ==========`)
               
               // 使用 geotiff.js 读取 TIF 文件元数据
               const { fromUrl } = await import('geotiff')
@@ -3246,7 +3470,7 @@ const reloadMultipleTiffLayers = async (images) => {
               
               // 1. 获取 GeoKeys（包含坐标系信息）
               const geoKeys = tiffImage.getGeoKeys()
-              console.log('🌐 GeoKeys (坐标系元数据):')
+              console.log(' GeoKeys (坐标系元数据):')
               console.log(geoKeys)
               
               // 2. 提取关键信息
@@ -3256,7 +3480,7 @@ const reloadMultipleTiffLayers = async (images) => {
               const origin = tiffImage.getOrigin()
               const resolution = tiffImage.getResolution()
               
-              console.log('\n📐 基本信息:')
+              console.log('\n 基本信息:')
               console.log(`   影像尺寸: ${width} × ${height}`)
               console.log(`   原点坐标 (Origin): [${origin[0].toFixed(2)}, ${origin[1].toFixed(2)}]`)
               console.log(`   像元分辨率: [${resolution[0].toFixed(4)}, ${resolution[1].toFixed(4)}]`)
@@ -3267,25 +3491,25 @@ const reloadMultipleTiffLayers = async (images) => {
               if (geoKeys.ProjectedCSTypeGeoKey) {
                 const epsgCode = geoKeys.ProjectedCSTypeGeoKey
                 detectedProjection = `EPSG:${epsgCode}`
-                console.log(`\n✅ 检测到投影坐标系: ${detectedProjection}`)
+                console.log(`\n 检测到投影坐标系: ${detectedProjection}`)
                 
                 // 判断常见坐标系
                 if (epsgCode === 3857) {
-                  console.log('   📍 Web Mercator (EPSG:3857) - 这是正确的！')
+                  console.log('    Web Mercator (EPSG:3857) - 这是正确的！')
                 } else if (epsgCode === 32645) {
-                  console.log('   📍 UTM Zone 45N (EPSG:32645) - 需要转换为 EPSG:3857')
+                  console.log('    UTM Zone 45N (EPSG:32645) - 需要转换为 EPSG:3857')
                 } else if (epsgCode === 4326) {
-                  console.log('   📍 WGS84 地理坐标系 (EPSG:4326)')
+                  console.log('    WGS84 地理坐标系 (EPSG:4326)')
                 }
               } else if (geoKeys.GeographicTypeGeoKey) {
                 detectedProjection = `EPSG:${geoKeys.GeographicTypeGeoKey}`
-                console.log(`\n✅ 检测到地理坐标系: ${detectedProjection}`)
+                console.log(`\n 检测到地理坐标系: ${detectedProjection}`)
               } else {
-                console.log('\n⚠️  未检测到坐标系标签（可能导致位置偏移）')
+                console.log('\n  未检测到坐标系标签（可能导致位置偏移）')
               }
               
               // 4. 坐标范围诊断
-              console.log('\n🔍 坐标范围诊断:')
+              console.log('\n 坐标范围诊断:')
               const [minX, minY, maxX, maxY] = bbox
               
               // Web Mercator 有效范围
@@ -3299,31 +3523,31 @@ const reloadMultipleTiffLayers = async (images) => {
                              (minY >= 3000000 && minY <= 6000000)
               
               if (detectedProjection === 'EPSG:3857' && webMercatorValid) {
-                console.log('   ✅ 坐标系标签 = EPSG:3857，坐标范围正常')
-                console.log('   ✅ 前端应该能正确显示')
+                console.log('    坐标系标签 = EPSG:3857，坐标范围正常')
+                console.log('    前端应该能正确显示')
               } else if (detectedProjection === 'EPSG:3857' && utmLike) {
-                console.log('   ❌ 坐标系标签 = EPSG:3857，但坐标范围像 UTM！')
-                console.log('   ❌ 【元数据错误】标签正确但地理变换错误')
-                console.log('   ❌ 这会导致前端位置偏移！')
+                console.log('    坐标系标签 = EPSG:3857，但坐标范围像 UTM！')
+                console.log('    【元数据错误】标签正确但地理变换错误')
+                console.log('    这会导致前端位置偏移！')
               } else if (detectedProjection.includes('32645')) {
-                console.log('   ⚠️  坐标系 = EPSG:32645 (UTM Zone 45N)')
-                console.log('   ⚠️  OpenLayers 会自动转换为 EPSG:3857')
-                console.log('   ⚠️  如果显示偏移，可能是浏览器缓存了旧文件')
+                console.log('     坐标系 = EPSG:32645 (UTM Zone 45N)')
+                console.log('     OpenLayers 会自动转换为 EPSG:3857')
+                console.log('     如果显示偏移，可能是浏览器缓存了旧文件')
               } else {
-                console.log('   ⚠️  坐标系或范围异常，可能影响显示')
+                console.log('     坐标系或范围异常，可能影响显示')
               }
               
               console.log('========================================\n')
               
             } catch (metaError) {
-              console.warn(`⚠️  无法读取 ${image.name} 的元数据:`, metaError.message)
+              console.warn(`  无法读取 ${image.name} 的元数据:`, metaError.message)
             }
           }
         })
         
-        // 🎨 根据影像类型选择不同的样式
+        //  根据影像类型选择不同的样式
         const layerStyle = isRGB ? {
-          // 🔧 RGB影像：初始使用简单归一化，等待动态极值计算后更新
+          //  RGB影像：初始使用简单归一化，等待动态极值计算后更新
           // 初始样式：假设0-65535范围（会在极值计算后动态更新为实际范围）
           color: [
             'array',
@@ -3343,7 +3567,7 @@ const reloadMultipleTiffLayers = async (images) => {
           style: layerStyle,
           opacity: isRGB ? 1.0 : (0.85 / (i + 1)),
           zIndex: 10 + i,
-          // 🚀 性能优化
+          //  性能优化
           preload: 0,  // 不预加载（减少内存占用）
           useInterimTilesOnError: true  // 错误时使用临时瓦片
         })
@@ -3351,10 +3575,16 @@ const reloadMultipleTiffLayers = async (images) => {
         // 添加到地图
         map.addLayer(layer)
         tiffLayers.push(layer)
+        
+        // 设置图层ID和可见性状态
+        layer.set('imageId', image.id)
+        layer.set('imageData', image)
+        tiffLayerVisibility.value[image.id] = true  // 默认可见
+        
         successCount++
         
       } catch (error) {
-        console.error(`❌ 影像 ${image.name} 加载失败:`, error)
+        console.error(` 影像 ${image.name} 加载失败:`, error)
         failCount++
       }
     }
@@ -3363,19 +3593,19 @@ const reloadMultipleTiffLayers = async (images) => {
     
     // 根据结果显示不同的消息
     if (failCount === 0) {
-      ElMessage.success(`✅ 成功加载 ${successCount} 个影像`)
+      ElMessage.success(` 成功加载 ${successCount} 个影像`)
     } else if (successCount > 0) {
-      ElMessage.warning(`⚠️ 成功加载 ${successCount} 个影像，${failCount} 个失败`)
+      ElMessage.warning(` 成功加载 ${successCount} 个影像，${failCount} 个失败`)
     } else {
-      ElMessage.error(`❌ 所有影像加载失败`)
+      ElMessage.error(` 所有影像加载失败`)
     }
     
     if (isDev) {
-      console.log(`✅ 加载完成: 成功 ${successCount}, 失败 ${failCount}`)
+      console.log(` 加载完成: 成功 ${successCount}, 失败 ${failCount}`)
     }
   } catch (error) {
     loadingMsg.close()
-    console.error('❌ TIF 图层加载失败:', error)
+    console.error(' TIF 图层加载失败:', error)
     ElMessage.error('影像加载失败：' + error.message)
   }
 }
@@ -3443,14 +3673,14 @@ const CROP_TYPE_MAP = {
 // 使用geotiff.js分析TIF文件（纯前端方案）
 const analyzeTifFile = async (tifUrl) => {
   try {
-    console.log('📊 开始分析TIF文件:', tifUrl)
+    console.log(' 开始分析TIF文件:', tifUrl)
     
-    // 🔍 第1步：测试文件URL是否可访问
-    console.log('   🔍 步骤1：测试文件URL可访问性...')
+    //  第1步：测试文件URL是否可访问
+    console.log('    步骤1：测试文件URL可访问性...')
     try {
       const testResponse = await fetch(tifUrl, { method: 'HEAD' })
-      console.log(`   ✅ HEAD响应状态: ${testResponse.status} ${testResponse.statusText}`)
-      console.log(`   📋 响应头:`)
+      console.log(`    HEAD响应状态: ${testResponse.status} ${testResponse.statusText}`)
+      console.log(`    响应头:`)
       console.log(`      - Content-Length: ${testResponse.headers.get('Content-Length')}`)
       console.log(`      - Content-Type: ${testResponse.headers.get('Content-Type')}`)
       console.log(`      - Accept-Ranges: ${testResponse.headers.get('Accept-Ranges')}`)
@@ -3460,20 +3690,20 @@ const analyzeTifFile = async (tifUrl) => {
       }
       
       if (testResponse.headers.get('Accept-Ranges') !== 'bytes') {
-        console.warn('⚠️ 警告：服务器不支持 Range 请求，geotiff.js 可能无法正常工作')
+        console.warn(' 警告：服务器不支持 Range 请求，geotiff.js 可能无法正常工作')
       }
     } catch (fetchError) {
-      console.error('❌ HEAD请求失败:', fetchError)
+      console.error(' HEAD请求失败:', fetchError)
       throw new Error(`无法访问文件: ${fetchError.message}`)
     }
     
-    // 🔍 第2步：使用 geotiff.js 读取TIF文件
-    console.log('   🔍 步骤2：使用 geotiff.js 读取TIF数据...')
+    //  第2步：使用 geotiff.js 读取TIF文件
+    console.log('    步骤2：使用 geotiff.js 读取TIF数据...')
     const tiff = await fromUrl(tifUrl)
-    console.log('   ✅ GeoTIFF 对象创建成功')
+    console.log('    GeoTIFF 对象创建成功')
     
     const image = await tiff.getImage()
-    console.log('   ✅ 获取图像对象成功')
+    console.log('    获取图像对象成功')
     
     // 获取像元数据
     const data = await image.readRasters()
@@ -3519,10 +3749,10 @@ const analyzeTifFile = async (tifUrl) => {
       totalArea += area
     })
     
-    console.log('✅ 作物分布统计:', cropDistribution)
+    console.log(' 作物分布统计:', cropDistribution)
     console.log(`   总面积: ${totalArea.toFixed(0)} 亩, 有效像元: ${totalPixels}`)
     
-    // 🔧 修复：显示像元总数而不是估算的地块数
+    //  修复：显示像元总数而不是估算的地块数
     // TIF栅格数据本身不包含地块边界信息，无法准确计算地块数
     
     return {
@@ -3537,7 +3767,7 @@ const analyzeTifFile = async (tifUrl) => {
       counts: counts
     }
   } catch (error) {
-    console.error('❌ TIF分析失败:', error)
+    console.error(' TIF分析失败:', error)
     throw error
   }
 }
@@ -3560,23 +3790,23 @@ const updateStatistics = async (imageData) => {
   if (imageData.statistics) {
     stats = imageData.statistics
     if (isDev) {
-      console.log('✅ 使用缓存的统计数据')
+      console.log(' 使用缓存的统计数据')
     }
     // 静默加载，不显示提示
   } else {
-    // ⚠️ 性能警告：前端分析TIF文件会很慢！
+    //  性能警告：前端分析TIF文件会很慢！
     if (isDev) {
-      console.warn('⚠️ 元数据缺失，跳过实时分析（性能优化）')
+      console.warn(' 元数据缺失，跳过实时分析（性能优化）')
     }
     
     // ⚡ 优化：RGB影像不需要统计数据，直接跳过
-    // ✅ 智能判断逻辑（与加载影像时保持一致）
+    //  智能判断逻辑（与加载影像时保持一致）
     const isRGB = (imageData.statistics?.bandCount === 3) || 
                   imageData.statistics?.isRGB || 
                   imageData.name.toUpperCase().includes('RGB')
     if (isRGB) {
       if (isDev) {
-        console.log('ℹ️ RGB影像无需统计数据')
+        console.log(' RGB影像无需统计数据')
       }
       // 设置默认值
       stats = {
@@ -3621,7 +3851,7 @@ const updateStatistics = async (imageData) => {
   if (dataSource.value === 'recognition') {
     // 确保cropChart已初始化
     if (!cropChart) {
-      console.warn('⚠️ cropChart未初始化，尝试初始化...')
+      console.warn(' cropChart未初始化，尝试初始化...')
       initCropChart()
     }
   }
@@ -3631,7 +3861,7 @@ const updateStatistics = async (imageData) => {
     
     // ⚡ 优化：只在开发模式下打印调试信息
     if (isDev && stats.cropDistribution) {
-      console.log('📊 作物分布:', Object.keys(stats.cropDistribution).length, '种')
+      console.log(' 作物分布:', Object.keys(stats.cropDistribution).length, '种')
     }
     
     if (stats.cropDistribution && Object.keys(stats.cropDistribution).length > 0) {
@@ -3645,7 +3875,7 @@ const updateStatistics = async (imageData) => {
       })
       availableCropTypes.value = actualCropTypes
       
-      // 🔧 修复：确保所有有数据的作物类型都显示，即使占比很小
+      //  修复：确保所有有数据的作物类型都显示，即使占比很小
       // 并且为每个作物类型指定颜色
       cropData = Object.entries(stats.cropDistribution).map(([name, value]) => {
         // 从cropLegend中找到对应的颜色
@@ -3670,7 +3900,7 @@ const updateStatistics = async (imageData) => {
     
     // 完整重新设置饼图
     const option = {
-      // 🔧 关键修复：显式设置足够多的颜色，确保每个作物类型都有独立的颜色
+      //  关键修复：显式设置足够多的颜色，确保每个作物类型都有独立的颜色
       color: cropLegend.map(item => item.color),  // 使用cropLegend中定义的所有颜色
       tooltip: {
         trigger: 'item',
@@ -3679,7 +3909,7 @@ const updateStatistics = async (imageData) => {
       legend: {
         bottom: '0%',
         left: 'center',
-        type: 'plain',  // 🔧 修复：使用普通模式，显示所有图例项
+        type: 'plain',  //  修复：使用普通模式，显示所有图例项
         orient: 'horizontal',
         show: true,
         // 超出时自动换行
@@ -3696,7 +3926,7 @@ const updateStatistics = async (imageData) => {
         radius: ['35%', '60%'],
         center: ['50%', '42%'],
         avoidLabelOverlap: false,
-        // 🔧 修复：不设置最小角度限制，确保所有数据都能显示（即使很小）
+        //  修复：不设置最小角度限制，确保所有数据都能显示（即使很小）
         // minAngle: 0 也可以，但不设置更好
         itemStyle: {
           borderRadius: 10,
@@ -3726,12 +3956,12 @@ const updateStatistics = async (imageData) => {
     
     // ⚡ 优化：只在开发模式下打印日志
     if (isDev) {
-      console.log('✅ 饼图已更新，数据项数:', cropData.length)
+      console.log(' 饼图已更新，数据项数:', cropData.length)
     }
   }
   
   if (isDev) {
-    console.log('✅ 统计数据已更新')
+    console.log(' 统计数据已更新')
   }
 }
 
@@ -3757,10 +3987,13 @@ const formatDateTime = (dateStr) => {
   }
 }
 
-// 🔧 修复：统一显示"图例"标题
+//  修复：统一显示"图例"标题
 const getLegendTitle = () => {
-  // 统一显示"图例"，不再区分具体类型
-  return '图例'
+  if (dataSource.value === 'image') {
+    return '影像图层'
+  } else {
+    return '识别结果图层'
+  }
 }
 
 // 获取图层标签
@@ -3792,12 +4025,12 @@ const getChartTitle = () => {
   }
 }
 
-// 🆕 在点击查询时验证识别结果文件
+//  在点击查询时验证识别结果文件
 const handleSearch = async () => {
   if (dataSource.value === 'image') {
     loadTiffData()
   } else {
-    // 🔧 修复：在查询前验证文件
+    //  修复：在查询前验证文件
     if (!recognitionFilter.value.fileNames || recognitionFilter.value.fileNames.length === 0) {
       ElMessage.warning('请选择要查看的文件')
       return
@@ -3813,10 +4046,10 @@ const handleSearch = async () => {
       return
     }
     
-    // 🔧 优化：移除预验证逻辑，改为在加载时验证（避免重复加载和卡顿）
+    //  优化：移除预验证逻辑，改为在加载时验证（避免重复加载和卡顿）
     // 预验证会导致每个文件加载两次，影响性能
     // 验证逻辑已集成到实际加载流程中
-    console.log('✅ 查询参数验证通过，准备加载识别结果...')
+    console.log(' 查询参数验证通过，准备加载识别结果...')
     
     // 显示加载提示
     const loadingMsg = ElMessage.info({
@@ -3830,7 +4063,7 @@ const handleSearch = async () => {
       loadingMsg.close()
     } catch (error) {
       loadingMsg.close()
-      console.error('❌ 加载识别结果失败:', error)
+      console.error(' 加载识别结果失败:', error)
       ElMessage.error(`加载失败: ${error.message || '未知错误'}`)
     }
   }
@@ -3839,14 +4072,14 @@ const handleSearch = async () => {
 // 刷新选项（重置筛选条件并重新加载数据）
 const handleRefreshOptions = async () => {
   try {
-    // 🔧 修复：刷新前先清空所有地图图层
+    //  修复：刷新前先清空所有地图图层
     clearMapLayers()
     
-    // 🆕 关闭图例显示
+    //  关闭图例显示
     tiffLayerVisible.value = false
     legendCollapsed.value = false
     
-    // 🆕 恢复地图到初始状态（新疆中心，缩放级别6）
+    //  恢复地图到初始状态（新疆中心，缩放级别6）
     if (map) {
       const view = map.getView()
       view.animate({
@@ -3859,13 +4092,14 @@ const handleRefreshOptions = async () => {
     // 重新加载数据
     if (dataSource.value === 'image') {
       await fetchImageData()
-      // 🔧 修复：重置影像筛选条件（年份期次都为空）
+      //  修复：重置影像筛选条件（年份期次都为空）
       filterForm.value = {
         year: '',  // 不自动选择年份
         period: '',  // 不自动选择期次
         imageNames: [],
         region: [],
-        keyword: ''
+        keyword: '',
+        optimizationStatus: '' // 重置优化状态
       }
       selectedCropTypes.value = []
       availablePeriods.value = []  // 清空可用期次
@@ -3919,6 +4153,7 @@ const handleDataSourceChange = async () => {
     filterForm.value.year = ''
     filterForm.value.period = ''
     filterForm.value.imageNames = []
+    filterForm.value.optimizationStatus = ''
     selectedCropTypes.value = []
     availableCropTypes.value = []
     await loadRecognitionResults()
@@ -3965,22 +4200,22 @@ const loadRecognitionResults = async () => {
     const response = await axios.get('/api/analysis/results')
     
     if (response.data.code === 200) {
-      // 🔧 修复：加载所有格式的识别结果（KMZ、SHP、GeoJSON）
+      //  修复：加载所有格式的识别结果（KMZ、SHP、GeoJSON）
       recognitionResults.value = response.data.data.filter(item => 
         item.type === 'KMZ' || item.type === 'SHP' || item.type === 'GeoJSON'
       )
       
-      console.log('✅ 加载识别结果:', recognitionResults.value.length, '个')
+      console.log(' 加载识别结果:', recognitionResults.value.length, '个')
       console.log('   格式分布:', {
         KMZ: recognitionResults.value.filter(i => i.type === 'KMZ').length,
         SHP: recognitionResults.value.filter(i => i.type === 'SHP').length,
         GeoJSON: recognitionResults.value.filter(i => i.type === 'GeoJSON').length
       })
       
-      // 🔍 调试：输出所有KMZ文件的详细信息
+      //  调试：输出所有KMZ文件的详细信息
       const kmzFiles = recognitionResults.value.filter(i => i.type === 'KMZ')
       if (kmzFiles.length > 0) {
-        console.log('📦 KMZ文件详情:')
+        console.log(' KMZ文件详情:')
         kmzFiles.forEach(file => {
           console.log(`   - ${file.name}:`, {
             year: file.year,
@@ -4001,7 +4236,7 @@ const loadRecognitionResults = async () => {
       })
       recognitionYears.value = Array.from(years).sort((a, b) => b - a)
       
-      // 🔧 修复：不自动选择年份，默认显示全部
+      //  修复：不自动选择年份，默认显示全部
       // 用户可以通过下拉框手动选择年份进行筛选
     }
   } catch (error) {
@@ -4028,7 +4263,7 @@ const updateRecognitionPeriods = () => {
   }
 }
 
-// 🔧 修复：过滤文件名选择，保留符合当前条件的文件
+//  修复：过滤文件名选择，保留符合当前条件的文件
 const filterSelectedFiles = () => {
   if (!recognitionFilter.value.fileNames || recognitionFilter.value.fileNames.length === 0) {
     return
@@ -4071,7 +4306,7 @@ const handleRecognitionTypeChange = () => {
   filterSelectedFiles() // 保留符合条件的文件
 }
 
-// 🆕 文件格式筛选变化处理
+//  文件格式筛选变化处理
 const handleFileFormatChange = () => {
   console.log('文件格式筛选:', recognitionFilter.value.fileFormat)
   filterSelectedFiles() // 保留符合条件的文件
@@ -4099,8 +4334,9 @@ const clearMapLayers = () => {
     kmzLayers = []
   }
   
-  // 🔧 修复：清空响应式可见性状态
+  //  修复：清空响应式可见性状态
   kmzLayerVisibility.value = {}
+  tiffLayerVisibility.value = {}
   
   // 关闭图层显示
   tiffLayerVisible.value = false
@@ -4132,32 +4368,18 @@ const handleZoomOut = () => {
   }
 }
 
-// 🚀 优化版：缩放至图层范围（修复失效问题）
+//  优化版：缩放至图层范围（修复失效问题）
 const handleZoomToExtent = async () => {
   if (!map) {
-    console.warn('⚠️ 地图实例不存在')
+    console.warn(' 地图实例不存在')
     return
   }
   
   const view = map.getView()
   
-  // 影像数据：缩放到TIF图层
+  // 影像数据：缩放到所有TIF图层的合并范围
   if (dataSource.value === 'image' && tiffLayerVisible.value && tiffLayers.length > 0) {
-    console.log('📍 尝试缩放到TIF图层范围...')
-    
-    const firstLayer = tiffLayers[0]
-    const source = firstLayer.getSource()
-    
-    if (!source) {
-      console.warn('⚠️ TIF图层数据源不存在')
-      view.animate({
-        center: fromLonLat([87.6, 43.8]),
-        zoom: 6,
-        duration: 300
-      })
-      ElMessage.info('已重置到默认视图')
-      return
-    }
+    console.log(' 尝试缩放到所有TIF图层的合并范围...')
     
     // 显示加载提示
     const loadingMsg = ElMessage.info({
@@ -4166,39 +4388,21 @@ const handleZoomToExtent = async () => {
     })
     
     try {
-      // 🔧 修复：使用await获取view配置，设置5秒超时
-      const viewPromise = source.getView()
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('timeout')), 5000)
-      )
-      
-      const viewConfig = await Promise.race([viewPromise, timeoutPromise])
+      const extent = await getAllTiffLayersExtent()
       
       loadingMsg.close()
       
-      if (viewConfig && viewConfig.extent) {
-        const extent = viewConfig.extent
-        console.log('✅ 获取到图层范围:', extent)
+      if (extent) {
+        console.log(' 获取到所有图层的合并范围:', extent)
         
-        // 验证extent有效性
-        if (extent.every(coord => isFinite(coord))) {
-          view.fit(extent, {
-            padding: [80, 80, 80, 80],
-            duration: 500,
-            maxZoom: 15
-          })
-          ElMessage.success('✅ 已缩放至图层范围')
-        } else {
-          console.warn('⚠️ 图层范围无效:', extent)
-          view.animate({
-            center: fromLonLat([87.6, 43.8]),
-            zoom: 6,
-            duration: 300
-          })
-          ElMessage.info('图层范围无效，已重置到默认视图')
-        }
+        view.fit(extent, {
+          padding: [80, 80, 80, 80],
+          duration: 500,
+          maxZoom: 15
+        })
+        ElMessage.success(' 已缩放至所有图层范围')
       } else {
-        console.warn('⚠️ 未获取到图层范围')
+        console.warn(' 未获取到图层范围')
         loadingMsg.close()
         view.animate({
           center: fromLonLat([87.6, 43.8]),
@@ -4209,7 +4413,7 @@ const handleZoomToExtent = async () => {
       }
     } catch (error) {
       loadingMsg.close()
-      console.error('❌ 获取图层范围失败:', error)
+      console.error(' 获取图层范围失败:', error)
       
       // 降级方案：使用新疆区域默认范围
       view.animate({
@@ -4222,7 +4426,7 @@ const handleZoomToExtent = async () => {
   } 
   // 识别结果：缩放到KMZ/SHP/GeoJSON图层
   else if (dataSource.value === 'recognition' && kmzLayers.length > 0) {
-    console.log('📍 尝试缩放到识别结果图层范围...')
+    console.log(' 尝试缩放到识别结果图层范围...')
     
     const visibleLayers = kmzLayers.filter(layer => layer.getVisible())
     
@@ -4230,7 +4434,7 @@ const handleZoomToExtent = async () => {
       const firstLayer = visibleLayers[0]
       const extent = firstLayer.getSource().getExtent()
       
-      console.log('✅ 获取到图层范围:', extent)
+      console.log(' 获取到图层范围:', extent)
       
       if (extent && extent.every(coord => isFinite(coord))) {
         view.fit(extent, {
@@ -4238,9 +4442,9 @@ const handleZoomToExtent = async () => {
           duration: 500,
           maxZoom: 15
         })
-        ElMessage.success('✅ 已缩放至图层范围')
+        ElMessage.success(' 已缩放至图层范围')
       } else {
-        console.warn('⚠️ 图层范围无效:', extent)
+        console.warn(' 图层范围无效:', extent)
         view.animate({
           center: fromLonLat([87.6, 43.8]),
           zoom: 6,
@@ -4249,7 +4453,7 @@ const handleZoomToExtent = async () => {
         ElMessage.info('图层范围无效，已重置到默认视图')
       }
     } else {
-      console.log('ℹ️ 没有可见图层，重置到默认视图')
+      console.log(' 没有可见图层，重置到默认视图')
       view.animate({
         center: fromLonLat([87.6, 43.8]),
         zoom: 6,
@@ -4260,13 +4464,13 @@ const handleZoomToExtent = async () => {
   } 
   // 无图层：重置到默认视图
   else {
-    console.log('ℹ️ 无图层或图层未显示，重置到默认视图')
+    console.log(' 无图层或图层未显示，重置到默认视图')
     view.animate({
       center: fromLonLat([87.6, 43.8]),
       zoom: 6,
       duration: 300
     })
-    ElMessage.success('✅ 已重置到默认视图')
+    ElMessage.success(' 已重置到默认视图')
   }
 }
 
@@ -4299,7 +4503,7 @@ const toggleTiffLayer = async () => {
         return
       }
       
-      // 🔧 修复：使用通用加载函数，支持多种文件格式
+      //  修复：使用通用加载函数，支持多种文件格式
       await loadRecognitionFilesIncremental(loadedKmzFiles.value)
     }
   } else {
@@ -4312,7 +4516,7 @@ const toggleTiffLayer = async () => {
       kmzLayers.forEach(layer => {
         if (layer) {
           layer.setVisible(false)
-          // 🔧 修复：使用文件ID更新响应式状态
+          //  修复：使用文件ID更新响应式状态
           const fileId = layer.get('fileId')
           if (fileId) {
             kmzLayerVisibility.value[fileId] = false
@@ -4433,19 +4637,19 @@ const handleBaseMapChange = (value) => {
     // 影像图需要同时显示影像和标注
     baseMapLayers['tianditu-satellite'].setVisible(true)
     baseMapLayers['tianditu-satellite-anno'].setVisible(true)
-    console.log('✅ 已切换到天地图影像图')
+    console.log(' 已切换到天地图影像图')
   } else if (value === 'tianditu-vector') {
     // 矢量图需要同时显示底图和标注
     baseMapLayers['tianditu-vector'].setVisible(true)
     baseMapLayers['tianditu-vector-anno'].setVisible(true)
-    console.log('✅ 已切换到天地图矢量图')
+    console.log(' 已切换到天地图矢量图')
   }
 }
 
 const initCropChart = () => {
   const chartDom = document.getElementById('crop-chart')
   if (!chartDom) {
-    console.warn('⚠️ crop-chart DOM元素不存在，跳过初始化')
+    console.warn(' crop-chart DOM元素不存在，跳过初始化')
     return
   }
   cropChart = echarts.init(chartDom)
@@ -4454,15 +4658,15 @@ const initCropChart = () => {
     tooltip: {
       trigger: 'item',
       formatter: '{b}: {c}%',
-      confine: false,  // 🔧 允许tooltip超出容器边界
-      appendToBody: true  // 🔧 将tooltip添加到body，避免被卡片遮挡
+      confine: false,  //  允许tooltip超出容器边界
+      appendToBody: true  //  将tooltip添加到body，避免被卡片遮挡
     },
     legend: {
       bottom: '0%',
       left: 'center',
       type: 'plain',  // 改为普通模式，显示所有图例
       orient: 'horizontal',
-      // 🔧 修复：显示所有图例项，即使值为0
+      //  修复：显示所有图例项，即使值为0
       show: true,
       selectedMode: true,
       textStyle: {
@@ -4498,7 +4702,7 @@ const initCropChart = () => {
         labelLine: {
           show: false
         },
-        // 🔧 修复：不设置最小角度限制，让所有数据都能显示
+        //  修复：不设置最小角度限制，让所有数据都能显示
         data: [
           { value: 0, name: '暂无数据' }
         ]
@@ -4709,7 +4913,7 @@ onBeforeUnmount(() => {
     }
   }
   
-  // 🔧 统一右上角按钮样式（适用于所有卡片）
+  //  统一右上角按钮样式（适用于所有卡片）
   .file-switch-controls {
     display: flex;
     align-items: center;
@@ -4947,7 +5151,7 @@ onBeforeUnmount(() => {
                 }
               }
               
-              // 🎨 图例区块样式
+              //  图例区块样式
               .legend-section {
                 margin: 0;
                 
@@ -5003,7 +5207,7 @@ onBeforeUnmount(() => {
                   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
                   transition: all 0.3s ease;
                   
-                  // 🔧 修复：使用与图层完全一致的纯色（80%不透明度）
+                  //  修复：使用与图层完全一致的纯色（80%不透明度）
                   &.planted {
                     background: #409EFFCC;  // 已种植 - 蓝色，CC=80%不透明
                   }
