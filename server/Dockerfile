@@ -57,7 +57,7 @@ RUN echo "=== Downloading GDAL 3.11.4 ===" \
     && cmake .. \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DBUILD_PYTHON_BINDINGS=OFF \
+        -DBUILD_PYTHON_BINDINGS=ON \
         -DBUILD_APPS=ON \
         -DBUILD_TESTING=OFF \
         -DGDAL_USE_GEOTIFF=ON \
@@ -80,17 +80,15 @@ ENV PATH="/usr/local/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 
 # 安装 Python 库（geopandas 及其依赖）
-# 注意：GDAL 库（C/C++）已经在上面编译安装，这里需要安装 GDAL Python 绑定
+# 注意：GDAL Python 绑定已经在上面编译安装，这里只需要安装 geopandas
 # 注意：Ubuntu 24.04 需要 --break-system-packages 参数来安装系统级包
 # 配置 pip 使用国内镜像源（解决网络超时问题）
-# 注意：不升级 pip，因为 Ubuntu 24.04 的 pip 是系统包，无法卸载
 RUN echo "=== 安装 Python 依赖库 ===" \
     && pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
     && pip3 config set global.timeout 300 \
-    && echo "步骤 1: 安装 GDAL Python 绑定（使用系统已编译的 GDAL 3.11.4）..." \
-    && pip3 install --no-cache-dir --break-system-packages --timeout=300 gdal \
+    && echo "验证 GDAL Python 绑定..." \
     && python3 -c "from osgeo import gdal; print(f'✅ GDAL Python 绑定已安装: {gdal.__version__}')" \
-    && echo "步骤 2: 安装 GeoPandas..." \
+    && echo "安装 GeoPandas..." \
     && pip3 install --no-cache-dir --break-system-packages --timeout=300 geopandas \
     && python3 -c "import geopandas; from osgeo import gdal; print(f'✅ GeoPandas 安装成功，使用 GDAL {gdal.__version__}')" \
     && echo "=== Python 库安装完成 ==="
