@@ -82,10 +82,13 @@ ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 # 安装 Python 库（geopandas 及其依赖）
 # 注意：GDAL 库（C/C++）已经在上面编译安装，直接安装 geopandas 会自动使用系统的 GDAL
 # 注意：Ubuntu 24.04 需要 --break-system-packages 参数来安装系统级包
+# 配置 pip 使用国内镜像源（解决网络超时问题）
 RUN echo "=== 安装 Python 依赖库 ===" \
-    && pip3 install --no-cache-dir --break-system-packages --upgrade pip \
+    && pip3 install --no-cache-dir --break-system-packages --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    && pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    && pip3 config set global.timeout 300 \
     && echo "直接安装 GeoPandas（会自动安装 GDAL Python 绑定并使用系统已编译的 GDAL 库）..." \
-    && pip3 install --no-cache-dir --break-system-packages geopandas \
+    && pip3 install --no-cache-dir --break-system-packages --timeout=300 geopandas \
     && python3 -c "import geopandas; from osgeo import gdal; print(f'✅ GeoPandas 安装成功，使用 GDAL {gdal.__version__}')" \
     && echo "=== Python 库安装完成 ==="
 
