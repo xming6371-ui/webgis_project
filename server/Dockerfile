@@ -82,12 +82,12 @@ ENV LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH}"
 # 安装 Python 库（geopandas 及其依赖）
 # 注意：GDAL 库（C/C++）已经在上面编译安装，这里安装 Python 绑定让 Python 可以使用它
 RUN echo "=== 安装 Python 依赖库 ===" \
-    && pip3 install --no-cache-dir --upgrade pip \
+    && pip3 install --no-cache-dir --break-system-packages --upgrade pip \
     && echo "步骤 1: 安装 GDAL Python 绑定（使用上面已编译的 GDAL 3.11.4 库）..." \
-    && pip3 install --no-cache-dir gdal==3.11.4 \
+    && pip3 install --no-cache-dir --break-system-packages gdal==3.11.4 \
     && python3 -c "from osgeo import gdal; print(f'✅ GDAL Python 绑定已安装: {gdal.__version__}')" \
     && echo "步骤 2: 安装 GeoPandas 及其依赖..." \
-    && pip3 install --no-cache-dir \
+    && pip3 install --no-cache-dir --break-system-packages \
         geopandas \
         shapely \
         pyproj \
