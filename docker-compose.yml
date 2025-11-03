@@ -28,6 +28,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=8080
+      - DATA_DIR=/app/public/data  # 明确指定数据目录路径
     restart: unless-stopped  # 自动重启（除非手动停止）
     networks:
       - webgis-network

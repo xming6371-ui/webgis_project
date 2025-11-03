@@ -16,10 +16,19 @@ const __dirname = path.dirname(__filename)
 
 const router = express.Router()
 
-// 数据目录（使用 path.resolve 确保在 Docker 容器内得到正确的绝对路径）
-const DATA_DIR = path.resolve(__dirname, '../../public/data')
+// 数据目录（使用绝对路径，确保在 Docker 容器内正确）
+// 容器内固定路径为 /app/public/data
+const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../../public/data')
 const TIF_DIR = path.join(DATA_DIR, 'data_tif')  // TIF文件专用目录
 const METADATA_FILE = path.join(DATA_DIR, 'imageData.json')
+
+// 调试：打印路径信息（用于排查 Docker 容器内路径问题）
+console.log('📂 路径配置:')
+console.log('  __dirname:', __dirname)
+console.log('  process.cwd():', process.cwd())
+console.log('  DATA_DIR:', DATA_DIR)
+console.log('  TIF_DIR:', TIF_DIR)
+console.log('  TIF_DIR 存在？', fs.existsSync(TIF_DIR))
 
 // 优化任务进度追踪
 const optimizationProgress = new Map()
@@ -106,6 +115,8 @@ function parseImageInfo(filename) {
 async function syncMetadata() {
   try {
     console.log('🔍 开始同步元数据...')
+    console.log('📂 尝试访问 TIF_DIR:', TIF_DIR)
+    console.log('📂 TIF_DIR 存在？', fs.existsSync(TIF_DIR))
     const files = fs.readdirSync(TIF_DIR)
     console.log(`📁 找到 ${files.length} 个文件`)
     
