@@ -51,12 +51,13 @@ echo "[5/7] 停止旧服务..."
 docker compose down
 echo "✅ 旧服务已停止"
 
-# 6. 重新构建（使用缓存，只重新构建变化的层）
+# 6. 重新构建（前端不使用缓存，确保使用最新代码）
 echo ""
-echo "[6/7] 重新构建镜像（使用缓存，会更快）..."
-echo "提示: 如果 Dockerfile 没变，GDAL 等会使用缓存，只需几秒到几分钟"
+echo "[6/7] 重新构建镜像..."
+echo "提示: 前端将不使用缓存以确保代码最新，后端使用缓存以加快构建"
 echo "提示: 可以按Ctrl+C中断，但建议等待完成"
-docker compose build
+docker compose build --no-cache frontend
+docker compose build backend
 echo "✅ 构建完成"
 
 # 7. 启动新服务
