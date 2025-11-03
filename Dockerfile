@@ -1,12 +1,30 @@
 # ========================================
-# 前端 Dockerfile - 使用本地构建的 dist 目录
+# 前端 Dockerfile - 多阶段构建
 # ========================================
-# 注意：需要先在本地执行 npm run build 生成 dist 目录
+# 阶段1: 构建前端代码
+FROM node:18-alpine AS builder
 
+WORKDIR /app
+
+# 复制 package 文件
+COPY package*.json ./
+
+# 安装依赖
+RUN npm ci
+
+# 复制源代码
+COPY . .
+
+# 构建前端
+RUN npm run build
+
+# ========================================
+# 阶段2: 使用 Nginx 运行
+# ========================================
 FROM nginx:alpine
 
-# 复制本地构建好的 dist 目录
-COPY dist /usr/share/nginx/html
+# 从构建阶段复制 dist 目录
+COPY --from=builder /app/dist /usr/share/nginx/html
 
 # 复制 Nginx 配置文件
 COPY nginx.conf /etc/nginx/conf.d/default.conf
