@@ -31,9 +31,9 @@
                 时序变化地图
               </span>
               <el-space>
-                <el-select v-model="currentBaseMap" size="small" style="width: 120px" @change="handleBaseMapChange">
-                  <el-option label="高德路网" value="amap-vector" />
-                  <el-option label="高德影像" value="amap-satellite" />
+                <el-select v-model="currentBaseMap" size="small" style="width: 140px" @change="handleBaseMapChange">
+                  <el-option label="天地图矢量" value="tianditu-vector" />
+                  <el-option label="天地图影像" value="tianditu-satellite" />
                   <el-option label="无底图" value="none" />
                 </el-select>
                 <el-button size="small" @click="handleZoomToExtent" :icon="Position">缩放至</el-button>
@@ -356,7 +356,7 @@ let map = null
 let vectorLayer = null
 let baseMapLayers = {}
 const mapLoading = ref(true)
-const currentBaseMap = ref('amap-vector')
+const currentBaseMap = ref('tianditu-vector')
 
 // 时间轴
 const currentTimeIndex = ref(0)
@@ -550,34 +550,47 @@ const initMap = async () => {
   try {
     mapLoading.value = true
 
-    // 创建底图图层（添加 crossOrigin 支持以允许截图）
-    baseMapLayers['amap-vector'] = new TileLayer({
+    // 天地图密钥
+    const tdtToken = '78df5367f82fb9ed2db089f8761f1d29'
+    
+    // 创建天地图底图图层（添加 crossOrigin 支持以允许截图）
+    baseMapLayers['tianditu-vector'] = new TileLayer({
       source: new XYZ({
-        url: 'https://wprd0{1-4}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&style=7&x={x}&y={y}&z={z}',
+        url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${tdtToken}`,
         wrapX: false,
         crossOrigin: 'anonymous'
       }),
-      visible: currentBaseMap.value === 'amap-vector',
+      visible: currentBaseMap.value === 'tianditu-vector',
       zIndex: 0
     })
 
-    baseMapLayers['amap-satellite'] = new TileLayer({
+    baseMapLayers['tianditu-vector-anno'] = new TileLayer({
       source: new XYZ({
-        url: 'https://webst0{1-4}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}',
+        url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${tdtToken}`,
         wrapX: false,
         crossOrigin: 'anonymous'
       }),
-      visible: currentBaseMap.value === 'amap-satellite',
+      visible: currentBaseMap.value === 'tianditu-vector',
+      zIndex: 1
+    })
+
+    baseMapLayers['tianditu-satellite'] = new TileLayer({
+      source: new XYZ({
+        url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${tdtToken}`,
+        wrapX: false,
+        crossOrigin: 'anonymous'
+      }),
+      visible: currentBaseMap.value === 'tianditu-satellite',
       zIndex: 0
     })
 
-    baseMapLayers['amap-annotation'] = new TileLayer({
+    baseMapLayers['tianditu-satellite-anno'] = new TileLayer({
       source: new XYZ({
-        url: 'https://webst0{1-4}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}',
+        url: `https://t{0-7}.tianditu.gov.cn/DataServer?T=cia_w&x={x}&y={y}&l={z}&tk=${tdtToken}`,
         wrapX: false,
         crossOrigin: 'anonymous'
       }),
-      visible: currentBaseMap.value === 'amap-satellite',
+      visible: currentBaseMap.value === 'tianditu-satellite',
       zIndex: 1
     })
 
@@ -591,18 +604,44 @@ const initMap = async () => {
     const totalFeatures = props.data.features.length
     console.log(`开始分批加载 ${totalFeatures} 个地块，每批 ${batchSize} 个`)
     
+    // 验证坐标系统
+    if (totalFeatures > 0 && props.data.features[0].geometry && props.data.features[0].geometry.coordinates) {
+      const firstFeature = props.data.features[0]
+      const firstCoord = firstFeature.geometry.type === 'Point' 
+        ? firstFeature.geometry.coordinates 
+        : firstFeature.geometry.coordinates[0][0]
+      console.log('🗺️ 第一个坐标点:', firstCoord)
+      console.log(`   经度: ${firstCoord[0]}°, 纬度: ${firstCoord[1]}°`)
+      const isValidLatLng = Math.abs(firstCoord[0]) <= 180 && Math.abs(firstCoord[1]) <= 90
+      console.log(`   坐标系统: ${isValidLatLng ? 'WGS84 地理坐标 ✓' : 'Web Mercator 投影坐标 (需要转换)'}`)
+    }
+    
     // 使用异步分批加载
     const loadFeaturesBatch = (startIndex) => {
       const endIndex = Math.min(startIndex + batchSize, totalFeatures)
       const batch = props.data.features.slice(startIndex, endIndex)
       
       try {
+        // 验证第一批数据的坐标
+        if (startIndex === 0 && batch.length > 0) {
+          const firstFeature = batch[0]
+          if (firstFeature.geometry && firstFeature.geometry.coordinates) {
+            const firstCoord = firstFeature.geometry.type === 'Point' 
+              ? firstFeature.geometry.coordinates 
+              : firstFeature.geometry.coordinates[0][0]
+            console.log('🗺️ 时序变化地图 - 第一个坐标点 [经度, 纬度]:', firstCoord)
+            console.log(`   经度: ${firstCoord[0]}°, 纬度: ${firstCoord[1]}°`)
+            const isValidLatLng = Math.abs(firstCoord[0]) <= 180 && Math.abs(firstCoord[1]) <= 90
+            console.log(`   坐标系统: ${isValidLatLng ? 'WGS84 地理坐标 ✓' : 'Web Mercator 投影坐标 (异常!)'}`)
+          }
+        }
+        
         const olFeatures = new GeoJSON().readFeatures({
           type: 'FeatureCollection',
           features: batch
         }, {
-          dataProjection: 'EPSG:3857',
-          featureProjection: 'EPSG:3857'
+          dataProjection: 'EPSG:4326',    // 输入数据是WGS84地理坐标（经纬度）
+          featureProjection: 'EPSG:3857'  // 转换为Web Mercator投影坐标用于显示
         })
         
         vectorSource.addFeatures(olFeatures)
@@ -689,9 +728,10 @@ const initMap = async () => {
     map = new Map({
       target: 'temporal-map',
       layers: [
-        baseMapLayers['amap-vector'],
-        baseMapLayers['amap-satellite'],
-        baseMapLayers['amap-annotation'],
+        baseMapLayers['tianditu-vector'],
+        baseMapLayers['tianditu-vector-anno'],
+        baseMapLayers['tianditu-satellite'],
+        baseMapLayers['tianditu-satellite-anno'],
         vectorLayer
       ],
       view: new View({
@@ -845,11 +885,12 @@ const handleBaseMapChange = () => {
     }
   })
   
-  if (currentBaseMap.value === 'amap-satellite') {
-    baseMapLayers['amap-satellite']?.setVisible(true)
-    baseMapLayers['amap-annotation']?.setVisible(true)
-  } else if (currentBaseMap.value === 'amap-vector') {
-    baseMapLayers['amap-vector']?.setVisible(true)
+  if (currentBaseMap.value === 'tianditu-satellite') {
+    baseMapLayers['tianditu-satellite']?.setVisible(true)
+    baseMapLayers['tianditu-satellite-anno']?.setVisible(true)
+  } else if (currentBaseMap.value === 'tianditu-vector') {
+    baseMapLayers['tianditu-vector']?.setVisible(true)
+    baseMapLayers['tianditu-vector-anno']?.setVisible(true)
   }
 }
 

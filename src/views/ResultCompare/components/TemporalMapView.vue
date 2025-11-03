@@ -271,6 +271,10 @@ const initMap = () => {
   const center = calculateCenter(geojson)
   const bounds = calculateBounds(geojson)
   
+  console.log('🗺️ 地图初始化信息:')
+  console.log('  中心点 [lat, lng]:', center)
+  console.log('  边界 [[minLat, minLng], [maxLat, maxLng]]:', bounds)
+  
   map = L.map('map-temporal', {
     center: center,
     zoom: 10,
@@ -281,11 +285,23 @@ const initMap = () => {
   // 自动定位到数据区域
   if (bounds) {
     map.fitBounds(bounds, { padding: [50, 50] })
-    console.log('地图已自动定位到数据区域')
+    console.log('✅ 地图已自动定位到数据区域')
+    console.log('  当前地图中心:', map.getCenter())
+    console.log('  当前地图缩放:', map.getZoom())
   }
   
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors'
+  // 天地图密钥
+  const tdtToken = '78df5367f82fb9ed2db089f8761f1d29'
+  
+  // 添加天地图矢量底图
+  L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+    subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],
+    attribution: '&copy; 天地图 GS(2023)336号'
+  }).addTo(map)
+  
+  // 添加天地图矢量标注
+  L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+    subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
   }).addTo(map)
   
   // 加载第一个时间点的数据
@@ -324,12 +340,23 @@ const loadTimePoint = (timeIndex) => {
   
   console.log('📦 GeoJSON特征数量:', timePoint.geojson.features?.length || 0)
   
+  // 验证坐标系统
+  if (timePoint.geojson.features && timePoint.geojson.features.length > 0) {
+    const firstFeature = timePoint.geojson.features[0]
+    if (firstFeature.geometry && firstFeature.geometry.coordinates) {
+      const firstCoord = firstFeature.geometry.type === 'Point' 
+        ? firstFeature.geometry.coordinates 
+        : firstFeature.geometry.coordinates[0][0]
+      console.log('🗺️ 第一个坐标点:', firstCoord)
+      console.log(`   经度: ${firstCoord[0]}°, 纬度: ${firstCoord[1]}°`)
+      const isValidLatLng = Math.abs(firstCoord[0]) <= 180 && Math.abs(firstCoord[1]) <= 90
+      console.log(`   坐标系统: ${isValidLatLng ? 'WGS84 地理坐标 ✓' : 'Web Mercator 投影坐标 (需要转换)'}`)
+    }
+  }
+  
   // 添加新图层（按作物类型着色）
+  // 注意：GeoJSON已经是WGS84坐标系（EPSG:4326），Leaflet默认期望WGS84，无需转换
   currentLayer = L.geoJSON(timePoint.geojson, {
-    coordsToLatLng: (coords) => {
-      const [lng, lat] = mercatorToLatLng(coords[0], coords[1])
-      return L.latLng(lat, lng)
-    },
     style: (feature) => {
       // 根据作物类型获取颜色
       const color = getCropColor(feature)
@@ -414,15 +441,13 @@ const calculateBounds = (geojson) => {
     if (!geom) return
     
     if (geom.type === 'Point') {
-      const [x, y] = geom.coordinates
-      const [lng, lat] = mercatorToLatLng(x, y)
+      const [lng, lat] = geom.coordinates
       minLat = Math.min(minLat, lat)
       maxLat = Math.max(maxLat, lat)
       minLng = Math.min(minLng, lng)
       maxLng = Math.max(maxLng, lng)
     } else if (geom.type === 'Polygon') {
-      geom.coordinates[0].forEach(([x, y]) => {
-        const [lng, lat] = mercatorToLatLng(x, y)
+      geom.coordinates[0].forEach(([lng, lat]) => {
         minLat = Math.min(minLat, lat)
         maxLat = Math.max(maxLat, lat)
         minLng = Math.min(minLng, lng)
@@ -430,8 +455,7 @@ const calculateBounds = (geojson) => {
       })
     } else if (geom.type === 'MultiPolygon') {
       geom.coordinates.forEach(polygon => {
-        polygon[0].forEach(([x, y]) => {
-          const [lng, lat] = mercatorToLatLng(x, y)
+        polygon[0].forEach(([lng, lat]) => {
           minLat = Math.min(minLat, lat)
           maxLat = Math.max(maxLat, lat)
           minLng = Math.min(minLng, lng)
@@ -449,9 +473,10 @@ const calculateBounds = (geojson) => {
 // 计算中心点
 const calculateCenter = (geojson) => {
   const bounds = calculateBounds(geojson)
-  if (!bounds) return [39.9, 116.4]
+  if (!bounds) return [39.9, 116.4]  // [lat, lng] 格式（北京默认位置）
   
   const [[minLat, minLng], [maxLat, maxLng]] = bounds
+  // Leaflet 期望 [lat, lng] 格式，已经是正确的
   return [(minLat + maxLat) / 2, (minLng + maxLng) / 2]
 }
 

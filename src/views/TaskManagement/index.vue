@@ -877,14 +877,14 @@ const loadRecognitionFiles = async () => {
     if (response.code === 200) {
       const allResults = response.data || []
       
-      // 🔧 修复：同时加载 SHP 和 GeoJSON 类型的识别结果文件
+      // 修复：同时加载 SHP 和 GeoJSON 类型的识别结果文件
       recognitionFiles.value = allResults.filter(r => {
         // 检查文件类型是否为 SHP、GeoJSON 或 GEOJSON（不区分大小写）
         const type = r.type && r.type.toUpperCase()
         return type === 'SHP' || type === 'GEOJSON'
       })
       
-      console.log('✅ 已从后端加载识别结果文件:', recognitionFiles.value.length, '个')
+      console.log('[成功] 已从后端加载识别结果文件:', recognitionFiles.value.length, '个')
       console.log('  - SHP文件:', recognitionFiles.value.filter(r => r.type === 'SHP').length, '个')
       console.log('  - GeoJSON文件:', recognitionFiles.value.filter(r => r.type === 'GeoJSON').length, '个')
       console.log('识别结果文件列表:', recognitionFiles.value)
@@ -893,7 +893,7 @@ const loadRecognitionFiles = async () => {
       console.log('后端返回数据为空')
     }
   } catch (error) {
-    console.error('❌ 从后端加载识别结果文件失败:', error)
+    console.error('[错误] 从后端加载识别结果文件失败:', error)
     recognitionFiles.value = []
   }
 }
@@ -921,14 +921,14 @@ const loadImageLibrary = async () => {
           uploadTime: img.uploadTime || img.createTime
         }))
       
-      console.log('✅ 已从data文件夹加载影像列表:', imageLibrary.value.length, '个')
+      console.log('[成功] 已从data文件夹加载影像列表:', imageLibrary.value.length, '个')
       console.log('影像列表:', imageLibrary.value)
     } else {
       imageLibrary.value = []
-      console.log('⚠️ data文件夹中暂无影像文件')
+      console.log('[警告] data文件夹中暂无影像文件')
     }
   } catch (error) {
-    console.error('❌ 加载data文件夹影像列表失败:', error)
+    console.error('[错误] 加载data文件夹影像列表失败:', error)
     imageLibrary.value = []
     ElMessage.warning('无法加载影像列表，请检查后端服务')
   }
@@ -956,14 +956,14 @@ const loadShpLibrary = async () => {
           taskName: shp.taskName
         }))
       
-      console.log('✅ 已从data_shp文件夹加载SHP列表:', shpLibrary.value.length, '个')
+      console.log('[成功] 已从data_shp文件夹加载SHP列表:', shpLibrary.value.length, '个')
       console.log('SHP列表:', shpLibrary.value)
     } else {
       shpLibrary.value = []
-      console.log('⚠️ data_shp文件夹中暂无SHP文件')
+      console.log('[警告] data_shp文件夹中暂无SHP文件')
     }
   } catch (error) {
-    console.error('❌ 加载data_shp文件夹SHP列表失败:', error)
+    console.error('[错误] 加载data_shp文件夹SHP列表失败:', error)
     shpLibrary.value = []
     ElMessage.warning('无法加载SHP列表，请检查后端服务')
   }
@@ -993,7 +993,7 @@ const handleViewAnalysisQueue = () => {
 
 // 获取兼容的文件列表（差异检测用）
 const getCompatibleFiles = (baseFileId) => {
-  // 🔧 只显示作物识别任务的文件
+  // 只显示作物识别任务的文件
   const cropRecognitionFiles = recognitionFiles.value.filter(f => 
     f.recognitionType === 'crop_recognition'
   )
@@ -1018,7 +1018,7 @@ const handleBaseFileChange = () => {
 
 // 获取时序分析兼容的文件列表
 const getTemporalCompatibleFiles = () => {
-  // 🔧 只显示作物识别任务的文件（不限制格式，支持SHP和GeoJSON混合分析）
+  // 只显示作物识别任务的文件（不限制格式，支持SHP和GeoJSON混合分析）
   return recognitionFiles.value.filter(f => f.recognitionType === 'crop_recognition')
 }
 
@@ -1410,7 +1410,7 @@ const processBatchTasks = async () => {
   // 全部完成后显示通知
   if (allTasksCompleted.value) {
     ElNotification({
-      title: '✅ 批量识别完成',
+      title: '批量识别完成',
       message: `已完成 ${batchTasks.value.length} 个影像的识别，结果已保存`,
       type: 'success',
       duration: 8000
@@ -1472,7 +1472,7 @@ const processTask = (task) => {
       task.statusText = '识别完成'
       clearInterval(timeInterval)
       
-      console.log(`✅ 任务完成: ${task.name}`)
+      console.log(`[成功] 任务完成: ${task.name}`)
       resolve()
     }, 5000)
   })
@@ -1517,7 +1517,7 @@ const handleRunDifferenceDetection = async () => {
     analysisStatusText.value = '正在读取原始图数据...'
     console.log(`正在读取原始图: ${baseFile.name}, 类型: ${baseFile.type}`)
     
-    // 🔧 辅助函数：读取文件并转换为GeoJSON格式
+    // 辅助函数：读取文件并转换为GeoJSON格式
     const readFileAsGeojson = async (file) => {
       if (file.type === 'SHP') {
         // SHP文件：先尝试转换为GeoJSON，如果已存在则直接读取
@@ -1525,21 +1525,21 @@ const handleRunDifferenceDetection = async () => {
         const { convertShpToGeojson } = await import('@/api/analysis')
         
         try {
-          // 🔧 修复：传递relativePath参数，支持子文件夹
+          // 修复：传递relativePath参数，支持子文件夹
           const convertResponse = await convertShpToGeojson(file.name, file.relativePath)
           
           if (convertResponse.code === 200) {
             // 转换成功，返回数据
-            console.log(`  ✅ SHP转换成功`)
+            console.log(`  [成功] SHP转换成功`)
             return convertResponse.data
           } else if (convertResponse.code === 400 && convertResponse.message?.includes('已经转换过了')) {
             // 文件已存在，直接读取对应的GeoJSON文件
-            console.log(`  ℹ️ SHP已转换过，直接读取GeoJSON文件`)
+            console.log(`  [信息] SHP已转换过，直接读取GeoJSON文件`)
             const geojsonFilename = file.name.replace(/\.shp$/i, '.geojson')
             const geojsonResponse = await readGeojsonContent(geojsonFilename)
             
             if (geojsonResponse.code === 200) {
-              console.log(`  ✅ 读取已转换的GeoJSON成功`)
+              console.log(`  [成功] 读取已转换的GeoJSON成功`)
               return geojsonResponse.data
             } else {
               throw new Error(`读取已转换的GeoJSON失败: ${geojsonResponse.message}`)
@@ -1549,16 +1549,16 @@ const handleRunDifferenceDetection = async () => {
           }
         } catch (error) {
           // 如果转换失败，尝试直接读取GeoJSON（可能已经转换过）
-          console.log(`  ⚠️ 转换出错，尝试读取已存在的GeoJSON`)
+          console.log(`  [警告] 转换出错，尝试读取已存在的GeoJSON`)
           const geojsonFilename = file.name.replace(/\.shp$/i, '.geojson')
           try {
             const geojsonResponse = await readGeojsonContent(geojsonFilename)
             if (geojsonResponse.code === 200) {
-              console.log(`  ✅ 读取已存在的GeoJSON成功`)
+              console.log(`  [成功] 读取已存在的GeoJSON成功`)
               return geojsonResponse.data
             }
           } catch (e) {
-            console.error(`  ❌ 读取GeoJSON也失败:`, e)
+            console.error(`  [错误] 读取GeoJSON也失败:`, e)
           }
           throw error
         }
@@ -1653,7 +1653,7 @@ const handleRunDifferenceDetection = async () => {
       })
       
       const saveResponse = await saveAnalysisResultToServer('difference', analysisData)
-      console.log('✅ 差异分析结果已保存为JSON:', saveResponse.data)
+      console.log('[成功] 差异分析结果已保存为JSON:', saveResponse.data)
     } catch (error) {
       console.error('保存JSON失败:', error)
       ElMessage.warning('分析结果保存失败，但可以继续查看')
@@ -1666,7 +1666,7 @@ const handleRunDifferenceDetection = async () => {
     
     // 显示成功提示
     ElNotification({
-      title: '✅ 差异检测完成',
+      title: '差异检测完成',
       message: `已检测到${diffResult.stats.changed}个变化地块，分析结果已保存`,
       type: 'success',
       duration: 5000
@@ -1965,7 +1965,7 @@ const handleRunTemporalAnalysis = async () => {
     // 1. 读取所有文件（支持SHP和GeoJSON）
     const geojsonDataList = []
     
-    // 🔧 辅助函数：读取文件并转换为GeoJSON格式
+    // 辅助函数：读取文件并转换为GeoJSON格式
     const readFileAsGeojson = async (file) => {
       if (file.type === 'SHP') {
         // SHP文件：先尝试转换为GeoJSON，如果已存在则直接读取
@@ -1973,21 +1973,21 @@ const handleRunTemporalAnalysis = async () => {
         const { convertShpToGeojson } = await import('@/api/analysis')
         
         try {
-          // 🔧 修复：传递relativePath参数，支持子文件夹
+          // 修复：传递relativePath参数，支持子文件夹
           const convertResponse = await convertShpToGeojson(file.name, file.relativePath)
           
           if (convertResponse.code === 200) {
             // 转换成功，返回数据
-            console.log(`  ✅ SHP转换成功`)
+            console.log(`  [成功] SHP转换成功`)
             return convertResponse.data
           } else if (convertResponse.code === 400 && convertResponse.message?.includes('已经转换过了')) {
             // 文件已存在，直接读取对应的GeoJSON文件
-            console.log(`  ℹ️ SHP已转换过，直接读取GeoJSON文件`)
+            console.log(`  [信息] SHP已转换过，直接读取GeoJSON文件`)
             const geojsonFilename = file.name.replace(/\.shp$/i, '.geojson')
             const geojsonResponse = await readGeojsonContent(geojsonFilename)
             
             if (geojsonResponse.code === 200) {
-              console.log(`  ✅ 读取已转换的GeoJSON成功`)
+              console.log(`  [成功] 读取已转换的GeoJSON成功`)
               return geojsonResponse.data
             } else {
               throw new Error(`读取已转换的GeoJSON失败: ${geojsonResponse.message}`)
@@ -1997,16 +1997,16 @@ const handleRunTemporalAnalysis = async () => {
           }
         } catch (error) {
           // 如果转换失败，尝试直接读取GeoJSON（可能已经转换过）
-          console.log(`  ⚠️ 转换出错，尝试读取已存在的GeoJSON`)
+          console.log(`  [警告] 转换出错，尝试读取已存在的GeoJSON`)
           const geojsonFilename = file.name.replace(/\.shp$/i, '.geojson')
           try {
             const geojsonResponse = await readGeojsonContent(geojsonFilename)
             if (geojsonResponse.code === 200) {
-              console.log(`  ✅ 读取已存在的GeoJSON成功`)
+              console.log(`  [成功] 读取已存在的GeoJSON成功`)
               return geojsonResponse.data
             }
           } catch (e) {
-            console.error(`  ❌ 读取GeoJSON也失败:`, e)
+            console.error(`  [错误] 读取GeoJSON也失败:`, e)
           }
           throw error
         }
@@ -2116,7 +2116,7 @@ const handleRunTemporalAnalysis = async () => {
       })
       
       const saveResponse = await saveAnalysisResultToServer('temporal', analysisData)
-      console.log('✅ 时序分析结果已保存为JSON:', saveResponse.data)
+      console.log('[成功] 时序分析结果已保存为JSON:', saveResponse.data)
     } catch (error) {
       console.error('保存JSON失败:', error)
       ElMessage.warning('分析结果保存失败，但可以继续查看')
@@ -2129,7 +2129,7 @@ const handleRunTemporalAnalysis = async () => {
     
     // 显示成功提示
     ElNotification({
-      title: '✅ 时序分析完成',
+      title: '时序分析完成',
       message: `已完成${selectedFiles.length}期时序变化分析（共${temporalResult.stats.total}个地块，${temporalResult.stats.changed}个有变化）`,
       type: 'success',
       duration: 5000
@@ -2186,9 +2186,9 @@ const performTemporalAnalysis = (geojsonDataList) => {
     areaField: 'area' // 面积字段
   })
   
-  console.log('✅ 时序分析完成，统计信息:', analysisResult.stats)
-  console.log('📊 作物转换矩阵:', analysisResult.transitionMatrix)
-  console.log('📊 作物分布:', analysisResult.cropDistribution)
+  console.log('[成功] 时序分析完成，统计信息:', analysisResult.stats)
+  console.log('[统计] 作物转换矩阵:', analysisResult.transitionMatrix)
+  console.log('[统计] 作物分布:', analysisResult.cropDistribution)
   
   // 兼容原有的返回格式
   return {

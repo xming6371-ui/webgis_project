@@ -20,6 +20,12 @@
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <span>{{ data.title }}</span>
               <el-space>
+                <span style="font-size: 14px; color: #606266;">底图:</span>
+                <el-select v-model="currentBaseMap" size="small" style="width: 140px" @change="handleBaseMapChange">
+                  <el-option label="天地图矢量" value="tianditu-vector" />
+                  <el-option label="天地图影像" value="tianditu-satellite" />
+                  <el-option label="无底图" value="none" />
+                </el-select>
                 <el-button 
                   size="small" 
                   type="primary" 
@@ -182,6 +188,9 @@ const sliderPosition = ref(50)
 const isDragging = ref(false)
 const compareContainer = ref(null)
 
+// 底图切换
+const currentBaseMap = ref('tianditu-vector')
+
 // 地图同步标志（防止无限循环）
 let isSyncing = false
 
@@ -189,6 +198,11 @@ let isSyncing = false
 let mapBase = null
 let mapCompare = null
 let mapResult = null
+
+// 底图图层（每个地图都有一组）
+let baseLayersBase = {}
+let baseLayersCompare = {}
+let baseLayersResult = {}
 
 // 高亮图层（用于显示选中的地块）
 let highlightLayer = null
@@ -314,16 +328,39 @@ const initMaps = async () => {
       mapBase.fitBounds(bounds, { padding: [30, 30] })
     }
     
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap'
-    }).addTo(mapBase)
+    // 天地图密钥
+    const tdtToken = '78df5367f82fb9ed2db089f8761f1d29'
+    
+    // 创建天地图矢量底图和标注（mapBase）
+    baseLayersBase['tianditu-vector'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],
+      attribution: '&copy; 天地图 GS(2023)336号'
+    })
+    baseLayersBase['tianditu-vector-anno'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
+    })
+    
+    // 创建天地图影像底图和标注（mapBase）
+    baseLayersBase['tianditu-satellite'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],
+      attribution: '&copy; 天地图 GS(2023)336号'
+    })
+    baseLayersBase['tianditu-satellite-anno'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=cia_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
+    })
+    
+    // 根据当前选择添加底图
+    if (currentBaseMap.value === 'tianditu-vector') {
+      baseLayersBase['tianditu-vector'].addTo(mapBase)
+      baseLayersBase['tianditu-vector-anno'].addTo(mapBase)
+    } else if (currentBaseMap.value === 'tianditu-satellite') {
+      baseLayersBase['tianditu-satellite'].addTo(mapBase)
+      baseLayersBase['tianditu-satellite-anno'].addTo(mapBase)
+    }
     
     // 添加原始图数据（显示所有地块，统一浅蓝色样式）
+    // 注意：GeoJSON已经是WGS84坐标系，无需转换
     L.geoJSON(featuresToRender, {
-      coordsToLatLng: (coords) => {
-        const [lng, lat] = mercatorToLatLng(coords[0], coords[1])
-        return L.latLng(lat, lng)
-      },
       style: {
         color: '#409EFF',
         weight: 2,
@@ -361,16 +398,36 @@ const initMaps = async () => {
       mapCompare.fitBounds(bounds, { padding: [30, 30] })
     }
     
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap'
-    }).addTo(mapCompare)
+    // 创建天地图矢量底图和标注（mapCompare）
+    baseLayersCompare['tianditu-vector'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],
+      attribution: '&copy; 天地图 GS(2023)336号'
+    })
+    baseLayersCompare['tianditu-vector-anno'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
+    })
+    
+    // 创建天地图影像底图和标注（mapCompare）
+    baseLayersCompare['tianditu-satellite'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],
+      attribution: '&copy; 天地图 GS(2023)336号'
+    })
+    baseLayersCompare['tianditu-satellite-anno'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=cia_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
+    })
+    
+    // 根据当前选择添加底图
+    if (currentBaseMap.value === 'tianditu-vector') {
+      baseLayersCompare['tianditu-vector'].addTo(mapCompare)
+      baseLayersCompare['tianditu-vector-anno'].addTo(mapCompare)
+    } else if (currentBaseMap.value === 'tianditu-satellite') {
+      baseLayersCompare['tianditu-satellite'].addTo(mapCompare)
+      baseLayersCompare['tianditu-satellite-anno'].addTo(mapCompare)
+    }
     
     // 添加对比图数据（变化=红色，未变化=绿色）
+    // 注意：GeoJSON已经是WGS84坐标系，无需转换
     L.geoJSON(featuresToRender, {
-      coordsToLatLng: (coords) => {
-        const [lng, lat] = mercatorToLatLng(coords[0], coords[1])
-        return L.latLng(lat, lng)
-      },
       style: (feature) => {
         const hasChange = feature.properties?.hasChange
         return {
@@ -450,15 +507,35 @@ const initMaps = async () => {
       mapResult.fitBounds(bounds, { padding: [30, 30] })
     }
     
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap'
-    }).addTo(mapResult)
+    // 创建天地图矢量底图和标注（mapResult）
+    baseLayersResult['tianditu-vector'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=vec_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],
+      attribution: '&copy; 天地图 GS(2023)336号'
+    })
+    baseLayersResult['tianditu-vector-anno'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=cva_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
+    })
     
+    // 创建天地图影像底图和标注（mapResult）
+    baseLayersResult['tianditu-satellite'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],
+      attribution: '&copy; 天地图 GS(2023)336号'
+    })
+    baseLayersResult['tianditu-satellite-anno'] = L.tileLayer(`https://t{s}.tianditu.gov.cn/DataServer?T=cia_w&x={x}&y={y}&l={z}&tk=${tdtToken}`, {
+      subdomains: ['0', '1', '2', '3', '4', '5', '6', '7']
+    })
+    
+    // 根据当前选择添加底图
+    if (currentBaseMap.value === 'tianditu-vector') {
+      baseLayersResult['tianditu-vector'].addTo(mapResult)
+      baseLayersResult['tianditu-vector-anno'].addTo(mapResult)
+    } else if (currentBaseMap.value === 'tianditu-satellite') {
+      baseLayersResult['tianditu-satellite'].addTo(mapResult)
+      baseLayersResult['tianditu-satellite-anno'].addTo(mapResult)
+    }
+    
+    // 注意：GeoJSON已经是WGS84坐标系，无需转换
     L.geoJSON(featuresToRender, {
-      coordsToLatLng: (coords) => {
-        const [lng, lat] = mercatorToLatLng(coords[0], coords[1])
-        return L.latLng(lat, lng)
-      },
       style: (feature) => {
         const hasChange = feature.properties?.hasChange
         return {
@@ -664,6 +741,46 @@ const calculateFeatureBounds = (feature) => {
   if (minLat === Infinity) return null
   
   return [[minLat, minLng], [maxLat, maxLng]]
+}
+
+// 切换底图
+const handleBaseMapChange = (value) => {
+  console.log('切换底图:', value)
+  
+  // 移除所有底图图层
+  const removeAllBaseLayers = (map, baseLayers) => {
+    if (map && baseLayers) {
+      Object.values(baseLayers).forEach(layer => {
+        if (map.hasLayer(layer)) {
+          map.removeLayer(layer)
+        }
+      })
+    }
+  }
+  
+  // 添加选中的底图图层
+  const addSelectedBaseLayers = (map, baseLayers, baseMapType) => {
+    if (!map || !baseLayers) return
+    
+    if (baseMapType === 'tianditu-vector') {
+      baseLayers['tianditu-vector']?.addTo(map)
+      baseLayers['tianditu-vector-anno']?.addTo(map)
+    } else if (baseMapType === 'tianditu-satellite') {
+      baseLayers['tianditu-satellite']?.addTo(map)
+      baseLayers['tianditu-satellite-anno']?.addTo(map)
+    }
+    // 如果是 'none'，则不添加任何底图
+  }
+  
+  // 更新所有地图的底图
+  removeAllBaseLayers(mapBase, baseLayersBase)
+  addSelectedBaseLayers(mapBase, baseLayersBase, value)
+  
+  removeAllBaseLayers(mapCompare, baseLayersCompare)
+  addSelectedBaseLayers(mapCompare, baseLayersCompare, value)
+  
+  removeAllBaseLayers(mapResult, baseLayersResult)
+  addSelectedBaseLayers(mapResult, baseLayersResult, value)
 }
 
 // 高亮地块并智能缩放
