@@ -17,8 +17,8 @@ const __dirname = path.dirname(__filename)
 const router = express.Router()
 
 // 数据目录（使用绝对路径，确保在 Docker 容器内正确）
-// 容器内固定路径为 /app/public/data
-const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../../public/data')
+// 优先使用环境变量，如果不存在则：容器内使用 /app/public/data，本地使用相对路径解析
+const DATA_DIR = process.env.DATA_DIR || (fs.existsSync('/app') ? '/app/public/data' : path.resolve(__dirname, '../../public/data'))
 const TIF_DIR = path.join(DATA_DIR, 'data_tif')  // TIF文件专用目录
 const METADATA_FILE = path.join(DATA_DIR, 'imageData.json')
 
@@ -26,6 +26,8 @@ const METADATA_FILE = path.join(DATA_DIR, 'imageData.json')
 console.log('📂 路径配置:')
 console.log('  __dirname:', __dirname)
 console.log('  process.cwd():', process.cwd())
+console.log('  process.env.DATA_DIR:', process.env.DATA_DIR || '(未设置)')
+console.log('  /app 存在？', fs.existsSync('/app'))
 console.log('  DATA_DIR:', DATA_DIR)
 console.log('  TIF_DIR:', TIF_DIR)
 console.log('  TIF_DIR 存在？', fs.existsSync(TIF_DIR))

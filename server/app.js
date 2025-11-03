@@ -88,7 +88,8 @@ app.use((err, req, res, next) => {
 
 // 初始化数据目录
 const initDataDirectories = () => {
-  const dataDir = path.join(__dirname, '../public/data')
+  // 使用环境变量或根据运行环境自动判断（修复 Docker 容器内路径问题）
+  const dataDir = process.env.DATA_DIR || (fs.existsSync('/app') ? '/app/public/data' : path.resolve(__dirname, '../public/data'))
   const requiredDirs = [
     dataDir,
     path.join(dataDir, 'data_shp'),
@@ -120,7 +121,8 @@ app.listen(PORT, () => {
   console.log('====================================')
   console.log(`  服务地址: http://localhost:${PORT}`)
   console.log(`  健康检查: http://localhost:${PORT}/health`)
-  console.log(`  数据目录: ${path.join(__dirname, '../public/data')}`)
+  const dataDirPath = process.env.DATA_DIR || (fs.existsSync('/app') ? '/app/public/data' : path.resolve(__dirname, '../public/data'))
+  console.log(`  数据目录: ${dataDirPath}`)
   console.log('====================================')
   console.log('  可用服务:')
   console.log('  - 影像数据管理 (/api/image)')
