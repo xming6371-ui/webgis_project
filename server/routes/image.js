@@ -355,19 +355,45 @@ initGDALPath().then((result) => {
     console.log('   📦 Conda环境:', result.condaEnv)
     console.log('========================================')
   } else {
-    console.warn('========================================')
-    console.warn('⚠️ GDAL加速模式未启用')
-    console.warn('   将使用标准模式（较慢，每次优化都会重新启动conda）')
-    console.warn('   原因：未检测到conda环境中的GDAL')
-    console.warn('========================================')
+    // 检测运行环境
+    const isDocker = fs.existsSync('/app')
+    const isLinux = process.platform !== 'win32'
+    
+    if (isDocker || isLinux) {
+      console.log('========================================')
+      console.log('📦 GDAL运行模式: 系统PATH模式')
+      console.log('   ✅ 使用系统安装的GDAL（已最优）')
+      console.log('   ℹ️  服务器/Docker环境直接使用系统GDAL，无需加速')
+      console.log('   📋 已禁用.aux.xml文件生成（GDAL_PAM_ENABLED=NO）')
+      console.log('========================================')
+    } else {
+      console.warn('========================================')
+      console.warn('⚠️ GDAL加速模式未启用（仅Windows本地环境）')
+      console.warn('   将使用标准模式（每次优化都会重新启动conda）')
+      console.warn('   原因：未检测到conda环境中的GDAL')
+      console.warn('   提示：在Anaconda Prompt中启动后端可获得更快的速度')
+      console.warn('========================================')
+    }
   }
 }).catch(err => {
-  console.warn('========================================')
-  console.warn('⚠️ GDAL加速模式初始化失败')
-  console.warn('   将使用标准模式（较慢，每次优化都会重新启动conda）')
-  console.warn('   提示：请在 Anaconda Prompt 中启动后端以获得更快的速度')
-  console.warn('   错误信息:', err.message)
-  console.warn('========================================')
+  // 检测运行环境
+  const isDocker = fs.existsSync('/app')
+  const isLinux = process.platform !== 'win32'
+  
+  if (isDocker || isLinux) {
+    console.log('========================================')
+    console.log('📦 GDAL运行模式: 系统PATH模式')
+    console.log('   ✅ 使用系统安装的GDAL（已最优）')
+    console.log('   ℹ️  服务器/Docker环境直接使用系统GDAL')
+    console.log('========================================')
+  } else {
+    console.warn('========================================')
+    console.warn('⚠️ GDAL加速模式初始化失败（仅Windows本地环境）')
+    console.warn('   将使用标准模式（每次优化都会重新启动conda）')
+    console.warn('   提示：在Anaconda Prompt中启动后端以获得更快的速度')
+    console.warn('   错误信息:', err.message)
+    console.warn('========================================')
+  }
 })
 
 // 路由
@@ -1040,7 +1066,7 @@ function buildGDALCommand(command) {
   }
   
   // 假设GDAL在系统PATH中（Linux/Docker环境）
-  console.log(`📋 使用系统PATH中的GDAL命令（禁用.aux.xml）: GDAL_PAM_ENABLED=NO ${command}`)
+  // 注意：不再打印日志，避免每次调用都输出（已在启动时说明）
   if (isWindows) {
     return `set GDAL_PAM_ENABLED=NO& ${command}`
   } else {

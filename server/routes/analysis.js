@@ -36,8 +36,9 @@ try {
 
 const router = express.Router()
 
-// 数据目录（使用 path.resolve 确保在 Docker 容器内得到正确的绝对路径）
-const PUBLIC_DIR = path.resolve(__dirname, '../../public')
+// 数据目录（使用环境变量或根据运行环境自动判断，确保在 Docker 容器内得到正确的绝对路径）
+// 优先使用环境变量，如果不存在则：容器内使用 /app/public，本地使用相对路径解析
+const PUBLIC_DIR = process.env.PUBLIC_DIR || (fs.existsSync('/app') ? '/app/public' : path.resolve(__dirname, '../../public'))
 const DATA_DIR = path.join(PUBLIC_DIR, 'data')
 const SHP_DIR = path.join(DATA_DIR, 'data_shp')
 const GEOJSON_DIR = path.join(DATA_DIR, 'data_geojson')
@@ -49,6 +50,18 @@ const REPORTS_DIR = path.join(ANALYSIS_RESULTS_DIR, 'reports')
 
 // Python脚本路径
 const CALCULATE_AREA_SCRIPT = path.join(__dirname, '../scripts/calculate_area.py')
+
+// 检测 Python 命令（Windows 用 python，Linux/Docker 用 python3）
+const getPythonCommand = () => {
+  // Windows 系统使用 python
+  if (process.platform === 'win32') {
+    return 'python'
+  }
+  // Linux/Docker 系统使用 python3
+  return 'python3'
+}
+
+const PYTHON_CMD = getPythonCommand()
 
 // 确保目录存在
 if (!fs.existsSync(SHP_DIR)) {
@@ -406,9 +419,9 @@ async function calculateAreasWithGeopandas(geojson) {
       return reject(new Error(`Python脚本不存在: ${CALCULATE_AREA_SCRIPT}`))
     }
     
-    // 使用 python 命令（假设在系统 PATH 中）
+    // 使用 Python 命令（自动检测：Windows 用 python，Linux/Docker 用 python3）
     // 如果需要使用 conda 环境，可以使用: conda run -n <env_name> python
-    const pythonCmd = 'python'
+    const pythonCmd = PYTHON_CMD
     
     let python
     try {
@@ -1263,7 +1276,7 @@ except Exception as e:
     sys.exit(1)
 `;
         
-        const python = spawn('python', ['-c', pythonScript]);
+        const python = spawn(PYTHON_CMD, ['-c', pythonScript]);
         let stdout = '';
         let stderr = '';
         
@@ -1484,7 +1497,7 @@ except Exception as e:
     sys.exit(1)
 `;
         
-        const python = spawn('python', ['-c', pythonScript]);
+        const python = spawn(PYTHON_CMD, ['-c', pythonScript]);
         let stdout = '';
         let stderr = '';
         
@@ -1659,7 +1672,7 @@ except Exception as e:
     sys.exit(1)
 `;
         
-        const python = spawn('python', ['-c', pythonScript]);
+        const python = spawn(PYTHON_CMD, ['-c', pythonScript]);
         let stdout = '';
         let stderr = '';
         
