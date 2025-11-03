@@ -438,18 +438,19 @@
             placeholder="选择时间较早的识别结果" 
             style="width: 100%"
             filterable
+            clearable
             @change="handleBaseFileChange"
           >
             <el-option 
               v-for="file in getCompatibleFiles(null)" 
               :key="file.id"
-              :label="`${file.taskName} (${file.createTime})`" 
+              :label="`${file.name} (${file.createTime})`" 
               :value="file.id"
               :disabled="file.id === differenceConfig.compareFileId"
             >
               <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
                 <div style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  <span style="font-size: 14px; color: #303133; font-weight: 500;">{{ file.taskName }}</span>
+                  <span style="font-size: 14px; color: #303133; font-weight: 500;">{{ file.name }}</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
                   <el-tag v-if="file.year" type="info" size="small">{{ file.year }}年</el-tag>
@@ -468,16 +469,17 @@
             placeholder="选择时间较晚的识别结果" 
             style="width: 100%"
             filterable
+            clearable
           >
             <el-option 
               v-for="file in getCompatibleFiles(differenceConfig.baseFileId)" 
               :key="file.id"
-              :label="`${file.taskName} (${file.createTime})`" 
+              :label="`${file.name} (${file.createTime})`" 
               :value="file.id"
             >
               <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
                 <div style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  <span style="font-size: 14px; color: #303133; font-weight: 500;">{{ file.taskName }}</span>
+                  <span style="font-size: 14px; color: #303133; font-weight: 500;">{{ file.name }}</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
                   <el-tag v-if="file.year" type="info" size="small">{{ file.year }}年</el-tag>
@@ -554,12 +556,12 @@
             <el-option 
               v-for="file in getTemporalCompatibleFiles()" 
               :key="file.id"
-              :label="`${file.taskName} (${file.createTime})`" 
+              :label="`${file.name} (${file.createTime})`" 
               :value="file.id"
             >
               <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
                 <div style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  <span style="font-size: 14px; color: #303133; font-weight: 500;">{{ file.taskName }}</span>
+                  <span style="font-size: 14px; color: #303133; font-weight: 500;">{{ file.name }}</span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
                   <el-tag v-if="file.year" type="info" size="small">{{ file.year }}年</el-tag>
