@@ -16,8 +16,8 @@ const __dirname = path.dirname(__filename)
 
 const router = express.Router()
 
-// 数据目录
-const DATA_DIR = path.join(__dirname, '../../public/data')
+// 数据目录（使用 path.resolve 确保在 Docker 容器内得到正确的绝对路径）
+const DATA_DIR = path.resolve(__dirname, '../../public/data')
 const TIF_DIR = path.join(DATA_DIR, 'data_tif')  // TIF文件专用目录
 const METADATA_FILE = path.join(DATA_DIR, 'imageData.json')
 

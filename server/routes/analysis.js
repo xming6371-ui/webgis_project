@@ -36,8 +36,8 @@ try {
 
 const router = express.Router()
 
-// 数据目录
-const PUBLIC_DIR = path.join(__dirname, '../../public')
+// 数据目录（使用 path.resolve 确保在 Docker 容器内得到正确的绝对路径）
+const PUBLIC_DIR = path.resolve(__dirname, '../../public')
 const DATA_DIR = path.join(PUBLIC_DIR, 'data')
 const SHP_DIR = path.join(DATA_DIR, 'data_shp')
 const GEOJSON_DIR = path.join(DATA_DIR, 'data_geojson')
