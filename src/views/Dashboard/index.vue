@@ -185,7 +185,7 @@
               <span class="filter-label">文件格式：</span>
               <el-select 
                 v-model="recognitionFilter.fileFormat" 
-                placeholder="选择文件格式" 
+                placeholder="选择文件格式"
                 style="width: 140px" 
                 clearable
                 @change="handleFileFormatChange"
