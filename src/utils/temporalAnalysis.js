@@ -37,6 +37,32 @@ export function buildTemporalTrajectories(timePointsData) {
     throw new Error('至少需要两个时间点进行时序分析')
   }
 
+  // 🔥 关键修复：按时间排序，确保无论用户选择顺序如何，都按时间先后顺序进行分析
+  console.log('📅 原始顺序:', timePointsData.map(tp => `${tp.taskName} (${tp.time || tp.createTime})`))
+  
+  // 按时间字段排序（优先使用 time，其次 createTime）
+  const sortedTimePointsData = [...timePointsData].sort((a, b) => {
+    const timeA = a.time || a.createTime
+    const timeB = b.time || b.createTime
+    
+    if (!timeA || !timeB) {
+      console.warn('⚠️ 部分时间点缺少时间信息:', { a: a.taskName, b: b.taskName })
+      return 0
+    }
+    
+    // 转换为时间戳进行比较
+    const timestampA = new Date(timeA).getTime()
+    const timestampB = new Date(timeB).getTime()
+    
+    return timestampA - timestampB // 升序排列（早→晚）
+  })
+  
+  console.log('📅 排序后顺序:', sortedTimePointsData.map(tp => `${tp.taskName} (${tp.time || tp.createTime})`))
+  console.log('✅ 时间排序完成，确保按时间先后进行分析')
+  
+  // 使用排序后的数据进行后续处理
+  timePointsData = sortedTimePointsData
+
   // 数据质量分析
   const qualityReport = analyzeDataQuality(timePointsData)
   console.log('📊 数据质量报告:', qualityReport)
