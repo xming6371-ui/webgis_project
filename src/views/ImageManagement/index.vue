@@ -134,7 +134,6 @@
             第{{ scope.row.period }}期
           </template>
         </el-table-column>
-        <el-table-column prop="sensor" label="传感器" width="100" sortable />
         <el-table-column prop="date" label="采集日期" width="110" sortable />
         <el-table-column prop="region" label="区域" width="80" sortable />
         <el-table-column prop="size" label="文件大小" width="100" />
