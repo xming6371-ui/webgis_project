@@ -1994,7 +1994,7 @@ const handleClearData = async () => {
     // 销毁所有图表
     disposeCharts()
     
-    ElMessage.success('✅ 已清除所有数据，请重新选择数据进行分析')
+    ElMessage.success('已清除所有数据，请重新选择数据进行分析')
     
     console.log('🔄 数据已清除，回到初始状态')
   } catch (error) {
@@ -3183,7 +3183,7 @@ const handleExportPdf = async () => {
     ])
     
     ElMessage.success({
-      message: '✅ PDF导出成功！\n已下载到本地并保存到数据管理',
+      message: 'PDF导出成功！\n已下载到本地并保存到数据管理',
       duration: 4000,
       showClose: true
     })

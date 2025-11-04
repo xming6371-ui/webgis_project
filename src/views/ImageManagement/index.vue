@@ -1973,7 +1973,7 @@ const handleConvertToKmz = async (row) => {
   convertingFiles.value.add(row.name)
   
   try {
-    ElMessage.info('🔄 开始转换为KMZ格式...')
+    ElMessage.info('开始转换为KMZ格式...')
     
     // 🔧 修复：传递recognitionType，确保转换时保持原有的任务类型
     const requestData = {

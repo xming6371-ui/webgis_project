@@ -81,6 +81,16 @@ echo ""
 echo "后端日志（最后10行）："
 docker compose logs backend --tail 10
 
+# 验证构建产物（检查前端是否包含最新代码）
+echo ""
+echo "验证构建产物..."
+echo "检查前端是否包含最新代码..."
+if docker exec webgis-frontend sh -c 'find /usr/share/nginx/html -name "*.js" -exec grep -l "选择文件格式" {} \;' | grep -q .; then
+    echo "✅ 前端构建产物包含最新代码（找到'选择文件格式'）"
+else
+    echo "⚠️  前端构建产物验证失败，可能需要清除浏览器缓存"
+fi
+
 echo ""
 echo "========================================="
 echo "✅ 完整部署完成！"
@@ -88,5 +98,12 @@ echo "========================================="
 echo "访问地址: http://120.26.239.62"
 echo "备份位置: $BACKUP_FILE"
 echo "查看日志: docker compose logs -f"
-echo "注意：浏览器需要清除缓存并强制刷新"
+echo ""
+echo "⚠️  重要提示："
+echo "   1. 如果前端显示不正确，请清除浏览器缓存："
+echo "      - Chrome/Edge: Ctrl + Shift + Delete，选择'缓存的图片和文件'"
+echo "      - 或使用无痕模式测试：Ctrl + Shift + N"
+echo "      - 或强制刷新：Ctrl + F5"
+echo "   2. 验证构建产物："
+echo "      docker exec webgis-frontend find /usr/share/nginx/html -name '*.js' -exec grep -l '选择文件格式' {} \\;"
 echo "========================================="
