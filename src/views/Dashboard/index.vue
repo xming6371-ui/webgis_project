@@ -186,6 +186,7 @@
               <el-select 
                 v-model="recognitionFilter.fileFormat" 
                 placeholder="选择文件格式"
+                :key="'file-format-' + dataSource"
                 style="width: 140px" 
                 clearable
                 @change="handleFileFormatChange"
