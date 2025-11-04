@@ -1111,6 +1111,49 @@ const parseKmzToGeoJSON = async (kmzUrl) => {
       throw new Error('KMZ中未找到KML文件')
     }
     
+    //  修复：手动解析KML的ExtendedData，确保提取class字段
+    // OpenLayers的KML解析器可能不会自动提取ExtendedData，需要手动解析
+    const parser = new DOMParser()
+    const kmlDoc = parser.parseFromString(kmlContent, 'text/xml')
+    const placemarks = kmlDoc.getElementsByTagName('Placemark')
+    
+    // 创建ExtendedData映射表（按顺序存储每个Placemark的ExtendedData）
+    const extendedDataMap = new Map()
+    
+    for (let i = 0; i < placemarks.length; i++) {
+      const placemark = placemarks[i]
+      const extendedData = placemark.getElementsByTagName('ExtendedData')[0]
+      const dataMap = {}
+      
+      if (extendedData) {
+        const dataElements = extendedData.getElementsByTagName('Data')
+        for (let j = 0; j < dataElements.length; j++) {
+          const dataElement = dataElements[j]
+          const name = dataElement.getAttribute('name')
+          const valueElement = dataElement.getElementsByTagName('value')[0]
+          
+          if (name && valueElement) {
+            const value = valueElement.textContent || valueElement.text || ''
+            
+            // 转换数值类型
+            if (name === 'class' || name === 'gridcode') {
+              const numValue = parseInt(value, 10)
+              dataMap[name] = isNaN(numValue) ? value : numValue
+            } else if (name === 'area_m2' || name === 'area_mu') {
+              const numValue = parseFloat(value)
+              dataMap[name] = isNaN(numValue) ? value : numValue
+            } else {
+              dataMap[name] = value
+            }
+          }
+        }
+      }
+      
+      extendedDataMap.set(i, dataMap)
+    }
+    
+    console.log(`   已提取 ${extendedDataMap.size} 个Placemark的ExtendedData`)
+    
     // 4. 使用OpenLayers KML格式解析
     const kmlFormat = new KML({
       extractStyles: false
@@ -1123,6 +1166,23 @@ const parseKmzToGeoJSON = async (kmzUrl) => {
     
     console.log(` KML解析成功，包含 ${features.length} 个要素`)
     
+    //  修复：将提取的ExtendedData添加到features的properties中
+    for (let i = 0; i < features.length && i < placemarks.length; i++) {
+      const feature = features[i]
+      const extendedData = extendedDataMap.get(i)
+      
+      if (extendedData && Object.keys(extendedData).length > 0) {
+        const props = feature.getProperties()
+        // 合并ExtendedData到properties
+        Object.assign(props, extendedData)
+        feature.setProperties(props)
+        
+        if (i < 3) {
+          console.log(`   要素${i + 1}的ExtendedData:`, extendedData)
+        }
+      }
+    }
+    
     // 输出GeoJSON内容到控制台（用户请求）
     if (features.length > 0) {
       const geojsonFormat = new GeoJSON()
@@ -1133,11 +1193,19 @@ const parseKmzToGeoJSON = async (kmzUrl) => {
       console.log('要素总数:', geojsonData.features.length)
       console.log('第一个要素完整信息:', geojsonData.features[0])
       console.log('第一个要素的属性字段:', geojsonData.features[0]?.properties ? Object.keys(geojsonData.features[0].properties) : '无属性')
+      
+      // 检查是否有class字段
+      const firstProps = geojsonData.features[0]?.properties || {}
+      const hasClass = firstProps.class !== undefined || firstProps.gridcode !== undefined
+      console.log('第一个要素是否有class字段:', hasClass)
+      if (hasClass) {
+        console.log('class值:', firstProps.class || firstProps.gridcode)
+      }
+      
       console.log('前3个要素的属性示例:')
       geojsonData.features.slice(0, 3).forEach((feature, idx) => {
         console.log(`  要素${idx + 1}属性:`, feature.properties)
       })
-      console.log('完整GeoJSON对象:', geojsonData)
       console.log('===========================')
     }
     
@@ -1149,7 +1217,8 @@ const parseKmzToGeoJSON = async (kmzUrl) => {
 }
 
 // 增量加载KMZ文件（只加载新增的文件）
-const loadKmzFilesIncremental = async (selectedFiles) => {
+// showMessage: 是否显示单独的加载提示（默认false，统一在父函数中显示）
+const loadKmzFilesIncremental = async (selectedFiles, showMessage = false) => {
   try {
     console.log(` 开始增量加载KMZ文件...`)
     console.log(`   已选择: ${selectedFiles.length} 个文件`)
@@ -1163,7 +1232,7 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
         duration: 5000
       })
       throw new Error(errorMsg)
-    } else if (selectedFiles.length > 5) {
+    } else if (selectedFiles.length > 5 && showMessage) {
       ElMessage.warning({
         message: `您选择了 ${selectedFiles.length} 个文件，加载可能需要一些时间`,
         duration: 3000
@@ -1184,11 +1253,14 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
     if (newFiles.length > 0) {
       console.log(` 需要加载 ${newFiles.length} 个新文件:`, newFiles.map(f => f.name))
       
-      // 显示加载提示
-      const loadingMsg = ElMessage.info({
-        message: `正在加载 ${newFiles.length} 个KMZ文件...`,
-        duration: 0
-      })
+      //  修复：只在需要时显示单独的加载提示
+      let loadingMsg = null
+      if (showMessage) {
+        loadingMsg = ElMessage.info({
+          message: `正在加载 ${newFiles.length} 个KMZ文件...`,
+          duration: 0
+        })
+      }
       
       // 逐个加载新文件
       for (let i = 0; i < newFiles.length; i++) {
@@ -1198,19 +1270,119 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
         console.log(` [${i + 1}/${newFiles.length}] 加载: ${file.name}`)
         
         try {
-          //  修复：构建文件路径，使用后端 API 而不是直接访问静态文件
-          // 如果有 relativePath，需要在文件名中包含它
-          const fileName = file.relativePath 
-            ? `${file.relativePath}/${file.name}`.replace(/\\/g, '/')
-            : file.name
-          const filePath = `/api/analysis/download/kmz/${encodeURIComponent(fileName)}`
+          //  修复：KMZ文件加载逻辑 - 先查找对应GeoJSON，不存在则转换
+          let features = null
+          let useGeoJSON = false
           
-          console.log(`   文件相对路径: ${file.relativePath}`)
-          console.log(`   文件名: ${file.name}`)
-          console.log(`   文件完整路径: ${filePath}`)
+          // 1. 先尝试查找对应的GeoJSON文件（根据KMZ文件名，去掉.kmz后缀，加上.geojson）
+          const geojsonFileName = file.name.replace(/\.kmz$/i, '.geojson')
           
-          // 使用前端解析KMZ
-          const features = await parseKmzToGeoJSON(filePath)
+          try {
+            console.log(`   尝试加载对应GeoJSON文件: ${geojsonFileName}`)
+            const geojsonResponse = await axios.get(`/api/analysis/read-geojson/${encodeURIComponent(geojsonFileName)}`)
+            
+            if (geojsonResponse.data.code === 200) {
+              const geojsonData = geojsonResponse.data.data
+              console.log(`   ✅ 找到GeoJSON文件，包含 ${geojsonData.features?.length || 0} 个要素`)
+              
+              // 根据坐标范围判断坐标系
+              let dataProjection = 'EPSG:4326'
+              if (geojsonData.features && geojsonData.features.length > 0) {
+                const firstFeature = geojsonData.features.find(f => f.geometry && f.geometry.coordinates)
+                if (firstFeature) {
+                  const coords = firstFeature.geometry.coordinates
+                  let firstPoint = null
+                  
+                  if (firstFeature.geometry.type === 'Polygon') {
+                    firstPoint = coords[0]?.[0]
+                  } else if (firstFeature.geometry.type === 'MultiPolygon') {
+                    firstPoint = coords[0]?.[0]?.[0]
+                  }
+                  
+                  if (firstPoint && firstPoint.length >= 2) {
+                    const x = firstPoint[0]
+                    const y = firstPoint[1]
+                    if (Math.abs(x) > 180 || Math.abs(y) > 90) {
+                      dataProjection = 'EPSG:3857'
+                    }
+                  }
+                }
+              }
+              
+              // 转换为OpenLayers features
+              features = new GeoJSON().readFeatures(geojsonData, {
+                dataProjection: dataProjection,
+                featureProjection: 'EPSG:3857'
+              })
+              useGeoJSON = true
+              console.log(`   ✅ 使用GeoJSON文件加载，转换后 ${features.length} 个要素`)
+            }
+          } catch (geojsonError) {
+            // GeoJSON文件不存在，继续使用KMZ转换
+            console.log(`   ⚠️ GeoJSON文件不存在，将转换KMZ文件`)
+          }
+          
+          // 2. 如果GeoJSON不存在，转换KMZ为GeoJSON（不保存，直接返回数据）
+          if (!useGeoJSON) {
+            console.log(`   开始转换KMZ为GeoJSON: ${file.name}`)
+            
+            // 构建KMZ文件路径
+            const fileName = file.relativePath 
+              ? `${file.relativePath}/${file.name}`.replace(/\\/g, '/')
+              : file.name
+            const kmzPath = `data/data_kmz/${fileName}`
+            
+            try {
+              // 调用后端API转换KMZ为GeoJSON（不保存）
+              const convertResponse = await axios.post('/api/analysis/convert-kmz-to-geojson', {
+                kmzPath: kmzPath
+              })
+              
+              if (convertResponse.data.code === 200) {
+                const geojsonData = convertResponse.data.data.geojson
+                console.log(`   ✅ KMZ转换成功，包含 ${geojsonData.features?.length || 0} 个要素`)
+                
+                // 根据坐标范围判断坐标系
+                let dataProjection = 'EPSG:4326'
+                if (geojsonData.features && geojsonData.features.length > 0) {
+                  const firstFeature = geojsonData.features.find(f => f.geometry && f.geometry.coordinates)
+                  if (firstFeature) {
+                    const coords = firstFeature.geometry.coordinates
+                    let firstPoint = null
+                    
+                    if (firstFeature.geometry.type === 'Polygon') {
+                      firstPoint = coords[0]?.[0]
+                    } else if (firstFeature.geometry.type === 'MultiPolygon') {
+                      firstPoint = coords[0]?.[0]?.[0]
+                    }
+                    
+                    if (firstPoint && firstPoint.length >= 2) {
+                      const x = firstPoint[0]
+                      const y = firstPoint[1]
+                      if (Math.abs(x) > 180 || Math.abs(y) > 90) {
+                        dataProjection = 'EPSG:3857'
+                      }
+                    }
+                  }
+                }
+                
+                // 转换为OpenLayers features
+                features = new GeoJSON().readFeatures(geojsonData, {
+                  dataProjection: dataProjection,
+                  featureProjection: 'EPSG:3857'
+                })
+                console.log(`   ✅ 转换后 ${features.length} 个要素`)
+              } else {
+                throw new Error(convertResponse.data.message || 'KMZ转换失败')
+              }
+            } catch (convertError) {
+              console.error(`   ❌ KMZ转换失败:`, convertError)
+              // 降级方案：使用前端解析KMZ（旧方法）
+              console.log(`   尝试使用前端解析KMZ...`)
+              const filePath = `/api/analysis/download/kmz/${encodeURIComponent(fileName)}`
+              features = await parseKmzToGeoJSON(filePath)
+            }
+          }
           
           if (features && features.length > 0) {
             //  性能警告：如果单个文件的地块数量太多，提示用户
@@ -1250,8 +1422,6 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
             currentKmzIndex.value = kmzLayers.length - 1
             currentRecognitionData.value = file
             
-            // 验证已在查询前完成，此处不再重复提示
-            
             await updateKmzStatistics(file, kmzLayers.length - 1)
           } else {
             console.warn(` ${file.name} 解析后无要素`)
@@ -1261,43 +1431,16 @@ const loadKmzFilesIncremental = async (selectedFiles) => {
         }
       }
       
-      loadingMsg.close()
-      
-      // 缩放到第一个新加载的图层
-      if (kmzLayers.length > 0) {
-        const firstLayer = kmzLayers[0]
-        const extent = firstLayer.getSource().getExtent()
-        if (extent && extent.every(coord => isFinite(coord))) {
-          map.getView().fit(extent, {
-            padding: [80, 80, 80, 80],
-            duration: 800,
-            maxZoom: 15
-          })
-        }
+      if (loadingMsg) {
+        loadingMsg.close()
       }
       
-      ElMessage.success(`成功加载 ${newFiles.length} 个文件`)
+      //  修复：不再单独显示成功提示，统一在父函数中显示
     } else {
-      console.log(' 所有KMZ文件已加载，显示图层并缩放')
+      console.log(' 所有KMZ文件已加载，显示图层')
       
       // 显示所有已加载的图层
       kmzLayers.forEach(layer => layer.setVisible(true))
-      
-      //  修复：缩放到第一个图层范围
-      if (kmzLayers.length > 0) {
-        const firstLayer = kmzLayers[0]
-        const extent = firstLayer.getSource().getExtent()
-        if (extent && extent.every(coord => isFinite(coord))) {
-          console.log(` 缩放到已加载KMZ图层范围:`, extent)
-          map.getView().fit(extent, {
-            padding: [80, 80, 80, 80],
-            duration: 800,
-            maxZoom: 15
-          })
-        }
-      }
-      
-      ElMessage.success('已显示识别结果图层')
     }
     
   } catch (error) {
@@ -1326,6 +1469,13 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
     console.log(`   SHP文件: ${shpFiles.length} 个`)
     console.log(`   GeoJSON文件: ${geojsonFiles.length} 个`)
     
+    //  修复：统一显示加载提示（只显示一次）
+    const totalFiles = selectedFiles.length
+    const loadingMsg = ElMessage.info({
+      message: `正在加载 ${totalFiles} 个文件...`,
+      duration: 0
+    })
+    
     // 统计加载结果
     let successCount = 0
     let failCount = 0
@@ -1333,7 +1483,7 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
     // 分别加载不同类型的文件
     if (kmzFiles.length > 0) {
       try {
-        await loadKmzFilesIncremental(kmzFiles)
+        await loadKmzFilesIncremental(kmzFiles, false) // 传入false表示不显示单独提示
         successCount += kmzFiles.length
       } catch (error) {
         console.error(' KMZ文件加载失败:', error)
@@ -1343,7 +1493,7 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
     
     if (shpFiles.length > 0) {
       try {
-        await loadShpFilesIncremental(shpFiles)
+        await loadShpFilesIncremental(shpFiles, false) // 传入false表示不显示单独提示
         successCount += shpFiles.length
       } catch (error) {
         console.error(' SHP文件加载失败:', error)
@@ -1353,7 +1503,7 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
     
     if (geojsonFiles.length > 0) {
       try {
-        await loadGeoJsonFilesIncremental(geojsonFiles)
+        await loadGeoJsonFilesIncremental(geojsonFiles, false) // 传入false表示不显示单独提示
         successCount += geojsonFiles.length
       } catch (error) {
         console.error(' GeoJSON文件加载失败:', error)
@@ -1361,14 +1511,48 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
       }
     }
     
-    // 显示加载结果
+    // 关闭加载提示
+    loadingMsg.close()
+    
+    // 显示加载结果（只显示一次）
     if (failCount === 0 && successCount > 0) {
-      ElMessage.success(` 成功加载 ${successCount} 个文件`)
+      ElMessage.success(`成功加载 ${successCount} 个文件`)
     } else if (successCount > 0 && failCount > 0) {
-      ElMessage.warning(` 成功 ${successCount} 个，失败 ${failCount} 个`)
+      ElMessage.warning(`成功 ${successCount} 个，失败 ${failCount} 个`)
     } else if (failCount > 0) {
-      ElMessage.error(` 加载失败，请检查文件格式和网络连接`)
+      ElMessage.error(`加载失败，请检查文件格式和网络连接`)
       throw new Error('所有文件加载失败')
+    }
+    
+    //  修复：在所有文件加载完成后，统一缩放到所有图层的合并范围
+    if (successCount > 0 && map && kmzLayers.length > 0) {
+      // 延迟执行，等待所有图层数据源准备就绪
+      setTimeout(() => {
+        const extent = getAllRecognitionLayersExtent()
+        if (extent) {
+          console.log(' 缩放到所有识别结果图层的合并范围:', extent)
+          map.getView().fit(extent, {
+            padding: [80, 80, 80, 80],
+            duration: 800,
+            maxZoom: 15
+          })
+          console.log(' 已缩放至所有识别结果图层范围')
+        } else {
+          console.warn(' 未获取到识别结果图层范围，尝试延迟重试...')
+          // 如果第一次获取失败，再延迟重试一次
+          setTimeout(() => {
+            const retryExtent = getAllRecognitionLayersExtent()
+            if (retryExtent) {
+              map.getView().fit(retryExtent, {
+                padding: [80, 80, 80, 80],
+                duration: 800,
+                maxZoom: 15
+              })
+              console.log(' 延迟重试：已缩放至所有识别结果图层范围')
+            }
+          }, 1000)
+        }
+      }, 500)
     }
     
   } catch (error) {
@@ -1380,7 +1564,8 @@ const loadRecognitionFilesIncremental = async (selectedFiles) => {
 }
 
 //  加载SHP文件（转换为GeoJSON后显示）
-const loadShpFilesIncremental = async (selectedFiles) => {
+// showMessage: 是否显示单独的加载提示（默认false，统一在父函数中显示）
+const loadShpFilesIncremental = async (selectedFiles, showMessage = false) => {
   try {
     console.log(` 开始增量加载SHP文件...`)
     
@@ -1393,10 +1578,14 @@ const loadShpFilesIncremental = async (selectedFiles) => {
     if (newFiles.length > 0) {
       console.log(` 需要加载 ${newFiles.length} 个新SHP文件:`, newFiles.map(f => f.name))
       
-      const loadingMsg = ElMessage.info({
-        message: `正在加载 ${newFiles.length} 个SHP文件...`,
-        duration: 0
-      })
+      //  修复：只在需要时显示单独的加载提示
+      let loadingMsg = null
+      if (showMessage) {
+        loadingMsg = ElMessage.info({
+          message: `正在加载 ${newFiles.length} 个SHP文件...`,
+          duration: 0
+        })
+      }
       
       for (let i = 0; i < newFiles.length; i++) {
         const file = newFiles[i]
@@ -1575,43 +1764,18 @@ const loadShpFilesIncremental = async (selectedFiles) => {
         }
       }
       
-      loadingMsg.close()
-      
-      // 缩放到第一个图层
-      if (kmzLayers.length > 0) {
-        const firstLayer = kmzLayers[0]
-        const extent = firstLayer.getSource().getExtent()
-        if (extent && extent.every(coord => isFinite(coord))) {
-          map.getView().fit(extent, {
-            padding: [80, 80, 80, 80],
-            duration: 800,
-            maxZoom: 15
-          })
-        }
+      if (loadingMsg) {
+        loadingMsg.close()
       }
       
-      ElMessage.success(`成功加载 ${newFiles.length} 个SHP文件`)
+      //  修复：不再单独显示成功提示，统一在父函数中显示
     } else {
-      console.log(' 所有SHP文件已加载，显示图层并缩放')
+      console.log(' 所有SHP文件已加载，显示图层')
       
-      //  修复：显示图层并缩放到范围
+      //  修复：显示图层，缩放统一在父函数中处理
       if (kmzLayers.length > 0) {
         // 显示所有图层
         kmzLayers.forEach(layer => layer.setVisible(true))
-        
-        // 缩放到第一个图层
-        const firstLayer = kmzLayers[0]
-        const extent = firstLayer.getSource().getExtent()
-        if (extent && extent.every(coord => isFinite(coord))) {
-          console.log(` 缩放到已加载SHP图层范围:`, extent)
-          map.getView().fit(extent, {
-            padding: [80, 80, 80, 80],
-            duration: 800,
-            maxZoom: 15
-          })
-        }
-        
-        ElMessage.success('已显示SHP图层')
       }
     }
     
@@ -1624,7 +1788,8 @@ const loadShpFilesIncremental = async (selectedFiles) => {
 }
 
 //  加载GeoJSON文件
-const loadGeoJsonFilesIncremental = async (selectedFiles) => {
+// showMessage: 是否显示单独的加载提示（默认false，统一在父函数中显示）
+const loadGeoJsonFilesIncremental = async (selectedFiles, showMessage = false) => {
   try {
     console.log(` 开始增量加载GeoJSON文件...`)
     
@@ -1634,10 +1799,14 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
     if (newFiles.length > 0) {
       console.log(` 需要加载 ${newFiles.length} 个新GeoJSON文件:`, newFiles.map(f => f.name))
       
-      const loadingMsg = ElMessage.info({
-        message: `正在加载 ${newFiles.length} 个GeoJSON文件...`,
-        duration: 0
-      })
+      //  修复：只在需要时显示单独的加载提示
+      let loadingMsg = null
+      if (showMessage) {
+        loadingMsg = ElMessage.info({
+          message: `正在加载 ${newFiles.length} 个GeoJSON文件...`,
+          duration: 0
+        })
+      }
       
       for (let i = 0; i < newFiles.length; i++) {
         const file = newFiles[i]
@@ -1880,67 +2049,18 @@ const loadGeoJsonFilesIncremental = async (selectedFiles) => {
         }
       }
       
-      loadingMsg.close()
-      
-      // 缩放到第一个图层
-      if (kmzLayers.length > 0) {
-        const firstLayer = kmzLayers[0]
-        const extent = firstLayer.getSource().getExtent()
-        if (extent && extent.every(coord => isFinite(coord))) {
-          console.log(` 缩放到图层范围:`, extent)
-          map.getView().fit(extent, {
-            padding: [80, 80, 80, 80],
-            duration: 800,
-            maxZoom: 15
-          })
-        }
+      if (loadingMsg) {
+        loadingMsg.close()
       }
       
-      ElMessage.success(`成功加载 ${newFiles.length} 个GeoJSON文件`)
+      //  修复：不再单独显示成功提示，统一在父函数中显示
     } else {
       console.log(' 所有GeoJSON文件已加载，显示图层')
       
-      //  修复：即使文件已加载，也需要缩放到图层范围
+      //  修复：显示图层，缩放统一在父函数中处理
       if (kmzLayers.length > 0) {
         // 显示所有图层
         kmzLayers.forEach(layer => layer.setVisible(true))
-        
-        // 缩放到第一个图层
-        const firstLayer = kmzLayers[0]
-        const extent = firstLayer.getSource().getExtent()
-        
-        console.log(` ===== 缩放诊断 =====`)
-        console.log(`图层数量: ${kmzLayers.length}`)
-        console.log(`图层范围: [${extent.map(v => v.toFixed(2)).join(', ')}]`)
-        console.log(`图层可见性: ${firstLayer.getVisible()}`)
-        
-        if (extent && extent.every(coord => isFinite(coord))) {
-          // 缩放前的状态
-          const viewBefore = map.getView()
-          const centerBefore = viewBefore.getCenter()
-          const zoomBefore = viewBefore.getZoom()
-          console.log(`缩放前 - 中心: [${centerBefore?.map(v => v.toFixed(2)).join(', ')}], 缩放: ${zoomBefore?.toFixed(2)}`)
-          
-          // 执行缩放
-          map.getView().fit(extent, {
-            padding: [80, 80, 80, 80],
-            duration: 800,
-            maxZoom: 15
-          })
-          
-          // 延迟检查缩放后的状态（等待动画完成）
-          setTimeout(() => {
-            const viewAfter = map.getView()
-            const centerAfter = viewAfter.getCenter()
-            const zoomAfter = viewAfter.getZoom()
-            console.log(`缩放后 - 中心: [${centerAfter?.map(v => v.toFixed(2)).join(', ')}], 缩放: ${zoomAfter?.toFixed(2)}`)
-            console.log(`========================`)
-          }, 100)
-        } else {
-          console.error(` 图层范围无效，无法缩放`)
-        }
-        
-        ElMessage.success('已显示GeoJSON图层')
       }
     }
     
@@ -2611,6 +2731,48 @@ const getAllTiffLayersExtent = async () => {
       }
     } catch (error) {
       console.warn('获取图层范围失败:', error)
+    }
+  }
+  
+  if (extents.length === 0) {
+    return null
+  }
+  
+  // 合并所有extent
+  let unionExtent = createEmpty()
+  for (const extent of extents) {
+    extend(unionExtent, extent)
+  }
+  
+  return unionExtent
+}
+
+// 获取所有识别结果图层（KMZ/SHP/GeoJSON）的合并范围
+const getAllRecognitionLayersExtent = () => {
+  if (!kmzLayers || kmzLayers.length === 0) {
+    return null
+  }
+  
+  const extents = []
+  
+  // 获取所有可见图层的extent
+  for (const layer of kmzLayers) {
+    if (!layer.getVisible()) {
+      continue
+    }
+    
+    const source = layer.getSource()
+    if (!source) {
+      continue
+    }
+    
+    try {
+      const extent = source.getExtent()
+      if (extent && extent.length === 4 && extent.every(coord => isFinite(coord))) {
+        extents.push(extent)
+      }
+    } catch (error) {
+      console.warn('获取识别结果图层范围失败:', error)
     }
   }
   
@@ -4052,18 +4214,11 @@ const handleSearch = async () => {
     // 验证逻辑已集成到实际加载流程中
     console.log(' 查询参数验证通过，准备加载识别结果...')
     
-    // 显示加载提示
-    const loadingMsg = ElMessage.info({
-      message: `正在准备加载 ${matchedFiles.length} 个文件...`,
-      duration: 2000
-    })
-    
+    //  修复：移除重复的加载提示，统一在 loadRecognitionFilesIncremental 中显示
     // 直接加载，在加载过程中进行验证
     try {
       await loadRecognitionData()
-      loadingMsg.close()
     } catch (error) {
-      loadingMsg.close()
       console.error(' 加载识别结果失败:', error)
       ElMessage.error(`加载失败: ${error.message || '未知错误'}`)
     }
@@ -4425,42 +4580,50 @@ const handleZoomToExtent = async () => {
       ElMessage.warning('图层范围获取失败，已重置到默认视图')
     }
   } 
-  // 识别结果：缩放到KMZ/SHP/GeoJSON图层
+  // 识别结果：缩放到所有KMZ/SHP/GeoJSON图层的合并范围
   else if (dataSource.value === 'recognition' && kmzLayers.length > 0) {
-    console.log(' 尝试缩放到识别结果图层范围...')
+    console.log(' 尝试缩放到所有识别结果图层的合并范围...')
     
-    const visibleLayers = kmzLayers.filter(layer => layer.getVisible())
+    // 显示加载提示
+    const loadingMsg = ElMessage.info({
+      message: '正在定位图层...',
+      duration: 0
+    })
     
-    if (visibleLayers.length > 0) {
-      const firstLayer = visibleLayers[0]
-      const extent = firstLayer.getSource().getExtent()
+    try {
+      const extent = getAllRecognitionLayersExtent()
       
-      console.log(' 获取到图层范围:', extent)
+      loadingMsg.close()
       
-      if (extent && extent.every(coord => isFinite(coord))) {
+      if (extent) {
+        console.log(' 获取到所有识别结果图层的合并范围:', extent)
+        
         view.fit(extent, {
           padding: [80, 80, 80, 80],
           duration: 500,
           maxZoom: 15
         })
-        ElMessage.success(' 已缩放至图层范围')
+        ElMessage.success(' 已缩放至所有识别结果图层范围')
       } else {
-        console.warn(' 图层范围无效:', extent)
+        console.warn(' 未获取到识别结果图层范围')
         view.animate({
           center: fromLonLat([87.6, 43.8]),
           zoom: 6,
           duration: 300
         })
-        ElMessage.info('图层范围无效，已重置到默认视图')
+        ElMessage.info('未获取到图层范围，已重置到默认视图')
       }
-    } else {
-      console.log(' 没有可见图层，重置到默认视图')
+    } catch (error) {
+      loadingMsg.close()
+      console.error(' 获取识别结果图层范围失败:', error)
+      
+      // 降级方案：使用新疆区域默认范围
       view.animate({
         center: fromLonLat([87.6, 43.8]),
         zoom: 6,
         duration: 300
       })
-      ElMessage.info('没有可见图层，已重置到默认视图')
+      ElMessage.warning('图层范围获取失败，已重置到默认视图')
     }
   } 
   // 无图层：重置到默认视图

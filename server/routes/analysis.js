@@ -3550,45 +3550,9 @@ router.post('/convert-kmz-to-geojson', async (req, res) => {
       })
     }
     
-    // 方案1: 使用GDAL的ogr2ogr转换
-    try {
-      const { execSync } = await import('child_process')
-      
-      // 创建临时GeoJSON文件
-      const tempGeojsonPath = fullPath.replace('.kmz', '_temp.geojson')
-      
-      // 使用ogr2ogr转换
-      console.log('   尝试使用GDAL ogr2ogr转换...')
-      const cmd = `ogr2ogr -f GeoJSON "${tempGeojsonPath}" "${fullPath}"`
-      
-      try {
-        execSync(cmd, { timeout: 30000 })
-        
-        if (fs.existsSync(tempGeojsonPath)) {
-          // 读取GeoJSON
-          const geojsonContent = fs.readFileSync(tempGeojsonPath, 'utf-8')
-          const geojson = JSON.parse(geojsonContent)
-          
-          // 删除临时文件
-          fs.unlinkSync(tempGeojsonPath)
-          
-          console.log(`✅ KMZ转换成功，包含 ${geojson.features.length} 个要素`)
-          
-          return res.json({
-            code: 200,
-            message: '转换成功',
-            data: {
-              geojson: geojson
-            }
-          })
-        }
-      } catch (gdalError) {
-        console.warn('   GDAL转换失败:', gdalError.message)
-        // 继续尝试其他方案
-      }
-    } catch (error) {
-      console.warn('   无法使用GDAL')
-    }
+    //  修复：优先使用手动解析（方案2），因为它能正确保留ExtendedData中的class字段
+    // GDAL转换可能丢失ExtendedData信息，所以先尝试手动解析
+    // 如果手动解析失败，再尝试GDAL（作为降级方案）
     
     // 方案2: 手动解压KMZ并解析KML
     try {
@@ -3626,7 +3590,74 @@ router.post('/convert-kmz-to-geojson', async (req, res) => {
       const kmlDom = new DOMParser().parseFromString(kmlContent)
       const geojson = tj.kml(kmlDom)
       
+      //  修复：从KML的ExtendedData中提取字段并添加到GeoJSON properties中
+      // @mapbox/togeojson 默认不会保留 ExtendedData 中的字段
+      const placemarks = kmlDom.getElementsByTagName('Placemark')
+      console.log(`   找到 ${placemarks.length} 个Placemark元素`)
+      
+      for (let i = 0; i < placemarks.length && i < geojson.features.length; i++) {
+        const placemark = placemarks[i]
+        const feature = geojson.features[i]
+        
+        if (!feature.properties) {
+          feature.properties = {}
+        }
+        
+        // 提取ExtendedData中的字段
+        const extendedData = placemark.getElementsByTagName('ExtendedData')[0]
+        if (extendedData) {
+          const dataElements = extendedData.getElementsByTagName('Data')
+          
+          for (let j = 0; j < dataElements.length; j++) {
+            const dataElement = dataElements[j]
+            const name = dataElement.getAttribute('name')
+            const valueElement = dataElement.getElementsByTagName('value')[0]
+            
+            if (name && valueElement) {
+              const value = valueElement.textContent || valueElement.text || ''
+              
+              // 转换数值类型
+              if (name === 'class' || name === 'gridcode') {
+                const numValue = parseInt(value, 10)
+                if (!isNaN(numValue)) {
+                  feature.properties[name] = numValue
+                } else {
+                  feature.properties[name] = value
+                }
+              } else if (name === 'area_m2' || name === 'area_mu') {
+                const numValue = parseFloat(value)
+                if (!isNaN(numValue)) {
+                  feature.properties[name] = numValue
+                } else {
+                  feature.properties[name] = value
+                }
+              } else {
+                feature.properties[name] = value
+              }
+            }
+          }
+        }
+        
+        // 也提取Name字段（如果有）
+        const nameElement = placemark.getElementsByTagName('name')[0]
+        if (nameElement && !feature.properties.name) {
+          feature.properties.name = nameElement.textContent || nameElement.text || ''
+        }
+      }
+      
       console.log(`✅ KML解析成功，包含 ${geojson.features.length} 个要素`)
+      console.log(`   已提取ExtendedData字段到properties`)
+      
+      // 检查第一个要素是否有class字段
+      if (geojson.features.length > 0) {
+        const firstProps = geojson.features[0].properties || {}
+        const hasClass = firstProps.class !== undefined || firstProps.gridcode !== undefined
+        console.log(`   第一个要素的properties:`, Object.keys(firstProps))
+        console.log(`   是否有class字段: ${hasClass}`)
+        if (hasClass) {
+          console.log(`   class值: ${firstProps.class || firstProps.gridcode}`)
+        }
+      }
       
       return res.json({
         code: 200,
@@ -3638,11 +3669,112 @@ router.post('/convert-kmz-to-geojson', async (req, res) => {
       
     } catch (manualError) {
       console.error('   手动解析失败:', manualError.message)
+      console.log('   尝试使用GDAL作为降级方案...')
       
-      return res.status(500).json({
-        code: 500,
-        message: `KMZ转换失败: ${manualError.message}。请确保安装了必要的依赖：npm install adm-zip @mapbox/togeojson @xmldom/xmldom`
-      })
+      // 降级方案：使用GDAL转换（可能丢失ExtendedData，但至少能转换几何）
+      try {
+        const { execSync } = await import('child_process')
+        
+        // 创建临时GeoJSON文件
+        const tempGeojsonPath = fullPath.replace('.kmz', '_temp.geojson')
+        
+        // 使用ogr2ogr转换
+        const cmd = `ogr2ogr -f GeoJSON "${tempGeojsonPath}" "${fullPath}"`
+        
+        try {
+          execSync(cmd, { timeout: 30000 })
+          
+          if (fs.existsSync(tempGeojsonPath)) {
+            // 读取GeoJSON
+            const geojsonContent = fs.readFileSync(tempGeojsonPath, 'utf-8')
+            const geojson = JSON.parse(geojsonContent)
+            
+            // 删除临时文件
+            fs.unlinkSync(tempGeojsonPath)
+            
+            console.log(`✅ GDAL转换成功，包含 ${geojson.features.length} 个要素`)
+            console.log(`   ⚠️ 注意：GDAL转换可能丢失ExtendedData中的class字段`)
+            
+            // 尝试从原始KML中提取ExtendedData并补充到GeoJSON中
+            try {
+              const AdmZip = (await import('adm-zip')).default
+              const kmzBuffer = fs.readFileSync(fullPath)
+              const zip = new AdmZip(kmzBuffer)
+              let kmlContent = null
+              
+              for (const entry of zip.getEntries()) {
+                if (entry.entryName.endsWith('.kml')) {
+                  kmlContent = entry.getData().toString('utf-8')
+                  break
+                }
+              }
+              
+              if (kmlContent) {
+                const DOMParser = (await import('@xmldom/xmldom')).DOMParser
+                const kmlDom = new DOMParser().parseFromString(kmlContent)
+                const placemarks = kmlDom.getElementsByTagName('Placemark')
+                
+                // 尝试匹配并补充ExtendedData
+                for (let i = 0; i < placemarks.length && i < geojson.features.length; i++) {
+                  const placemark = placemarks[i]
+                  const feature = geojson.features[i]
+                  
+                  if (!feature.properties) {
+                    feature.properties = {}
+                  }
+                  
+                  const extendedData = placemark.getElementsByTagName('ExtendedData')[0]
+                  if (extendedData) {
+                    const dataElements = extendedData.getElementsByTagName('Data')
+                    for (let j = 0; j < dataElements.length; j++) {
+                      const dataElement = dataElements[j]
+                      const name = dataElement.getAttribute('name')
+                      const valueElement = dataElement.getElementsByTagName('value')[0]
+                      
+                      if (name && valueElement) {
+                        const value = valueElement.textContent || valueElement.text || ''
+                        if (name === 'class' || name === 'gridcode') {
+                          const numValue = parseInt(value, 10)
+                          if (!isNaN(numValue)) {
+                            feature.properties[name] = numValue
+                          }
+                        } else if (name === 'area_m2' || name === 'area_mu') {
+                          const numValue = parseFloat(value)
+                          if (!isNaN(numValue)) {
+                            feature.properties[name] = numValue
+                          }
+                        } else {
+                          feature.properties[name] = value
+                        }
+                      }
+                    }
+                  }
+                }
+                console.log(`   ✅ 已从KML补充ExtendedData字段`)
+              }
+            } catch (supplementError) {
+              console.warn('   补充ExtendedData失败:', supplementError.message)
+            }
+            
+            return res.json({
+              code: 200,
+              message: '转换成功（使用GDAL，已补充ExtendedData）',
+              data: {
+                geojson: geojson
+              }
+            })
+          }
+        } catch (gdalError) {
+          console.error('   GDAL转换也失败:', gdalError.message)
+          throw new Error(`KMZ转换失败: ${manualError.message}。GDAL降级方案也失败: ${gdalError.message}`)
+        }
+      } catch (gdalFallbackError) {
+        console.error('   GDAL降级方案执行失败:', gdalFallbackError.message)
+        return res.status(500).json({
+          code: 500,
+          message: `KMZ转换失败: ${manualError.message}。请确保安装了必要的依赖：npm install adm-zip @mapbox/togeojson @xmldom/xmldom`
+        })
+      }
     }
     
   } catch (error) {
