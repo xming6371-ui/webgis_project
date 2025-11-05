@@ -73,14 +73,6 @@
               style="width: 260px"
             />
           </el-form-item>
-          <el-form-item label="传感器">
-            <el-select v-model="filterForm.sensor" placeholder="请选择" style="width: 140px" clearable>
-              <el-option label="全部" value="" />
-              <el-option label="Sentinel-2" value="sentinel2" />
-              <el-option label="Landsat-8" value="landsat8" />
-              <el-option label="高分系列" value="gaofen" />
-            </el-select>
-          </el-form-item>
           <el-form-item label="区域">
             <el-select v-model="filterForm.region" placeholder="全部区域" style="width: 140px" clearable>
               <el-option label="全部" value="" />
@@ -210,7 +202,6 @@
           <div class="grid-info">
             <div class="grid-title">{{ item.name }}</div>
             <div class="grid-meta">
-              <el-tag size="small">{{ item.sensor }}</el-tag>
               <span>{{ item.date }}</span>
             </div>
             <div class="grid-meta">
@@ -771,12 +762,6 @@
             style="width: 100%"
             clearable
           />
-          <div style="color: #999; font-size: 12px; margin-top: 5px">
-            💡 此日期将显示在影像目录的"采集日期"列
-          </div>
-        </el-form-item>
-        <el-form-item label="传感器">
-          <el-input v-model="uploadForm.sensor" placeholder="如: Sentinel-2, Landsat-8" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input 
@@ -796,9 +781,7 @@
             <el-radio :label="false">否 - 保留原始文件</el-radio>
           </el-radio-group>
           <div style="color: #999; font-size: 12px; margin-top: 5px">
-            💡 只做坐标转换（EPSG:3857），不改变数据类型和数值<br/>
-            📌 RGB影像：不压缩、保持原始数据类型（8位/16位/浮点）<br/>
-            📌 单波段影像：LZW压缩
+            📌 RGB影像：坐标转换至EPSG:3857投影坐标系、生成多级金字塔、不压缩保持原始质量、保持原始数据类型（8位/16位/浮点）、使用cubic重采样方法
           </div>
         </el-form-item>
         
@@ -894,9 +877,6 @@
                   clearable
                 />
               </el-form-item>
-              <el-form-item label="传感器">
-                <el-input v-model="fileMetadataList[index].sensor" placeholder="如: Sentinel-2, Landsat-8" />
-              </el-form-item>
               <el-form-item label="描述">
                 <el-input 
                   v-model="fileMetadataList[index].description" 
@@ -943,7 +923,7 @@
               <el-radio :label="false">否 - 保留原始文件</el-radio>
             </el-radio-group>
             <div style="color: #999; font-size: 12px; margin-top: 5px">
-              📌 只做坐标转换，RGB影像保持原始数据类型（8位/16位/浮点）
+              📌 RGB影像：坐标转换至EPSG:3857投影坐标系、生成多级金字塔、不压缩保持原始质量、保持原始数据类型（8位/16位/浮点）、使用cubic重采样方法
             </div>
           </el-form-item>
           
@@ -1029,10 +1009,6 @@
             <el-descriptions-item label="文件名">{{ currentPreview.name }}</el-descriptions-item>
             <el-descriptions-item label="年份">{{ currentPreview.year }}年</el-descriptions-item>
             <el-descriptions-item label="期次">第{{ currentPreview.period }}期</el-descriptions-item>
-            <el-descriptions-item label="作物类型">
-              <el-tag size="small">{{ getCropTypeLabel(currentPreview.cropType) }}</el-tag>
-            </el-descriptions-item>
-            <el-descriptions-item label="传感器">{{ currentPreview.sensor }}</el-descriptions-item>
             <el-descriptions-item label="采集日期">{{ currentPreview.date }}</el-descriptions-item>
             <el-descriptions-item label="区域">{{ currentPreview.region }}</el-descriptions-item>
             <el-descriptions-item label="文件大小">
@@ -1156,16 +1132,6 @@
             <el-option label="普惠牧场" value="普惠牧场" />
             <el-option label="普惠农场" value="普惠农场" />
             <el-option label="原种场" value="原种场" />
-          </el-select>
-        </el-form-item>
-        
-        <el-form-item label="传感器">
-          <el-select v-model="editForm.sensor" placeholder="请选择传感器" style="width: 100%">
-            <el-option label="Sentinel-2" value="sentinel2" />
-            <el-option label="Landsat-8" value="landsat8" />
-            <el-option label="GF-1" value="gf1" />
-            <el-option label="VH" value="vh" />
-            <el-option label="其他" value="other" />
           </el-select>
         </el-form-item>
         
@@ -2619,7 +2585,6 @@ const editForm = ref({
   year: '',
   period: '',
   region: '',
-  sensor: '',
   date: '',
   size: '',
   uploadTime: '',
@@ -2636,7 +2601,6 @@ const optimizing = ref(false)
 
 const filterForm = ref({
   dateRange: [],
-  sensor: '',
   optimizationStatus: '', // 优化状态筛选：all/optimized/unoptimized/processing/result
   region: '' // 🆕 区域筛选
 })
@@ -2648,7 +2612,6 @@ const uploadForm = ref({
   period: '',
   region: '',
   date: '', // 🆕 采集日期
-  sensor: '',
   description: '',
   needOptimize: false, // 是否优化（默认不优化，保留原始文件）
   overwriteOriginal: false, // 是否覆盖原文件（默认不覆盖）
@@ -2669,11 +2632,6 @@ const filteredData = computed(() => {
       item.name.toLowerCase().includes(keyword) ||
       item.region.toLowerCase().includes(keyword)
     )
-  }
-  
-  // 传感器过滤
-  if (filterForm.value.sensor) {
-    data = data.filter(item => item.sensor.toLowerCase().includes(filterForm.value.sensor.toLowerCase()))
   }
   
   // 🆕 区域过滤
@@ -2852,7 +2810,6 @@ const handleRefresh = async () => {
     searchKeyword.value = ''
     filterForm.value = {
       dateRange: [],
-      sensor: '',
       optimizationStatus: '',
       region: ''
     }
@@ -2882,7 +2839,6 @@ const resetFilter = () => {
   searchKeyword.value = ''
   filterForm.value = {
     dateRange: [],
-    sensor: '',
     optimizationStatus: '',
     region: ''
   }
@@ -3047,7 +3003,6 @@ const generateThumbnail = (row) => {
       <rect width="400" height="300" fill="${color.bg}"/>
       <text x="200" y="120" font-family="Arial, sans-serif" font-size="16" fill="${color.text}" text-anchor="middle">${displayName}</text>
       <text x="200" y="150" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="${color.text}" text-anchor="middle">${year}</text>
-      <text x="200" y="180" font-family="Arial, sans-serif" font-size="14" fill="${color.text}" text-anchor="middle">${row.sensor || 'Unknown'}</text>
       <circle cx="200" cy="220" r="30" fill="none" stroke="${color.text}" stroke-width="2"/>
       <path d="M185,220 L195,230 L215,210" stroke="${color.text}" stroke-width="3" fill="none"/>
     </svg>
@@ -3208,7 +3163,6 @@ const handleEdit = (row) => {
     year: row.year,
     period: row.period,
     region: row.region,
-    sensor: row.sensor,
     date: row.date,
     size: row.size,
     uploadTime: row.uploadTime,
@@ -3231,7 +3185,6 @@ const handleSaveEdit = async () => {
       year: editForm.value.year,
       period: editForm.value.period,
       region: editForm.value.region,
-      sensor: editForm.value.sensor,
       date: editForm.value.date,
       description: editForm.value.description
     }
@@ -3586,7 +3539,6 @@ const handleFileChange = (file) => {
     period: '',
     region: autoMetadata.region || '',
     date: autoMetadata.date || '', // 🆕 采集日期
-    sensor: '',
     description: ''
   })
   
@@ -3859,7 +3811,6 @@ const handleUpload = async () => {
       formData.append('period', uploadForm.value.period)
       formData.append('region', uploadForm.value.region || '')
       formData.append('date', uploadForm.value.date || '') // 🆕 采集日期
-      formData.append('sensor', uploadForm.value.sensor || '')
       formData.append('description', uploadForm.value.description || '')
     } else {
       // 逐个模式：每个文件有独立的元数据
@@ -3945,7 +3896,6 @@ const handleUpload = async () => {
       period: '',
       region: '',
       date: '', // 🆕 采集日期
-      sensor: '',
       description: '',
       needOptimize: false,
       overwriteOriginal: false,
